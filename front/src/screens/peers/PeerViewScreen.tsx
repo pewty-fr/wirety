@@ -145,6 +145,15 @@ export const PeerViewScreen = () => {
         <Button
           mode="contained"
           onPress={() =>
+            navigation.navigate('PeerNetworkGraph' as never, { networkId, peerId } as never)
+          }
+          style={styles.button}
+        >
+          Network Graph
+        </Button>
+        <Button
+          mode="contained"
+          onPress={() =>
             navigation.navigate('PeerToken' as never, { networkId, peerId } as never)
           }
           style={styles.button}

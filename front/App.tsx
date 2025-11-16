@@ -24,6 +24,7 @@ import { PeerUpdateRegularScreen } from './src/screens/peers/PeerUpdateRegularSc
 import { PeerUpdateJumpScreen } from './src/screens/peers/PeerUpdateJumpScreen';
 import { PeerTokenScreen } from './src/screens/peers/PeerTokenScreen';
 import { PeerConfigScreen } from './src/screens/peers/PeerConfigScreen';
+import { PeerNetworkGraphScreen } from './src/screens/peers/PeerNetworkGraphScreen';
 
 // IPAM screens
 import { IPAMListScreen } from './src/screens/ipam/IPAMListScreen';
@@ -44,6 +45,7 @@ function NetworkStack() {
       <Stack.Screen name="PeerAddRegular" component={PeerAddRegularScreen} options={{ title: 'Add Regular Peer' }} />
       <Stack.Screen name="PeerAddJump" component={PeerAddJumpScreen} options={{ title: 'Add Jump Server' }} />
       <Stack.Screen name="PeerView" component={PeerViewScreen} options={{ title: 'Peer Details' }} />
+      <Stack.Screen name="PeerNetworkGraph" component={PeerNetworkGraphScreen} options={{ title: 'Network Graph' }} />
   <Stack.Screen name="PeerToken" component={PeerTokenScreen} options={{ title: 'Peer Token' }} />
       <Stack.Screen name="PeerConfig" component={PeerConfigScreen} options={{ title: 'Peer Config' }} />
   <Stack.Screen name="PeerUpdateRegular" component={PeerUpdateRegularScreen} options={{ title: 'Update Regular Peer' }} />
@@ -61,6 +63,7 @@ function PeerStack() {
       <Stack.Screen name="PeerAddRegular" component={PeerAddRegularScreen} options={{ title: 'Add Regular Peer' }} />
       <Stack.Screen name="PeerAddJump" component={PeerAddJumpScreen} options={{ title: 'Add Jump Server' }} />
       <Stack.Screen name="PeerView" component={PeerViewScreen} options={{ title: 'Peer Details' }} />
+      <Stack.Screen name="PeerNetworkGraph" component={PeerNetworkGraphScreen} options={{ title: 'Network Graph' }} />
   <Stack.Screen name="PeerToken" component={PeerTokenScreen} options={{ title: 'Peer Token' }} />
       <Stack.Screen name="PeerConfig" component={PeerConfigScreen} options={{ title: 'Peer Config' }} />
   <Stack.Screen name="PeerUpdateRegular" component={PeerUpdateRegularScreen} options={{ title: 'Update Regular Peer' }} />
