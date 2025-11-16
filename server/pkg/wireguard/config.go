@@ -26,67 +26,8 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 		sb.WriteString(fmt.Sprintf("DNS = %s\n", extractDNSServer(network.CIDR)))
 	}
 
-	// Add PostUp/PostDown rules for jump servers
-	if peer.IsJump && peer.JumpNatInterface != "" {
-		cidr := network.CIDR
-		postUpRules := []string{}
-		postDownRules := []string{}
-
-		// Collect isolated and non-isolated peer IPs
-		isolatedPeers := []string{}
-		nonIsolatedPeers := []string{}
-		for _, allowedPeer := range allowedPeers {
-			if allowedPeer.IsIsolated {
-				isolatedPeers = append(isolatedPeers, allowedPeer.Address)
-			} else {
-				nonIsolatedPeers = append(nonIsolatedPeers, allowedPeer.Address)
-			}
-		}
-
-		// Rule 1: Block isolated-to-isolated traffic
-		for i, srcIP := range isolatedPeers {
-			for j, dstIP := range isolatedPeers {
-				if i < j { // Avoid duplicates
-					postUpRules = append(postUpRules, fmt.Sprintf("iptables -I FORWARD 1 -s %s/32 -d %s/32 -j DROP", srcIP, dstIP))
-					postUpRules = append(postUpRules, fmt.Sprintf("iptables -I FORWARD 1 -s %s/32 -d %s/32 -j DROP", dstIP, srcIP))
-					postDownRules = append(postDownRules, fmt.Sprintf("iptables -D FORWARD -s %s/32 -d %s/32 -j DROP", srcIP, dstIP))
-					postDownRules = append(postDownRules, fmt.Sprintf("iptables -D FORWARD -s %s/32 -d %s/32 -j DROP", dstIP, srcIP))
-				}
-			}
-		}
-
-		// Rule 2: Block non-isolated-to-isolated traffic
-		for _, srcIP := range nonIsolatedPeers {
-			for _, dstIP := range isolatedPeers {
-				postUpRules = append(postUpRules, fmt.Sprintf("iptables -I FORWARD 1 -s %s/32 -d %s/32 -j DROP", srcIP, dstIP))
-				postDownRules = append(postDownRules, fmt.Sprintf("iptables -D FORWARD -s %s/32 -d %s/32 -j DROP", srcIP, dstIP))
-			}
-		}
-
-		// Rule 3: Block jump-to-isolated traffic (jump server IP is peer.Address)
-		for _, dstIP := range isolatedPeers {
-			postUpRules = append(postUpRules, fmt.Sprintf("iptables -I FORWARD 1 -s %s/32 -d %s/32 -j DROP", peer.Address, dstIP))
-			postDownRules = append(postDownRules, fmt.Sprintf("iptables -D FORWARD -s %s/32 -d %s/32 -j DROP", peer.Address, dstIP))
-		}
-
-		// Add general forwarding and NAT rules (after DROP rules)
-		postUpRules = append(postUpRules,
-			"iptables -A FORWARD -i %i -j ACCEPT",
-			"iptables -A FORWARD -o %i -j ACCEPT",
-			fmt.Sprintf("iptables -t nat -A POSTROUTING -o %s -j MASQUERADE", peer.JumpNatInterface),
-			"sysctl -w net.ipv4.ip_forward=1",
-		)
-
-		postDownRules = append(postDownRules,
-			"iptables -D FORWARD -i %i -j ACCEPT",
-			"iptables -D FORWARD -o %i -j ACCEPT",
-			fmt.Sprintf("iptables -t nat -D POSTROUTING -o %s -j MASQUERADE", peer.JumpNatInterface),
-		)
-
-		sb.WriteString(fmt.Sprintf("PostUp = %s\n", strings.Join(postUpRules, "; ")))
-		sb.WriteString(fmt.Sprintf("PostDown = %s\n", strings.Join(postDownRules, "; ")))
-		sb.WriteString(fmt.Sprintf("# Routes for network: %s\n", cidr))
-	}
+	// Jump server packet filtering & forwarding now handled dynamically by agent firewall adapter.
+	// (No PostUp/PostDown iptables rules embedded in config.)
 
 	sb.WriteString("\n")
 

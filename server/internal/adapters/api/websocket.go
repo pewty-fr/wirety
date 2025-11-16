@@ -135,7 +135,7 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 	// Register connection
 	h.wsManager.Register(networkID, peer.ID, conn)
 
-	cfg, dnsCfg, err := h.service.GeneratePeerConfigWithDNS(c.Request.Context(), networkID, peer.ID)
+	cfg, dnsCfg, policy, err := h.service.GeneratePeerConfigWithDNS(c.Request.Context(), networkID, peer.ID)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to generate initial config (token)")
 		return
@@ -143,9 +143,11 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 	msg := struct {
 		Config string      `json:"config"`
 		DNS    interface{} `json:"dns,omitempty"`
+		Policy interface{} `json:"policy,omitempty"`
 	}{
 		Config: cfg,
 		DNS:    dnsCfg,
+		Policy: policy,
 	}
 	data, _ := json.Marshal(msg)
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
@@ -169,7 +171,7 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 	if peers, exists := m.connections[networkID]; exists {
 		if conn, exists := peers[peerID]; exists {
 			ctx := context.Background()
-			cfg, dnsCfg, err := m.service.GeneratePeerConfigWithDNS(ctx, networkID, peerID)
+			cfg, dnsCfg, policy, err := m.service.GeneratePeerConfigWithDNS(ctx, networkID, peerID)
 			if err != nil {
 				log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to generate config for update")
 				return
@@ -177,9 +179,11 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 			msg := struct {
 				Config string      `json:"config"`
 				DNS    interface{} `json:"dns,omitempty"`
+				Policy interface{} `json:"policy,omitempty"`
 			}{
 				Config: cfg,
 				DNS:    dnsCfg,
+				Policy: policy,
 			}
 			data, _ := json.Marshal(msg)
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {

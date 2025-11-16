@@ -9,6 +9,7 @@ import (
 	"wirety/internal/domain/network"
 
 	goipam "github.com/metal-stack/go-ipam"
+	"github.com/rs/zerolog/log"
 )
 
 // Repository is an in-memory implementation of the network repository
@@ -33,6 +34,7 @@ func (r *Repository) EnsureRootPrefix(ctx context.Context, cidr string) (*networ
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p, err := r.ipam.PrefixFrom(ctx, cidr)
+	log.Error().Err(err).Msg("debug ensure root prefix")
 	if err != nil { // not found, create
 		p, err = r.ipam.NewPrefix(ctx, cidr)
 		if err != nil {

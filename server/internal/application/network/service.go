@@ -384,18 +384,27 @@ func sanitizeDNSLabel(s string) string {
 	return string(out)
 }
 
-// GeneratePeerConfigWithDNS returns WireGuard config and DNS config (for jump peers)
-func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peerID string) (string, *PeerDNSConfig, error) {
+// JumpPolicy contains isolation & ACL data for jump agent filtering
+type JumpPolicy struct {
+	IP    string `json:"ip"`
+	Peers []struct {
+		ID       string `json:"id"`
+		IP       string `json:"ip"`
+		Isolated bool   `json:"isolated"`
+	} `json:"peers"`
+	ACLBlocked []string `json:"acl_blocked"`
+}
+
+// GeneratePeerConfigWithDNS returns WireGuard config, DNS config & jump policy (for jump peers)
+func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peerID string) (string, *PeerDNSConfig, *JumpPolicy, error) {
 	net, err := s.repo.GetNetwork(ctx, networkID)
 	if err != nil {
-		return "", nil, fmt.Errorf("network not found: %w", err)
+		return "", nil, nil, fmt.Errorf("network not found: %w", err)
 	}
-
 	peer, exists := net.GetPeer(peerID)
 	if !exists {
-		return "", nil, fmt.Errorf("peer not found")
+		return "", nil, nil, fmt.Errorf("peer not found")
 	}
-
 	allowedPeers := net.GetAllowedPeersFor(peerID)
 	presharedKeys := make(map[string]string)
 	for _, allowedPeer := range allowedPeers {
@@ -404,24 +413,30 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 			presharedKeys[allowedPeer.ID] = conn.PresharedKey
 		}
 	}
-
 	config := wireguard.GenerateConfig(peer, allowedPeers, net, presharedKeys)
-
 	var dnsConfig *PeerDNSConfig
+	var policy *JumpPolicy
 	if peer.IsJump {
-		// Only jump peers get DNS config: include sanitized name and IP address
 		peerList := make([]DNSPeer, 0, len(net.Peers))
+		policy = &JumpPolicy{
+			IP: peer.Address,
+		}
 		for _, p := range net.Peers {
 			peerList = append(peerList, DNSPeer{Name: sanitizeDNSLabel(p.Name), IP: p.Address})
+			policy.Peers = append(policy.Peers, struct {
+				ID       string `json:"id"`
+				IP       string `json:"ip"`
+				Isolated bool   `json:"isolated"`
+			}{ID: p.ID, IP: p.Address, Isolated: p.IsIsolated})
 		}
-		dnsConfig = &PeerDNSConfig{
-			IP:     peer.Address,
-			Domain: net.Domain,
-			Peers:  peerList,
+		dnsConfig = &PeerDNSConfig{IP: peer.Address, Domain: net.Domain, Peers: peerList}
+		if net.ACL != nil && net.ACL.Enabled {
+			for blockedID := range net.ACL.BlockedPeers {
+				policy.ACLBlocked = append(policy.ACLBlocked, blockedID)
+			}
 		}
 	}
-
-	return config, dnsConfig, nil
+	return config, dnsConfig, policy, nil
 }
 
 // UpdateACL updates the ACL configuration for a network
@@ -430,7 +445,6 @@ func (s *Service) UpdateACL(ctx context.Context, networkID string, acl *network.
 	if err != nil {
 		return fmt.Errorf("network not found: %w", err)
 	}
-
 	return s.repo.UpdateACL(ctx, networkID, acl)
 }
 
@@ -446,3 +460,4 @@ func (s *Service) DeleteNetwork(ctx context.Context, networkID string) error {
 
 // Helper function to get used IPs in the network
 // (previous getUsedIPs helper removed; IPAM now tracks used IPs internally)
+// (No further helpers.)

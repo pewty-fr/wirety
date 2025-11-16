@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 	dnsadapter "wirety/agent/internal/adapters/dns"
+	"wirety/agent/internal/adapters/firewall"
 	"wirety/agent/internal/adapters/wg"
 	"wirety/agent/internal/adapters/ws"
 	app "wirety/agent/internal/application/agent"
@@ -28,12 +29,14 @@ func main() {
 	iface := envOr("WG_INTERFACE", "wg0")
 	configPath := envOr("WG_CONFIG_PATH", "")
 	applyMethod := envOr("WG_APPLY_METHOD", "wg-quick")
+	natIface := envOr("NAT_INTERFACE", "eth0")
 
 	flag.StringVar(&server, "server", server, "Server base URL (no trailing /)")
 	flag.StringVar(&token, "token", token, "Enrollment token")
 	flag.StringVar(&iface, "interface", iface, "WireGuard interface name")
 	flag.StringVar(&configPath, "config", configPath, "Path to wireguard config file")
 	flag.StringVar(&applyMethod, "apply", applyMethod, "Apply method: wg-quick|syncconf")
+	flag.StringVar(&natIface, "nat", natIface, "NAT interface (eth0, etc.)")
 	flag.Parse()
 
 	if token == "" {
@@ -63,7 +66,8 @@ func main() {
 	dnsFactory := func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort {
 		return dnsadapter.NewServer(domain, peers)
 	}
-	runner := app.NewRunner(wsClient, writer, dnsFactory, wsURL)
+	fwAdapter := firewall.NewAdapter(iface, natIface)
+	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, wsURL)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

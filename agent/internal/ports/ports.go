@@ -1,5 +1,7 @@
 package ports
 
+import pol "wirety/agent/internal/domain/policy"
+
 // ConfigWriterPort defines capability to write and apply WireGuard config.
 type ConfigWriterPort interface {
 	WriteAndApply(cfg string) error
@@ -15,4 +17,9 @@ type WebSocketClientPort interface {
 	Connect(url string) error
 	ReadMessage() ([]byte, error)
 	Close() error
+}
+
+// FirewallPort defines capability to synchronize firewall rules based on policy.
+type FirewallPort interface {
+	Sync(policy *pol.JumpPolicy, selfIP string) error
 }

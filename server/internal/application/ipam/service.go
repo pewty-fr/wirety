@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"wirety/internal/domain/network"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Service provides IPAM helper operations backed by the domain Repository.
@@ -44,6 +46,7 @@ func (s *Service) SuggestCIDRs(ctx context.Context, baseCIDR string, maxPeers, c
 	if prefixLen < 8 { // avoid generating giant /7 etc.
 		prefixLen = 8
 	}
+	log.Info().Str("base_cidr", baseCIDR).Int("max_peers", maxPeers).Int("count", count).Msg("suggesting CIDRs")
 
 	// Ensure root prefix persisted
 	_, err := s.repo.EnsureRootPrefix(ctx, baseCIDR)

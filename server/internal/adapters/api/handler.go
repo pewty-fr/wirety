@@ -22,6 +22,22 @@ type Handler struct {
 	wsManager   *WebSocketManager
 }
 
+// PaginatedNetworks represents a paginated list of networks
+type PaginatedNetworks struct {
+	Data     []*domain.Network `json:"data"`
+	Total    int               `json:"total"`
+	Page     int               `json:"page"`
+	PageSize int               `json:"page_size"`
+}
+
+// PaginatedPeers represents a paginated list of peers
+type PaginatedPeers struct {
+	Data     []*domain.Peer `json:"data"`
+	Total    int            `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"page_size"`
+}
+
 // NewHandler creates a new API handler
 func NewHandler(service *network.Service, ipamService *ipam.Service) *Handler {
 	return &Handler{
@@ -70,6 +86,13 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.GET("/ws", h.HandleWebSocketToken)               // token-based (?token=...)
 		api.GET("/health", h.Health)
 		api.GET("/ipam/available-cidrs", h.GetAvailableCIDRs)
+
+		// IPAM routes
+		ipam := api.Group("/ipam")
+		{
+			ipam.GET("", h.ListIPAMAllocations)
+			ipam.GET("/networks/:networkId", h.GetNetworkIPAM)
+		}
 	}
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 }
@@ -174,21 +197,62 @@ func (h *Handler) GetNetwork(c *gin.Context) {
 
 // ListNetworks godoc
 //
-//	@Summary		List all networks
-//	@Description	Get a list of all networks
-//	@Tags			networks
-//	@Produce		json
-//	@Success		200	{array}		domain.Network
-//	@Failure		500	{object}	map[string]string
-//	@Router			/networks [get]
+// @Summary      List networks (paginated)
+// @Description  Get a paginated list of networks. Supports optional filtering by name or CIDR substring.
+// @Tags         networks
+// @Produce      json
+// @Param        page      query int    false "Page number" default(1)
+// @Param        page_size query int    false "Page size" default(20)
+// @Param        filter    query string false "Filter by network name or CIDR"
+// @Success      200 {object} PaginatedNetworks
+// @Failure      500 {object} map[string]string
+// @Router       /networks [get]
 func (h *Handler) ListNetworks(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	filter := c.Query("filter")
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 20
+	}
+
 	networks, err := h.service.ListNetworks(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, networks)
+	// Apply filtering
+	var filtered []*domain.Network
+	if filter != "" {
+		for _, n := range networks {
+			if containsIgnoreCase(n.Name, filter) || containsIgnoreCase(n.CIDR, filter) || containsIgnoreCase(n.ID, filter) {
+				filtered = append(filtered, n)
+			}
+		}
+	} else {
+		filtered = networks
+	}
+
+	total := len(filtered)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	c.JSON(http.StatusOK, PaginatedNetworks{
+		Data:     filtered[start:end],
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
 }
 
 // UpdateNetwork godoc
@@ -309,16 +373,29 @@ func (h *Handler) GetPeer(c *gin.Context) {
 
 // ListPeers godoc
 //
-//	@Summary		List all peers
-//	@Description	Get a list of all peers in a network
-//	@Tags			peers
-//	@Produce		json
-//	@Param			networkId	path		string	true	"Network ID"
-//	@Success		200			{array}		domain.Peer
-//	@Failure		500			{object}	map[string]string
-//	@Router			/networks/{networkId}/peers [get]
+// @Summary      List peers (paginated)
+// @Description  Get a paginated list of peers in a network. Supports optional filtering by name, address (IP), or ID substring.
+// @Tags         peers
+// @Produce      json
+// @Param        networkId path string true "Network ID"
+// @Param        page      query int    false "Page number" default(1)
+// @Param        page_size query int    false "Page size" default(20)
+// @Param        filter    query string false "Filter by peer name, IP address or ID"
+// @Success      200 {object} PaginatedPeers
+// @Failure      500 {object} map[string]string
+// @Router       /networks/{networkId}/peers [get]
 func (h *Handler) ListPeers(c *gin.Context) {
 	networkID := c.Param("networkId")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	filter := c.Query("filter")
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 500 { // peers per network might be larger
+		pageSize = 20
+	}
 
 	peers, err := h.service.ListPeers(c.Request.Context(), networkID)
 	if err != nil {
@@ -326,7 +403,33 @@ func (h *Handler) ListPeers(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, peers)
+	var filtered []*domain.Peer
+	if filter != "" {
+		for _, p := range peers {
+			if containsIgnoreCase(p.Name, filter) || containsIgnoreCase(p.Address, filter) || containsIgnoreCase(p.ID, filter) {
+				filtered = append(filtered, p)
+			}
+		}
+	} else {
+		filtered = peers
+	}
+
+	total := len(filtered)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	c.JSON(http.StatusOK, PaginatedPeers{
+		Data:     filtered[start:end],
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
 }
 
 // UpdatePeer godoc
@@ -392,15 +495,15 @@ func (h *Handler) DeletePeer(c *gin.Context) {
 
 // GetPeerConfig godoc
 //
-//	@Summary		Get peer configuration
-//	@Description	Get WireGuard configuration for a specific peer
-//	@Tags			peers
-//	@Produce		plain
-//	@Param			networkId	path		string	true	"Network ID"
-//	@Param			peerId		path		string	true	"Peer ID"
-//	@Success		200			{string}	string	"WireGuard configuration"
-//	@Failure		404			{object}	map[string]string
-//	@Router			/networks/{networkId}/peers/{peerId}/config [get]
+// @Summary      Get peer configuration
+// @Description  Get WireGuard configuration for a specific peer returned as JSON object
+// @Tags         peers
+// @Produce      json
+// @Param        networkId path string true "Network ID"
+// @Param        peerId    path string true "Peer ID"
+// @Success      200 {object} map[string]string "JSON object containing config key"
+// @Failure      404 {object} map[string]string
+// @Router       /networks/{networkId}/peers/{peerId}/config [get]
 func (h *Handler) GetPeerConfig(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
@@ -411,7 +514,7 @@ func (h *Handler) GetPeerConfig(c *gin.Context) {
 		return
 	}
 
-	c.String(http.StatusOK, config)
+	c.JSON(http.StatusOK, gin.H{"config": config})
 }
 
 // GetACL godoc
@@ -510,4 +613,172 @@ func (h *Handler) ResolveAgent(c *gin.Context) {
 		"peer_id":    peer.ID,
 		"config":     cfg,
 	})
+}
+
+// IPAMAllocation represents an IP allocation with network and peer information
+type IPAMAllocation struct {
+	NetworkID   string `json:"network_id"`
+	NetworkName string `json:"network_name"`
+	NetworkCIDR string `json:"network_cidr"`
+	IP          string `json:"ip"`
+	PeerID      string `json:"peer_id,omitempty"`
+	PeerName    string `json:"peer_name,omitempty"`
+	Allocated   bool   `json:"allocated"`
+}
+
+// ListIPAMAllocations godoc
+// @Summary      List all IP allocations
+// @Description  Get a list of all IP allocations across all networks with pagination and filtering
+// @Tags         ipam
+// @Produce      json
+// @Param        page      query int    false "Page number" default(1)
+// @Param        page_size query int    false "Page size" default(20)
+// @Param        filter    query string false "Filter by network name, IP, or peer name"
+// @Success      200 {object} map[string]any
+// @Failure      500 {object} map[string]string
+// @Router       /ipam [get]
+func (h *Handler) ListIPAMAllocations(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	filter := c.Query("filter")
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	networks, err := h.service.ListNetworks(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var allAllocations []IPAMAllocation
+
+	for _, net := range networks {
+		peers, err := h.service.ListPeers(c.Request.Context(), net.ID)
+		if err != nil {
+			continue
+		}
+
+		// Create allocation for each peer
+		for _, peer := range peers {
+			allocation := IPAMAllocation{
+				NetworkID:   net.ID,
+				NetworkName: net.Name,
+				NetworkCIDR: net.CIDR,
+				IP:          peer.Address,
+				PeerID:      peer.ID,
+				PeerName:    peer.Name,
+				Allocated:   true,
+			}
+
+			// Apply filter if provided
+			if filter != "" {
+				filterLower := filter
+				if !contains(allocation.NetworkName, filterLower) &&
+					!contains(allocation.IP, filterLower) &&
+					!contains(allocation.PeerName, filterLower) {
+					continue
+				}
+			}
+
+			allAllocations = append(allAllocations, allocation)
+		}
+	}
+
+	// Calculate pagination
+	total := len(allAllocations)
+	start := (page - 1) * pageSize
+	end := start + pageSize
+
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	paginatedData := allAllocations[start:end]
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      paginatedData,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
+}
+
+// GetNetworkIPAM godoc
+// @Summary      Get network IPAM allocations
+// @Description  Get all IP allocations for a specific network
+// @Tags         ipam
+// @Produce      json
+// @Param        networkId path string true "Network ID"
+// @Success      200 {array} IPAMAllocation
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /ipam/networks/{networkId} [get]
+func (h *Handler) GetNetworkIPAM(c *gin.Context) {
+	networkID := c.Param("networkId")
+
+	net, err := h.service.GetNetwork(c.Request.Context(), networkID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "network not found"})
+		return
+	}
+
+	peers, err := h.service.ListPeers(c.Request.Context(), networkID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var allocations []IPAMAllocation
+	for _, peer := range peers {
+		allocations = append(allocations, IPAMAllocation{
+			NetworkID:   net.ID,
+			NetworkName: net.Name,
+			NetworkCIDR: net.CIDR,
+			IP:          peer.Address,
+			PeerID:      peer.ID,
+			PeerName:    peer.Name,
+			Allocated:   true,
+		})
+	}
+
+	c.JSON(http.StatusOK, allocations)
+}
+
+// Helper function for case-insensitive substring search
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr ||
+		len(substr) == 0 ||
+		containsIgnoreCase(s, substr))
+}
+
+func containsIgnoreCase(s, substr string) bool {
+	s = toLower(s)
+	substr = toLower(substr)
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func toLower(s string) string {
+	result := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			result[i] = c + 32
+		} else {
+			result[i] = c
+		}
+	}
+	return string(result)
 }

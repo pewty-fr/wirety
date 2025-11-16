@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 	dom "wirety/agent/internal/domain/dns"
+	pol "wirety/agent/internal/domain/policy"
 	"wirety/agent/internal/ports"
 
 	"github.com/rs/zerolog/log"
@@ -13,23 +14,26 @@ import (
 // WebSocket message shape from server
 // DNS optional; only for jump peer
 // Peers list contains name + ip
+// Policy optional; only for jump peer
 
 type WSMessage struct {
-	Config string         `json:"config"`
-	DNS    *dom.DNSConfig `json:"dns,omitempty"`
+	Config string          `json:"config"`
+	DNS    *dom.DNSConfig  `json:"dns,omitempty"`
+	Policy *pol.JumpPolicy `json:"policy,omitempty"`
 }
 
 type Runner struct {
 	wsClient    ports.WebSocketClientPort
 	cfgWriter   ports.ConfigWriterPort
 	dnsFactory  func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort // factory to create DNS server instance
+	fwAdapter   ports.FirewallPort
 	wsURL       string
 	backoffBase time.Duration
 	backoffMax  time.Duration
 }
 
-func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, wsURL string) *Runner {
-	return &Runner{wsClient: wsClient, cfgWriter: writer, dnsFactory: dnsFactory, wsURL: wsURL, backoffBase: time.Second, backoffMax: 30 * time.Second}
+func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string) *Runner {
+	return &Runner{wsClient: wsClient, cfgWriter: writer, dnsFactory: dnsFactory, fwAdapter: fwAdapter, wsURL: wsURL, backoffBase: time.Second, backoffMax: 30 * time.Second}
 }
 
 func (r *Runner) Start(stop <-chan struct{}) {
@@ -87,6 +91,14 @@ func (r *Runner) Start(stop <-chan struct{}) {
 						log.Error().Err(err).Msg("dns server exited")
 					}
 				}()
+			}
+			if payload.Policy != nil && r.fwAdapter != nil {
+				log.Info().Int("peer_count", len(payload.Policy.Peers)).Msg("applying firewall policy")
+				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP); err != nil {
+					log.Error().Err(err).Msg("failed applying firewall policy")
+				} else {
+					log.Debug().Msg("firewall policy applied")
+				}
 			}
 		}
 	}
