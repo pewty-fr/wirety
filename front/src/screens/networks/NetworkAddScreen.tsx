@@ -16,7 +16,7 @@ export const NetworkAddScreen = () => {
   // suggestion inputs
   const [maxPeers, setMaxPeers] = useState('');
   const [baseCIDR, setBaseCIDR] = useState('');
-  const [count, setCount] = useState('1');
+  const [count, setCount] = useState('10');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
 
@@ -125,7 +125,7 @@ export const NetworkAddScreen = () => {
           label="Count (optional)"
           value={count}
           onChangeText={setCount}
-          placeholder="1"
+          placeholder="10"
           keyboardType="numeric"
           error={errors.count}
         />
@@ -141,13 +141,6 @@ export const NetworkAddScreen = () => {
           {!suggestLoading && suggestions.length === 0 && (
             <Text style={styles.hint}>Enter max peers then tap Get Suggestions</Text>
           )}
-        </View>
-
-        <Title style={styles.sectionTitle}>Quick Presets</Title>
-        <View style={styles.chipContainer}>
-          {suggestCIDRs().map((preset) => (
-            <Chip key={preset} onPress={() => setCidr(preset)} style={styles.chip}>{preset}</Chip>
-          ))}
         </View>
 
         <TextInput

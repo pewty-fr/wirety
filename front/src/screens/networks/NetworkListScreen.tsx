@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, FlatList, StyleSheet } from 'react-native';
 import { Text, Card, Searchbar, FAB } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import api from '../../services/api';
 import { Network } from '../../types/api';
 import { Pagination } from '../../components/Pagination';
@@ -30,6 +30,12 @@ export const NetworkListScreen = () => {
   useEffect(() => {
     loadNetworks();
   }, [page, searchQuery]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadNetworks();
+    }, [page, searchQuery])
+  );
 
   const renderNetwork = ({ item }: { item: Network }) => (
     <Card

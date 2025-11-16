@@ -6,6 +6,8 @@ import (
 
 	"wirety/internal/domain/network"
 
+	goipam "github.com/metal-stack/go-ipam"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -49,19 +51,30 @@ func (s *Service) SuggestCIDRs(ctx context.Context, baseCIDR string, maxPeers, c
 	log.Info().Str("base_cidr", baseCIDR).Int("max_peers", maxPeers).Int("count", count).Msg("suggesting CIDRs")
 
 	// Ensure root prefix persisted
-	_, err := s.repo.EnsureRootPrefix(ctx, baseCIDR)
-	if err != nil {
-		return 0, nil, err
-	}
+	// _, err := s.repo.EnsureRootPrefix(ctx, baseCIDR)
+	// if err != nil {
+	// 	return 0, nil, err
+	// }
 
 	cidrs := make([]string, 0, count)
+	ipam := goipam.New(context.Background())
+	ipam.NewPrefix(ctx, baseCIDR)
+
 	for i := 0; i < count; i++ {
-		child, err := s.repo.AcquireChildPrefix(ctx, baseCIDR, uint8(prefixLen))
+
+		prefix, err := ipam.AcquireChildPrefix(ctx, baseCIDR, uint8(prefixLen))
 		if err != nil {
-			if len(cidrs) == 0 {
-				return 0, nil, fmt.Errorf("failed allocating child prefix: %w", err)
-			}
-			break
+			return 0, nil, fmt.Errorf("failed allocating child prefix: %w", err)
+		}
+		child, err := s.repo.EnsureRootPrefix(ctx, prefix.Cidr)
+		if err != nil {
+			// if root prefix can't be ensured, that means the it overlap. we need to try again
+			i--
+			continue
+		}
+		err = s.repo.DeletePrefix(ctx, child.CIDR)
+		if err != nil {
+			return 0, nil, fmt.Errorf("failed deleting temporary prefix: %w", err)
 		}
 		cidrs = append(cidrs, child.CIDR)
 	}

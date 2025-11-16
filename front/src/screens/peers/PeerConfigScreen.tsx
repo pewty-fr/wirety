@@ -66,6 +66,7 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: 10,
     backgroundColor: '#f0f0f0',
+    color: '#000',
     padding: 12,
     borderRadius: 4,
     marginBottom: 12,

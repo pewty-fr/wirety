@@ -59,6 +59,8 @@ export const PeerAddJumpScreen = () => {
         full_encapsulation: false,
         additional_allowed_ips: additional_allowed_ips.length > 0 ? additional_allowed_ips : undefined,
       });
+      // Go back twice: past choice screen to peer list
+      navigation.goBack();
       navigation.goBack();
     } catch (error) {
       console.error('Failed to create jump server:', error);

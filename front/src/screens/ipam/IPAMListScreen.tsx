@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, FlatList, StyleSheet } from 'react-native';
 import { Text, Card, Searchbar, Chip } from 'react-native-paper';
+import { useFocusEffect } from '@react-navigation/native';
 import api from '../../services/api';
 import { IPAMAllocation } from '../../types/api';
 import { Pagination } from '../../components/Pagination';
@@ -28,6 +29,12 @@ export const IPAMListScreen = () => {
   useEffect(() => {
     loadAllocations();
   }, [page, searchQuery]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadAllocations();
+    }, [page, searchQuery])
+  );
 
   const renderAllocation = ({ item }: { item: IPAMAllocation }) => (
     <Card style={styles.card}>

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
-import { Title, Card, Text, Button, ActivityIndicator } from 'react-native-paper';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { Title, Card, Text, Button, ActivityIndicator, IconButton } from 'react-native-paper';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import api from '../../services/api';
 import { Network } from '../../types/api';
 import { formatDate } from '../../utils/validation';
@@ -16,6 +16,31 @@ export const NetworkViewScreen = () => {
   useEffect(() => {
     loadNetwork();
   }, [id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadNetwork();
+    }, [id])
+  );
+
+  useEffect(() => {
+    if (network) {
+      navigation.setOptions({
+        headerRight: () => (
+          <View style={{ flexDirection: 'row' }}>
+            <IconButton
+              icon="pencil"
+              onPress={() => navigation.navigate('NetworkUpdate' as never, { id } as never)}
+            />
+            <IconButton
+              icon="delete"
+              onPress={handleDelete}
+            />
+          </View>
+        ),
+      });
+    }
+  }, [network, navigation]);
 
   const loadNetwork = async () => {
     setLoading(true);
@@ -81,24 +106,10 @@ export const NetworkViewScreen = () => {
       <View style={styles.actions}>
         <Button
           mode="contained"
-          onPress={() => navigation.navigate('NetworkUpdate' as never, { id } as never)}
-          style={styles.button}
-        >
-          Edit Network
-        </Button>
-        <Button
-          mode="contained"
           onPress={() => navigation.navigate('PeerList' as never, { networkId: id } as never)}
           style={styles.button}
         >
           View Peers
-        </Button>
-        <Button
-          mode="outlined"
-          onPress={handleDelete}
-          style={styles.button}
-        >
-          Delete Network
         </Button>
       </View>
     </ScrollView>

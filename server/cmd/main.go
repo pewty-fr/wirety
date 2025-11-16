@@ -51,7 +51,7 @@ func main() {
 	handler := api.NewHandler(networkService, ipamService)
 
 	// Setup Gin router
-	// gin.SetMode(gin.ReleaseMode)
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
 	// Configure CORS to allow all origins

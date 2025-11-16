@@ -1,27 +1,97 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, FlatList, StyleSheet } from 'react-native';
-import { Text, Card, Searchbar, FAB, Chip } from 'react-native-paper';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { Text, Card, Searchbar, FAB, Chip, Menu, Button } from 'react-native-paper';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import api from '../../services/api';
-import { Peer } from '../../types/api';
+import { Peer, Network } from '../../types/api';
 import { Pagination } from '../../components/Pagination';
 
 export const PeerListScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
-  const { networkId } = route.params as { networkId: string };
+  const params = route.params as { networkId?: string } | undefined;
+  const networkId = params?.networkId;
   const [peers, setPeers] = useState<Peer[]>([]);
+  const [allPeers, setAllPeers] = useState<Peer[]>([]);
+  const [networks, setNetworks] = useState<Network[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterNetworkId, setFilterNetworkId] = useState<string | null>(null);
+  const [menuVisible, setMenuVisible] = useState(false);
 
   const loadPeers = async () => {
     setLoading(true);
     try {
-      const response = await api.getPeers(networkId, page, 20, searchQuery);
-      setPeers(response.data);
-      setTotalPages(Math.ceil(response.total / response.page_size));
+      let loadedPeers: Peer[] = [];
+      let loadedNetworks: Network[] = [];
+      
+      if (networkId) {
+        // Load peers for specific network
+        const networkResponse = await api.getNetwork(networkId);
+        const response = await api.getPeers(networkId, 1, 1000, '');
+        loadedPeers = response.data.map(peer => ({ 
+          ...peer, 
+          network_id: networkId,
+          network_name: networkResponse.name 
+        }));
+        loadedNetworks = [networkResponse];
+      } else {
+        // Load all networks first, then load peers for each
+        const networksResponse = await api.getNetworks(1, 1000, '');
+        loadedNetworks = networksResponse.data;
+        
+        // Load peers for each network in parallel
+        const peersPromises = loadedNetworks.map(network => 
+          api.getPeers(network.id, 1, 1000, '').then(response => ({
+            networkId: network.id,
+            networkName: network.name,
+            peers: response.data
+          })).catch(err => {
+            console.error(`Failed to load peers for network ${network.id}:`, err);
+            return { networkId: network.id, networkName: network.name, peers: [] };
+          })
+        );
+        
+        const peersResponses = await Promise.all(peersPromises);
+        loadedPeers = peersResponses.flatMap(response => 
+          response.peers.map(peer => ({ 
+            ...peer, 
+            network_id: response.networkId,
+            network_name: response.networkName 
+          }))
+        );
+      }
+      
+      setNetworks(loadedNetworks);
+      setAllPeers(loadedPeers);
+      
+      // Apply network filter
+      let filtered = loadedPeers;
+      if (filterNetworkId) {
+        filtered = filtered.filter(p => p.network_id === filterNetworkId);
+      }
+      
+      // Apply search filter
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        filtered = filtered.filter(p => 
+          p.name.toLowerCase().includes(query) ||
+          p.address.toLowerCase().includes(query) ||
+          p.id.toLowerCase().includes(query) ||
+          (p.network_name && p.network_name.toLowerCase().includes(query))
+        );
+      }
+      
+      // Apply local pagination
+      const total = filtered.length;
+      const start = (page - 1) * 20;
+      const end = start + 20;
+      const paginated = filtered.slice(start, end);
+      
+      setPeers(paginated);
+      setTotalPages(Math.ceil(total / 20));
     } catch (error) {
       console.error('Failed to load peers:', error);
     } finally {
@@ -29,9 +99,51 @@ export const PeerListScreen = () => {
     }
   };
 
+  // Re-apply filters when filter changes without reloading from server
+  const applyFilters = useCallback(() => {
+    let filtered = allPeers;
+    
+    // Apply network filter
+    if (filterNetworkId) {
+      filtered = filtered.filter(p => p.network_id === filterNetworkId);
+    }
+    
+    // Apply search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(p => 
+        p.name.toLowerCase().includes(query) ||
+        p.address.toLowerCase().includes(query) ||
+        p.id.toLowerCase().includes(query) ||
+        (p.network_name && p.network_name.toLowerCase().includes(query))
+      );
+    }
+    
+    // Apply local pagination
+    const total = filtered.length;
+    const start = (page - 1) * 20;
+    const end = start + 20;
+    const paginated = filtered.slice(start, end);
+    
+    setPeers(paginated);
+    setTotalPages(Math.ceil(total / 20));
+  }, [allPeers, filterNetworkId, searchQuery, page]);
+
+  useEffect(() => {
+    if (allPeers.length > 0) {
+      applyFilters();
+    }
+  }, [filterNetworkId, searchQuery, page, applyFilters]);
+
   useEffect(() => {
     loadPeers();
-  }, [page, searchQuery]);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadPeers();
+    }, [networkId])
+  );
 
   const renderPeer = ({ item }: { item: Peer }) => (
     <Card
@@ -39,11 +151,14 @@ export const PeerListScreen = () => {
       onPress={() =>
         navigation.navigate(
           'PeerView' as never,
-          { networkId, peerId: item.id, isJump: item.is_jump } as never
+          { networkId: item.network_id || networkId, peerId: item.id, isJump: item.is_jump } as never
         )
       }
     >
-      <Card.Title title={item.name} subtitle={item.address} />
+      <Card.Title 
+        title={item.name} 
+        subtitle={`${item.address}${item.network_name ? ` • ${item.network_name}` : ''}`} 
+      />
       <Card.Content>
         <View style={styles.chips}>
           {item.is_jump && <Chip mode="flat">Jump Server</Chip>}
@@ -54,14 +169,57 @@ export const PeerListScreen = () => {
     </Card>
   );
 
+  const getFilterLabel = () => {
+    if (!filterNetworkId) return 'All Networks';
+    const network = networks.find(n => n.id === filterNetworkId);
+    return network ? network.name : 'Filter by Network';
+  };
+
   return (
     <View style={styles.container}>
-      <Searchbar
-        placeholder="Search peers"
-        onChangeText={setSearchQuery}
-        value={searchQuery}
-        style={styles.searchbar}
-      />
+      <View style={styles.searchContainer}>
+        <Searchbar
+          placeholder="Search peers"
+          onChangeText={setSearchQuery}
+          value={searchQuery}
+          style={styles.searchbar}
+        />
+        {!networkId && networks.length > 0 && (
+          <Menu
+            visible={menuVisible}
+            onDismiss={() => setMenuVisible(false)}
+            anchor={
+              <Button 
+                mode="outlined" 
+                onPress={() => setMenuVisible(true)}
+                style={styles.filterButton}
+              >
+                {getFilterLabel()}
+              </Button>
+            }
+          >
+            <Menu.Item 
+              onPress={() => {
+                setFilterNetworkId(null);
+                setMenuVisible(false);
+                setPage(1);
+              }} 
+              title="All Networks" 
+            />
+            {networks.map(network => (
+              <Menu.Item 
+                key={network.id}
+                onPress={() => {
+                  setFilterNetworkId(network.id);
+                  setMenuVisible(false);
+                  setPage(1);
+                }} 
+                title={network.name} 
+              />
+            ))}
+          </Menu>
+        )}
+      </View>
       <FlatList
         data={peers}
         renderItem={renderPeer}
@@ -70,13 +228,15 @@ export const PeerListScreen = () => {
         onRefresh={loadPeers}
       />
       <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
-      <FAB
-        style={styles.fab}
-        icon="plus"
-        onPress={() =>
-          navigation.navigate('PeerAddChoice' as never, { networkId } as never)
-        }
-      />
+      {(networkId || filterNetworkId) && (
+        <FAB
+          style={styles.fab}
+          icon="plus"
+          onPress={() =>
+            navigation.navigate('PeerAddChoice' as never, { networkId: networkId || filterNetworkId } as never)
+          }
+        />
+      )}
     </View>
   );
 };
@@ -86,8 +246,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
+  searchContainer: {
+    padding: 16,
+    paddingBottom: 8,
+  },
   searchbar: {
-    margin: 16,
+    marginBottom: 8,
+  },
+  filterButton: {
+    marginTop: 8,
   },
   card: {
     margin: 8,

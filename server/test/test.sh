@@ -14,7 +14,7 @@ BASE_URL="${WIRETY_BASE_URL:-http://localhost:8080/api/v1}"
 echo "==> Creating network"
 NETWORK_RESP=$(curl -s -X POST "${BASE_URL}/networks" \
 	-H 'Content-Type: application/json' \
-	-d '{"name":"demo-net","cidr":"10.42.0.0/24","domain":"demo.local"}')
+	-d '{"name":"demo-net","cidr":"10.0.0.0/24","domain":"demo.local"}')
 echo "$NETWORK_RESP" | jq '.'
 NETWORK_ID=$(echo "$NETWORK_RESP" | jq -r '.id')
 if [[ -z "$NETWORK_ID" || "$NETWORK_ID" == "null" ]]; then

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, Alert } from 'react-native';
-import { Title, Card, Text, Button, ActivityIndicator, Chip } from 'react-native-paper';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { Title, Card, Text, Button, ActivityIndicator, Chip, IconButton } from 'react-native-paper';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import api from '../../services/api';
 import { Peer } from '../../types/api';
 import { formatDate } from '../../utils/validation';
@@ -16,6 +16,36 @@ export const PeerViewScreen = () => {
   useEffect(() => {
     loadPeer();
   }, [peerId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadPeer();
+    }, [networkId, peerId])
+  );
+
+  useEffect(() => {
+    if (peer) {
+      navigation.setOptions({
+        headerRight: () => (
+          <View style={{ flexDirection: 'row' }}>
+            <IconButton
+              icon="pencil"
+              onPress={() =>
+                navigation.navigate(
+                  peer.is_jump ? ('PeerUpdateJump' as never) : ('PeerUpdateRegular' as never),
+                  { networkId, peerId } as never
+                )
+              }
+            />
+            <IconButton
+              icon="delete"
+              onPress={handleDelete}
+            />
+          </View>
+        ),
+      });
+    }
+  }, [peer, navigation]);
 
   const loadPeer = async () => {
     setLoading(true);
@@ -115,18 +145,6 @@ export const PeerViewScreen = () => {
         <Button
           mode="contained"
           onPress={() =>
-            navigation.navigate(
-              peer.is_jump ? ('PeerUpdateJump' as never) : ('PeerUpdateRegular' as never),
-              { networkId, peerId } as never
-            )
-          }
-          style={styles.button}
-        >
-          Edit Peer
-        </Button>
-        <Button
-          mode="contained"
-          onPress={() =>
             navigation.navigate('PeerToken' as never, { networkId, peerId } as never)
           }
           style={styles.button}
@@ -141,9 +159,6 @@ export const PeerViewScreen = () => {
           style={styles.button}
         >
           View Config
-        </Button>
-        <Button mode="outlined" onPress={handleDelete} style={styles.button}>
-          Delete Peer
         </Button>
       </View>
     </ScrollView>

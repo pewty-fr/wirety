@@ -16,6 +16,7 @@ export interface NetworkCreateRequest {
 
 export interface NetworkUpdateRequest {
   name?: string;
+  cidr?: string;
   domain?: string;
 }
 
@@ -34,6 +35,8 @@ export interface Peer {
   full_encapsulation: boolean;
   created_at: string;
   updated_at: string;
+  network_id?: string; // Added for when loading all peers across networks
+  network_name?: string; // Added to display network name on peer cards
 }
 
 export interface PeerCreateRequest {

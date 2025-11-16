@@ -1,20 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
-import { Title, HelperText } from 'react-native-paper';
+import { Title, HelperText, Chip, ActivityIndicator, Text } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import api from '../../services/api';
 import { Network } from '../../types/api';
 import { TextInput, FormButton } from '../../components/FormComponents';
-import { validateDomain } from '../../utils/validation';
+import { validateCIDR, validateDomain } from '../../utils/validation';
 
 export const NetworkUpdateScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { id } = route.params as { id: string };
   const [name, setName] = useState('');
+  const [cidr, setCidr] = useState('');
   const [domain, setDomain] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  // suggestion inputs
+  const [maxPeers, setMaxPeers] = useState('');
+  const [baseCIDR, setBaseCIDR] = useState('');
+  const [count, setCount] = useState('10');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
 
   useEffect(() => {
     loadNetwork();
@@ -24,6 +31,7 @@ export const NetworkUpdateScreen = () => {
     try {
       const network = await api.getNetwork(id);
       setName(network.name);
+      setCidr(network.cidr);
       setDomain(network.domain);
     } catch (error) {
       console.error('Failed to load network:', error);
@@ -34,6 +42,11 @@ export const NetworkUpdateScreen = () => {
     const newErrors: { [key: string]: string } = {};
     
     if (!name.trim()) newErrors.name = 'Name is required';
+    if (!cidr.trim()) {
+      newErrors.cidr = 'CIDR is required';
+    } else if (!validateCIDR(cidr)) {
+      newErrors.cidr = 'Invalid CIDR format';
+    }
     if (!domain.trim()) {
       newErrors.domain = 'Domain is required';
     } else if (!validateDomain(domain)) {
@@ -49,13 +62,41 @@ export const NetworkUpdateScreen = () => {
 
     setLoading(true);
     try {
-      await api.updateNetwork(id, { name, domain });
+      await api.updateNetwork(id, { name, cidr, domain });
       navigation.goBack();
     } catch (error) {
       console.error('Failed to update network:', error);
       setErrors({ submit: 'Failed to update network' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSuggest = async () => {
+    setErrors((prev) => {
+      const copy = { ...prev };
+      delete copy.suggest;
+      return copy;
+    });
+    const maxPeersNum = parseInt(maxPeers, 10);
+    if (!maxPeers || isNaN(maxPeersNum) || maxPeersNum <= 0) {
+      setErrors((prev) => ({ ...prev, max_peers: 'Max peers must be a positive integer' }));
+      return;
+    }
+    const countNum = parseInt(count, 10);
+    if (isNaN(countNum) || countNum <= 0) {
+      setErrors((prev) => ({ ...prev, count: 'Count must be a positive integer' }));
+      return;
+    }
+    setSuggestLoading(true);
+    try {
+      const data = await api.getAvailableCIDRs(maxPeersNum, countNum, baseCIDR || undefined);
+      setSuggestions(data.cidrs);
+    } catch (e) {
+      console.error('Failed to fetch CIDR suggestions', e);
+      setErrors((prev) => ({ ...prev, suggest: 'Failed to fetch suggestions' }));
+    } finally {
+      setSuggestLoading(false);
     }
   };
 
@@ -72,6 +113,53 @@ export const NetworkUpdateScreen = () => {
           error={errors.name}
         />
         {errors.name && <HelperText type="error">{errors.name}</HelperText>}
+
+        <TextInput
+          label="CIDR (or choose a suggestion)"
+          value={cidr}
+          onChangeText={setCidr}
+          placeholder="10.0.0.0/24"
+          error={errors.cidr}
+        />
+        {errors.cidr && <HelperText type="error">{errors.cidr}</HelperText>}
+
+        <Title style={styles.sectionTitle}>Suggest CIDRs</Title>
+        <TextInput
+          label="Max Peers (required)"
+          value={maxPeers}
+          onChangeText={setMaxPeers}
+          placeholder="50"
+          keyboardType="numeric"
+          error={errors.max_peers}
+        />
+        {errors.max_peers && <HelperText type="error">{errors.max_peers}</HelperText>}
+        <TextInput
+          label="Base CIDR (optional)"
+          value={baseCIDR}
+          onChangeText={setBaseCIDR}
+          placeholder="10.0.0.0/8"
+        />
+        <TextInput
+          label="Count (optional)"
+          value={count}
+          onChangeText={setCount}
+          placeholder="10"
+          keyboardType="numeric"
+          error={errors.count}
+        />
+        {errors.count && <HelperText type="error">{errors.count}</HelperText>}
+        {errors.suggest && <HelperText type="error">{errors.suggest}</HelperText>}
+        <FormButton title="Get Suggestions" onPress={handleSuggest} loading={suggestLoading} />
+
+        <View style={styles.chipContainer}>
+          {suggestLoading && <ActivityIndicator style={{ margin: 8 }} />}
+          {!suggestLoading && suggestions.map((s) => (
+            <Chip key={s} onPress={() => setCidr(s)} style={styles.chip}>{s}</Chip>
+          ))}
+          {!suggestLoading && suggestions.length === 0 && (
+            <Text style={styles.hint}>Enter max peers then tap Get Suggestions</Text>
+          )}
+        </View>
 
         <TextInput
           label="Domain"
@@ -106,5 +194,22 @@ const styles = StyleSheet.create({
   },
   form: {
     padding: 16,
+  },
+  chipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginVertical: 8,
+  },
+  chip: {
+    margin: 4,
+  },
+  sectionTitle: {
+    marginTop: 24,
+    marginBottom: 8,
+    fontSize: 16,
+  },
+  hint: {
+    marginHorizontal: 8,
+    color: '#666',
   },
 });

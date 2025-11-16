@@ -39,4 +39,3 @@ docs/swagger/
 # Environment files
 .env
 .env.local
-

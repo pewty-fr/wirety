@@ -48,6 +48,8 @@ export const PeerAddRegularScreen = () => {
         full_encapsulation: fullEncapsulation,
         additional_allowed_ips: additional_allowed_ips.length > 0 ? additional_allowed_ips : undefined,
       });
+      // Go back twice: past choice screen to peer list
+      navigation.goBack();
       navigation.goBack();
     } catch (error) {
       console.error('Failed to create peer:', error);

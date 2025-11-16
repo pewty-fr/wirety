@@ -39,6 +39,9 @@ type Repository interface {
 	// IPAM operations (to allow persistence of address management)
 	EnsureRootPrefix(ctx context.Context, cidr string) (*IPAMPrefix, error)
 	AcquireChildPrefix(ctx context.Context, parentCIDR string, prefixLen uint8) (*IPAMPrefix, error)
+	DeletePrefix(ctx context.Context, cidr string) error
+	AcquireSpecificChildPrefix(ctx context.Context, parentCIDR string, cidr string) (*IPAMPrefix, error)
+	ReleaseChildPrefix(ctx context.Context, cidr string) error
 	ListChildPrefixes(ctx context.Context, parentCIDR string) ([]*IPAMPrefix, error)
 	AcquireIP(ctx context.Context, cidr string) (string, error)
 	ReleaseIP(ctx context.Context, cidr string, ip string) error
