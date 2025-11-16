@@ -3,7 +3,7 @@ PKG := ./...
 BINARY := wirety-agent
 VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
-DIST_DIR := dist
+DIST_DIR := bin
 
 .PHONY: build run test lint docker-build clean build-all build-platform help
 
