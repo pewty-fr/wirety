@@ -1,0 +1,678 @@
+basePath: /api/v1
+definitions:
+  network.ACL:
+    properties:
+      blocked_peers:
+        additionalProperties:
+          type: boolean
+        description: Peer IDs that are blocked
+        type: object
+      enabled:
+        type: boolean
+      id:
+        type: string
+      name:
+        type: string
+      rules:
+        items:
+          $ref: '#/definitions/network.ACLRule'
+        type: array
+    type: object
+  network.ACLRule:
+    properties:
+      action:
+        description: '"allow" or "deny"'
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      source_peer:
+        description: Source peer ID or "*" for all
+        type: string
+      target_peer:
+        description: Target peer ID or "*" for all
+        type: string
+    type: object
+  network.Network:
+    properties:
+      acl:
+        $ref: '#/definitions/network.ACL'
+      cidr:
+        description: Network CIDR (e.g., "10.0.0.0/16")
+        type: string
+      created_at:
+        type: string
+      domain:
+        description: DNS domain for the network
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      peers:
+        additionalProperties:
+          $ref: '#/definitions/network.Peer'
+        description: Peer ID -> Peer
+        type: object
+      updated_at:
+        type: string
+    type: object
+  network.NetworkCreateRequest:
+    properties:
+      cidr:
+        type: string
+      dns:
+        items:
+          type: string
+        type: array
+      domain:
+        type: string
+      name:
+        type: string
+    required:
+    - cidr
+    - domain
+    - name
+    type: object
+  network.NetworkUpdateRequest:
+    properties:
+      cidr:
+        type: string
+      domain:
+        type: string
+      name:
+        type: string
+    type: object
+  network.Peer:
+    properties:
+      additional_allowed_ips:
+        description: Additional IPs this peer can route to
+        items:
+          type: string
+        type: array
+      address:
+        description: IP address in the network CIDR
+        type: string
+      created_at:
+        type: string
+      endpoint:
+        description: External endpoint (IP:port)
+        type: string
+      full_encapsulation:
+        description: 'Regular peers only: route all traffic (0.0.0.0/0) through jump'
+        type: boolean
+      id:
+        type: string
+      is_isolated:
+        description: 'Regular peers only: isolated from other peers'
+        type: boolean
+      is_jump:
+        description: Whether this peer acts as a jump server (hub)
+        type: boolean
+      jump_nat_interface:
+        description: NAT interface for jump server
+        type: string
+      listen_port:
+        description: WireGuard listen port (mainly for jump peers)
+        type: integer
+      name:
+        type: string
+      private_key:
+        description: Only stored for the peer itself
+        type: string
+      public_key:
+        type: string
+      token:
+        description: Agent enrollment token (secret)
+        type: string
+      updated_at:
+        type: string
+    type: object
+  network.PeerCreateRequest:
+    properties:
+      additional_allowed_ips:
+        items:
+          type: string
+        type: array
+      endpoint:
+        type: string
+      full_encapsulation:
+        type: boolean
+      is_isolated:
+        type: boolean
+      is_jump:
+        type: boolean
+      jump_nat_interface:
+        type: string
+      listen_port:
+        type: integer
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  network.PeerUpdateRequest:
+    properties:
+      additional_allowed_ips:
+        items:
+          type: string
+        type: array
+      endpoint:
+        type: string
+      full_encapsulation:
+        type: boolean
+      is_isolated:
+        type: boolean
+      listen_port:
+        type: integer
+      name:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@wirety.io
+    name: API Support
+    url: http://www.wirety.io/support
+  description: WireGuard network management API with hexagonal architecture
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: Wirety Server API
+  version: "1.0"
+paths:
+  /agent/resolve:
+    get:
+      description: Exchange a one-time (or long-lived) peer enrollment token for identifiers
+        and initial config
+      parameters:
+      - description: Enrollment token
+        in: query
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Resolve agent enrollment token
+      tags:
+      - agent
+  /health:
+    get:
+      description: Check if the API is healthy
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+  /ipam/available-cidrs:
+    get:
+      description: Returns a list of CIDRs sized to hold at least max_peers peers
+        carved from base_cidr
+      parameters:
+      - description: Maximum number of peers to fit in each CIDR
+        in: query
+        name: max_peers
+        required: true
+        type: integer
+      - default: 1
+        description: How many CIDRs to return
+        in: query
+        name: count
+        type: integer
+      - default: 10.0.0.0/8
+        description: Root CIDR to carve from
+        in: query
+        name: base_cidr
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Suggest available CIDRs
+      tags:
+      - ipam
+  /networks:
+    get:
+      description: Get a list of all networks
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/network.Network'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List all networks
+      tags:
+      - networks
+    post:
+      consumes:
+      - application/json
+      description: Create a new WireGuard network
+      parameters:
+      - description: Network creation request
+        in: body
+        name: network
+        required: true
+        schema:
+          $ref: '#/definitions/network.NetworkCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/network.Network'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a new network
+      tags:
+      - networks
+  /networks/{networkId}:
+    delete:
+      description: |-
+        Delete a network by ID
+        Delete a network by ID
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a network
+      tags:
+      - networks
+      - networks
+    get:
+      description: Get a network by ID
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/network.Network'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a network
+      tags:
+      - networks
+    put:
+      consumes:
+      - application/json
+      description: Update a network's configuration
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Network update request
+        in: body
+        name: network
+        required: true
+        schema:
+          $ref: '#/definitions/network.NetworkUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/network.Network'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update a network
+      tags:
+      - networks
+  /networks/{networkId}/acl:
+    get:
+      description: Get ACL configuration for a network
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/network.ACL'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get ACL configuration
+      tags:
+      - acl
+    put:
+      consumes:
+      - application/json
+      description: Update ACL configuration for a network
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: ACL configuration
+        in: body
+        name: acl
+        required: true
+        schema:
+          $ref: '#/definitions/network.ACL'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/network.ACL'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update ACL configuration
+      tags:
+      - acl
+  /networks/{networkId}/peers:
+    get:
+      description: Get a list of all peers in a network
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/network.Peer'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List all peers
+      tags:
+      - peers
+    post:
+      consumes:
+      - application/json
+      description: Add a new peer to the network
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Peer creation request
+        in: body
+        name: peer
+        required: true
+        schema:
+          $ref: '#/definitions/network.PeerCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/network.Peer'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a new peer
+      tags:
+      - peers
+  /networks/{networkId}/peers/{peerId}:
+    delete:
+      description: Delete a peer by ID
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Peer ID
+        in: path
+        name: peerId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a peer
+      tags:
+      - peers
+    get:
+      description: Get a peer by ID
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Peer ID
+        in: path
+        name: peerId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/network.Peer'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a peer
+      tags:
+      - peers
+    put:
+      consumes:
+      - application/json
+      description: Update a peer's configuration
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Peer ID
+        in: path
+        name: peerId
+        required: true
+        type: string
+      - description: Peer update request
+        in: body
+        name: peer
+        required: true
+        schema:
+          $ref: '#/definitions/network.PeerUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/network.Peer'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update a peer
+      tags:
+      - peers
+  /networks/{networkId}/peers/{peerId}/config:
+    get:
+      description: Get WireGuard configuration for a specific peer
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Peer ID
+        in: path
+        name: peerId
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: WireGuard configuration
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get peer configuration
+      tags:
+      - peers
+swagger: "2.0"

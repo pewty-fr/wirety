@@ -1,0 +1,1004 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "WireGuard network management API with hexagonal architecture",
+        "title": "Wirety Server API",
+        "termsOfService": "http://swagger.io/terms/",
+        "contact": {
+            "name": "API Support",
+            "url": "http://www.wirety.io/support",
+            "email": "support@wirety.io"
+        },
+        "license": {
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/api/v1",
+    "paths": {
+        "/agent/resolve": {
+            "get": {
+                "description": "Exchange a one-time (or long-lived) peer enrollment token for identifiers and initial config",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent"
+                ],
+                "summary": "Resolve agent enrollment token",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Enrollment token",
+                        "name": "token",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Check if the API is healthy",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/ipam/available-cidrs": {
+            "get": {
+                "description": "Returns a list of CIDRs sized to hold at least max_peers peers carved from base_cidr",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ipam"
+                ],
+                "summary": "Suggest available CIDRs",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of peers to fit in each CIDR",
+                        "name": "max_peers",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "How many CIDRs to return",
+                        "name": "count",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "10.0.0.0/8",
+                        "description": "Root CIDR to carve from",
+                        "name": "base_cidr",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/networks": {
+            "get": {
+                "description": "Get a list of all networks",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "networks"
+                ],
+                "summary": "List all networks",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/network.Network"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Create a new WireGuard network",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "networks"
+                ],
+                "summary": "Create a new network",
+                "parameters": [
+                    {
+                        "description": "Network creation request",
+                        "name": "network",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/network.NetworkCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/network.Network"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/networks/{networkId}": {
+            "get": {
+                "description": "Get a network by ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "networks"
+                ],
+                "summary": "Get a network",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/network.Network"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Update a network's configuration",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "networks"
+                ],
+                "summary": "Update a network",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Network update request",
+                        "name": "network",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/network.NetworkUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/network.Network"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Delete a network by ID\nDelete a network by ID",
+                "tags": [
+                    "networks",
+                    "networks"
+                ],
+                "summary": "Delete a network",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/networks/{networkId}/acl": {
+            "get": {
+                "description": "Get ACL configuration for a network",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "acl"
+                ],
+                "summary": "Get ACL configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/network.ACL"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Update ACL configuration for a network",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "acl"
+                ],
+                "summary": "Update ACL configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "ACL configuration",
+                        "name": "acl",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/network.ACL"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/network.ACL"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/networks/{networkId}/peers": {
+            "get": {
+                "description": "Get a list of all peers in a network",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "List all peers",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/network.Peer"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Add a new peer to the network",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "Create a new peer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Peer creation request",
+                        "name": "peer",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/network.PeerCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/network.Peer"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/networks/{networkId}/peers/{peerId}": {
+            "get": {
+                "description": "Get a peer by ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "Get a peer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Peer ID",
+                        "name": "peerId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/network.Peer"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Update a peer's configuration",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "Update a peer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Peer ID",
+                        "name": "peerId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Peer update request",
+                        "name": "peer",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/network.PeerUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/network.Peer"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Delete a peer by ID",
+                "tags": [
+                    "peers"
+                ],
+                "summary": "Delete a peer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Peer ID",
+                        "name": "peerId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/networks/{networkId}/peers/{peerId}/config": {
+            "get": {
+                "description": "Get WireGuard configuration for a specific peer",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "Get peer configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Network ID",
+                        "name": "networkId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Peer ID",
+                        "name": "peerId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "WireGuard configuration",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "network.ACL": {
+            "type": "object",
+            "properties": {
+                "blocked_peers": {
+                    "description": "Peer IDs that are blocked",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/network.ACLRule"
+                    }
+                }
+            }
+        },
+        "network.ACLRule": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "\"allow\" or \"deny\"",
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "source_peer": {
+                    "description": "Source peer ID or \"*\" for all",
+                    "type": "string"
+                },
+                "target_peer": {
+                    "description": "Target peer ID or \"*\" for all",
+                    "type": "string"
+                }
+            }
+        },
+        "network.Network": {
+            "type": "object",
+            "properties": {
+                "acl": {
+                    "$ref": "#/definitions/network.ACL"
+                },
+                "cidr": {
+                    "description": "Network CIDR (e.g., \"10.0.0.0/16\")",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "domain": {
+                    "description": "DNS domain for the network",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "peers": {
+                    "description": "Peer ID -\u003e Peer",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/network.Peer"
+                    }
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "network.NetworkCreateRequest": {
+            "type": "object",
+            "required": [
+                "cidr",
+                "domain",
+                "name"
+            ],
+            "properties": {
+                "cidr": {
+                    "type": "string"
+                },
+                "dns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "domain": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "network.NetworkUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "cidr": {
+                    "type": "string"
+                },
+                "domain": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "network.Peer": {
+            "type": "object",
+            "properties": {
+                "additional_allowed_ips": {
+                    "description": "Additional IPs this peer can route to",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "address": {
+                    "description": "IP address in the network CIDR",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "endpoint": {
+                    "description": "External endpoint (IP:port)",
+                    "type": "string"
+                },
+                "full_encapsulation": {
+                    "description": "Regular peers only: route all traffic (0.0.0.0/0) through jump",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_isolated": {
+                    "description": "Regular peers only: isolated from other peers",
+                    "type": "boolean"
+                },
+                "is_jump": {
+                    "description": "Whether this peer acts as a jump server (hub)",
+                    "type": "boolean"
+                },
+                "jump_nat_interface": {
+                    "description": "NAT interface for jump server",
+                    "type": "string"
+                },
+                "listen_port": {
+                    "description": "WireGuard listen port (mainly for jump peers)",
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "private_key": {
+                    "description": "Only stored for the peer itself",
+                    "type": "string"
+                },
+                "public_key": {
+                    "type": "string"
+                },
+                "token": {
+                    "description": "Agent enrollment token (secret)",
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "network.PeerCreateRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "additional_allowed_ips": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "endpoint": {
+                    "type": "string"
+                },
+                "full_encapsulation": {
+                    "type": "boolean"
+                },
+                "is_isolated": {
+                    "type": "boolean"
+                },
+                "is_jump": {
+                    "type": "boolean"
+                },
+                "jump_nat_interface": {
+                    "type": "string"
+                },
+                "listen_port": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "network.PeerUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "additional_allowed_ips": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "endpoint": {
+                    "type": "string"
+                },
+                "full_encapsulation": {
+                    "type": "boolean"
+                },
+                "is_isolated": {
+                    "type": "boolean"
+                },
+                "listen_port": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}
