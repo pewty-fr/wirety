@@ -1,4 +1,4 @@
-package config
+package wg
 
 import (
 	"bufio"
@@ -11,15 +11,14 @@ import (
 	"time"
 )
 
-// Writer handles writing WireGuard config files atomically.
+// Writer handles writing WireGuard config files atomically and applying them.
 type Writer struct {
-	Path        string // full path to config file e.g. /etc/wireguard/wg0.conf
-	Interface   string // wg interface name e.g. wg0
-	ApplyMethod string // "wg-quick" or "syncconf"
+	Path        string
+	Interface   string
+	ApplyMethod string
 }
 
-// NewWriter creates a new Writer with defaults.
-func NewWriter(path string, iface string, method string) *Writer {
+func NewWriter(path, iface, method string) *Writer {
 	if path == "" {
 		path = fmt.Sprintf("/etc/wireguard/%s.conf", iface)
 	}
@@ -29,7 +28,6 @@ func NewWriter(path string, iface string, method string) *Writer {
 	return &Writer{Path: path, Interface: iface, ApplyMethod: method}
 }
 
-// WriteAndApply writes the config and applies it using chosen method.
 func (w *Writer) WriteAndApply(cfg string) error {
 	if err := w.writeAtomic(cfg); err != nil {
 		return fmt.Errorf("write config: %w", err)
@@ -37,7 +35,6 @@ func (w *Writer) WriteAndApply(cfg string) error {
 	return w.apply()
 }
 
-// writeAtomic writes file atomically.
 func (w *Writer) writeAtomic(cfg string) error {
 	dir := filepath.Dir(w.Path)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -50,18 +47,12 @@ func (w *Writer) writeAtomic(cfg string) error {
 	return os.Rename(tmp, w.Path)
 }
 
-// apply applies the config. Requires root privileges for networking changes.
 func (w *Writer) apply() error {
 	switch w.ApplyMethod {
 	case "wg-quick":
-		// Try a sync via down/up for simplicity
-		if err := run("wg-quick", "down", w.Path); err != nil {
-			// ignore error (interface may not exist yet)
-		}
+		_ = run("wg-quick", "down", w.Path) // ignore error
 		return run("wg-quick", "up", w.Path)
 	case "syncconf":
-		// syncconf requires stripped [Interface] lines formatted for `wg set`.
-		// Fallback to wg-quick if transformation is complex.
 		return run("wg-quick", "up", w.Path)
 	default:
 		return fmt.Errorf("unknown apply method: %s", w.ApplyMethod)
@@ -69,9 +60,8 @@ func (w *Writer) apply() error {
 }
 
 func run(cmd string, args ...string) error {
-	c := exec.Command(cmd, args...) // #nosec G204 - args controlled by code
-	var out bytes.Buffer
-	var errBuf bytes.Buffer
+	c := exec.Command(cmd, args...) // #nosec G204
+	var out, errBuf bytes.Buffer
 	c.Stdout = &out
 	c.Stderr = &errBuf
 	if err := c.Run(); err != nil {

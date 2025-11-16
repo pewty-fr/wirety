@@ -357,6 +357,7 @@ type DNSPeer struct {
 }
 
 type PeerDNSConfig struct {
+	IP     string    `json:"ip"`
 	Domain string    `json:"domain"`
 	Peers  []DNSPeer `json:"peers"`
 }
@@ -414,6 +415,7 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 			peerList = append(peerList, DNSPeer{Name: sanitizeDNSLabel(p.Name), IP: p.Address})
 		}
 		dnsConfig = &PeerDNSConfig{
+			IP:     peer.Address,
 			Domain: net.Domain,
 			Peers:  peerList,
 		}

@@ -8,14 +8,15 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
+	dnsadapter "wirety/agent/internal/adapters/dns"
+	"wirety/agent/internal/adapters/wg"
+	"wirety/agent/internal/adapters/ws"
+	app "wirety/agent/internal/application/agent"
+	dom "wirety/agent/internal/domain/dns"
+	"wirety/agent/internal/ports"
 
-	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-
-	cfgwriter "wirety/agent/internal/config"
-	"wirety/agent/internal/dns"
 )
 
 func main() {
@@ -39,9 +40,8 @@ func main() {
 		log.Fatal().Msg("TOKEN is required (env or flag)")
 	}
 
-	writer := cfgwriter.NewWriter(configPath, iface, applyMethod)
+	writer := wg.NewWriter(configPath, iface, applyMethod)
 
-	// Resolve token & apply initial config
 	networkID, peerID, cfg, err := resolveToken(server, token)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to resolve token")
@@ -51,96 +51,25 @@ func main() {
 		log.Error().Err(err).Msg("failed applying initial config from resolve")
 	}
 
-	type wsConfigMsg struct {
-		Config string `json:"config"`
-		DNS    *struct {
-			Domain string     `json:"domain"`
-			Peers  []dns.Peer `json:"peers"`
-		} `json:"dns,omitempty"`
-	}
-
 	wsServer := server
 	if len(server) > 7 && server[:7] == "http://" {
 		wsServer = "ws://" + server[7:]
 	} else if len(server) > 8 && server[:8] == "https://" {
 		wsServer = "wss://" + server[8:]
 	}
-
 	wsURL := fmt.Sprintf("%s/api/v1/ws?token=%s", wsServer, token)
-	log.Info().Str("url", wsURL).Msg("connecting websocket (token mode)")
 
-	backoff := time.Second
-	maxBackoff := 30 * time.Second
+	wsClient := ws.NewClient()
+	dnsFactory := func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort {
+		return dnsadapter.NewServer(domain, peers)
+	}
+	runner := app.NewRunner(wsClient, writer, dnsFactory, wsURL)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	for {
-		select {
-		case <-sigCh:
-			log.Info().Msg("shutdown signal received")
-			return
-		default:
-		}
-
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-		if err != nil {
-			log.Error().Err(err).Dur("retry", backoff).Msg("websocket dial failed")
-			select {
-			case <-sigCh:
-				log.Info().Msg("shutdown signal received during backoff")
-				return
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-			continue
-		}
-		backoff = time.Second // reset on success
-
-		log.Info().Msg("websocket connected; waiting for config messages")
-	readLoop:
-		for {
-			select {
-			case <-sigCh:
-				log.Info().Msg("shutdown signal received")
-				conn.Close()
-				return
-			default:
-			}
-
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				log.Error().Err(err).Msg("websocket read error, reconnecting")
-				conn.Close()
-				break readLoop
-			}
-
-			var wsMsg wsConfigMsg
-			if err := json.Unmarshal(msg, &wsMsg); err != nil {
-				log.Error().Err(err).Msg("invalid config message format")
-				continue
-			}
-			log.Info().Msg("received config update")
-			if err := writer.WriteAndApply(wsMsg.Config); err != nil {
-				log.Error().Err(err).Msg("failed applying config")
-			} else {
-				log.Debug().Msg("config applied successfully")
-			}
-
-			// Start DNS server if DNS config is present
-			if wsMsg.DNS != nil {
-				dnsServer := dns.NewServer(wsMsg.DNS.Domain, wsMsg.DNS.Peers)
-				go func() {
-					if err := dnsServer.Start(":5354"); err != nil {
-						log.Error().Err(err).Msg("DNS server exited")
-					}
-				}()
-			}
-		}
-	}
+	stop := make(chan struct{})
+	go func() { <-sigCh; close(stop) }()
+	runner.Start(stop)
 }
 
 func envOr(k, def string) string {
