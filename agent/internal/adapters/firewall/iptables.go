@@ -65,8 +65,8 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string) error {
 		for j := i + 1; j < len(ips); j++ {
 			ip1, ip2 := ips[i], ips[j]
 			if isolated[ip1] && isolated[ip2] {
-				_ = a.run("-A", chain, "-s", ip1, "-d", ip2, "-j", "DROP")
-				_ = a.run("-A", chain, "-s", ip2, "-d", ip1, "-j", "DROP")
+				_ = a.run("-A", chain, "-s", ip1, "-d", ip2, "-m", "state", "--state", "NEW", "-j", "DROP")
+				_ = a.run("-A", chain, "-s", ip2, "-d", ip1, "-m", "state", "--state", "NEW", "-j", "DROP")
 			}
 		}
 	}
@@ -75,7 +75,7 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string) error {
 		if !isolated[src] {
 			for _, dst := range ips {
 				if isolated[dst] {
-					_ = a.run("-A", chain, "-s", src, "-d", dst, "-j", "DROP")
+					_ = a.run("-A", chain, "-s", src, "-d", dst, "-m", "state", "--state", "NEW", "-j", "DROP")
 				}
 			}
 		}
@@ -83,7 +83,7 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string) error {
 	// jump -> isolated
 	for _, dst := range ips {
 		if isolated[dst] {
-			_ = a.run("-A", chain, "-s", selfIP, "-d", dst, "-j", "DROP")
+			_ = a.run("-A", chain, "-s", selfIP, "-d", dst, "-m", "state", "--state", "NEW", "-j", "DROP")
 		}
 	}
 
@@ -101,7 +101,7 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string) error {
 		if blockedSet[srcPeer.ID] {
 			for _, dstPeer := range p.Peers {
 				if blockedSet[dstPeer.ID] && srcPeer.ID != dstPeer.ID {
-					_ = a.run("-A", chain, "-s", srcPeer.IP, "-d", dstPeer.IP, "-j", "DROP")
+					_ = a.run("-A", chain, "-s", srcPeer.IP, "-d", dstPeer.IP, "-m", "state", "--state", "NEW", "-j", "DROP")
 				}
 			}
 		}
