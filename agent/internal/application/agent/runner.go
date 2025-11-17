@@ -144,10 +144,10 @@ func (r *Runner) sendHeartbeat() {
 	}
 
 	heartbeat := map[string]interface{}{
-		"hostname":          sysInfo.Hostname,
-		"system_uptime":     sysInfo.SystemUptime,
-		"wireguard_uptime":  sysInfo.WireGuardUptime,
-		"reported_endpoint": sysInfo.ReportedEndpoint,
+		"hostname":         sysInfo.Hostname,
+		"system_uptime":    sysInfo.SystemUptime,
+		"wireguard_uptime": sysInfo.WireGuardUptime,
+		"peer_endpoints":   sysInfo.PeerEndpoints,
 	}
 
 	data, err := json.Marshal(heartbeat)
@@ -162,6 +162,8 @@ func (r *Runner) sendHeartbeat() {
 		log.Trace().
 			Str("hostname", sysInfo.Hostname).
 			Int64("system_uptime", sysInfo.SystemUptime).
+			Int64("wireguard_uptime", sysInfo.WireGuardUptime).
+			Interface("peer_endpoints", sysInfo.PeerEndpoints).
 			Msg("heartbeat sent")
 	}
 }

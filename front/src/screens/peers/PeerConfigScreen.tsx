@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, StyleSheet } from 'react-native';
-import { Title, ActivityIndicator, Card, Text } from 'react-native-paper';
+import { View, ScrollView, StyleSheet, Alert, Clipboard } from 'react-native';
+import { Title, ActivityIndicator, Card, Text, Button, IconButton } from 'react-native-paper';
 import { useRoute } from '@react-navigation/native';
 import api from '../../services/api';
 
@@ -9,6 +9,7 @@ export const PeerConfigScreen = () => {
   const { networkId, peerId } = route.params as { networkId: string; peerId: string };
   const [config, setConfig] = useState('');
   const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     loadConfig();
@@ -26,6 +27,17 @@ export const PeerConfigScreen = () => {
     }
   };
 
+  const handleCopy = () => {
+    try {
+      Clipboard.setString(config);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      Alert.alert('Error', 'Failed to copy to clipboard');
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -37,13 +49,31 @@ export const PeerConfigScreen = () => {
   return (
     <ScrollView style={styles.container}>
       <Card style={styles.card}>
-        <Card.Title title="WireGuard Configuration" />
+        <Card.Title 
+          title="WireGuard Configuration"
+          right={(props) => (
+            <IconButton
+              {...props}
+              icon={copied ? 'check' : 'content-copy'}
+              onPress={handleCopy}
+            />
+          )}
+        />
         <Card.Content>
           <Text style={styles.config}>{config}</Text>
           <Text style={styles.info}>
             Save this configuration to /etc/wireguard/wg0.conf on the peer device.
           </Text>
         </Card.Content>
+        <Card.Actions>
+          <Button 
+            mode="contained" 
+            onPress={handleCopy}
+            icon={copied ? 'check' : 'content-copy'}
+          >
+            {copied ? 'Copied!' : 'Copy to Clipboard'}
+          </Button>
+        </Card.Actions>
       </Card>
     </ScrollView>
   );

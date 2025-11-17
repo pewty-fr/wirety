@@ -11,11 +11,10 @@ import (
 
 // SystemInfo holds system information for heartbeat
 type SystemInfo struct {
-	Hostname         string
-	SystemUptime     int64
-	WireGuardUptime  int64
-	ReportedEndpoint string
-	PeerEndpoints    map[string]string // map of peer public key to endpoint
+	Hostname        string
+	SystemUptime    int64
+	WireGuardUptime int64
+	PeerEndpoints   map[string]string // map of peer public key to endpoint
 }
 
 // CollectSystemInfo gathers system information for heartbeat
@@ -29,12 +28,11 @@ func CollectSystemInfo(wgInterface string) (*SystemInfo, error) {
 	wgUptime := getWireGuardUptime(wgInterface)
 	peerEndpoints := getWireGuardEndpoints(wgInterface)
 
-
 	return &SystemInfo{
-		Hostname:         hostname,
-		SystemUptime:     systemUptime,
-		WireGuardUptime:  wgUptime,
-		PeerEndpoints:    peerEndpoints,
+		Hostname:        hostname,
+		SystemUptime:    systemUptime,
+		WireGuardUptime: wgUptime,
+		PeerEndpoints:   peerEndpoints,
 	}, nil
 }
 
@@ -121,6 +119,5 @@ func getWireGuardEndpoints(iface string) map[string]string {
 
 		peerEndpoints[publicKey] = endpoint
 	}
-
 	return peerEndpoints
 }

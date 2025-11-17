@@ -81,11 +81,11 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string) error {
 		}
 	}
 	// jump -> isolated
-	for _, dst := range ips {
-		if isolated[dst] {
-			_ = a.run("-A", chain, "-s", selfIP, "-d", dst, "-m", "state", "--state", "NEW", "-j", "DROP")
-		}
-	}
+	// for _, dst := range ips {
+	// 	if isolated[dst] {
+	// 		_ = a.run("-A", chain, "-s", selfIP, "-d", dst, "-m", "state", "--state", "NEW", "-j", "DROP")
+	// 	}
+	// }
 
 	// ACL blocked: treat as bidirectional drop pairs
 	blockedSet := map[string]bool{}

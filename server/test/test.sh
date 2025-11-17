@@ -27,36 +27,43 @@ echo "==> Creating jump peer"
 JUMP_RESP=$(curl -s -X POST "${BASE_URL}/networks/${NETWORK_ID}/peers" \
 	-H 'Content-Type: application/json' \
 	-d '{"name":"jump-1","is_jump":true,"jump_nat_interface":"eth0", "endpoint":"192.168.0.52", "listener_port":51820}')
-echo "$JUMP_RESP" | jq '.'
+echo "$JUMP_RESP" | jq '.token'
 JUMP_ID=$(echo "$JUMP_RESP" | jq -r '.id')
 
 echo "==> Creating isolated full encapsulation peer"
 PEER1_RESP=$(curl -s -X POST "${BASE_URL}/networks/${NETWORK_ID}/peers" \
 	-H 'Content-Type: application/json' \
 	-d '{"name":"iso-full","is_isolated":true,"full_encapsulation":true}')
-echo "$PEER1_RESP" | jq '.'
+echo "$PEER1_RESP" | jq '.token'
 PEER1_ID=$(echo "$PEER1_RESP" | jq -r '.id')
 
 echo "==> Creating isolated normal encapsulation peer"
 PEER2_RESP=$(curl -s -X POST "${BASE_URL}/networks/${NETWORK_ID}/peers" \
 	-H 'Content-Type: application/json' \
 	-d '{"name":"iso-partial","is_isolated":true,"full_encapsulation":false}')
-echo "$PEER2_RESP" | jq '.'
+echo "$PEER2_RESP" | jq '.token'
 PEER2_ID=$(echo "$PEER2_RESP" | jq -r '.id')
 
 echo "==> Creating non-isolated normal encapsulation peer"
 PEER3_RESP=$(curl -s -X POST "${BASE_URL}/networks/${NETWORK_ID}/peers" \
 	-H 'Content-Type: application/json' \
 	-d '{"name":"shared","is_isolated":false,"full_encapsulation":false}')
-echo "$PEER3_RESP" | jq '.'
+echo "$PEER3_RESP" | jq '.token'
 PEER3_ID=$(echo "$PEER3_RESP" | jq -r '.id')
 
-echo "==> Fetching generated WireGuard configs"
-for PID in "$JUMP_ID" "$PEER1_ID" "$PEER2_ID" "$PEER3_ID"; do
-	echo "--- Config for peer $PID ---"
-	curl -s "${BASE_URL}/networks/${NETWORK_ID}/peers/${PID}/config" || echo "(failed)"
-	echo
-done
+# echo "==> Fetching generated WireGuard configs"
+# for PID in "$JUMP_ID" "$PEER1_ID" "$PEER2_ID" "$PEER3_ID"; do
+# 	echo "--- Config for peer $PID ---"
+# 	curl -s "${BASE_URL}/networks/${NETWORK_ID}/peers/${PID}/config" || echo "(failed)"
+# 	echo
+# done
+
+# echo "==> Fetching enrollment tokens"
+# for PID in "$JUMP_ID" "$PEER1_ID" "$PEER2_ID" "$PEER3_ID"; do
+# 	echo "--- Token for peer $PID ---"
+# 	curl -s "${BASE_URL}/networks/${NETWORK_ID}/peers/${PID}/token" || echo "(failed)"
+# 	echo
+# done
 
 echo "==> Summary"
 jq -n --arg network "$NETWORK_ID" \

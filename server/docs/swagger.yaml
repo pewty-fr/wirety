@@ -1127,6 +1127,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Reconnect a peer to jump servers
       tags:
       - peers

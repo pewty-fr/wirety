@@ -43,10 +43,15 @@ type PaginatedPeers struct {
 
 // NewHandler creates a new API handler
 func NewHandler(service *network.Service, ipamService *ipam.Service, userRepo auth.Repository) *Handler {
+	wsManager := NewWebSocketManager(service)
+
+	// Set the WebSocket notifier on the service so it can trigger config updates
+	service.SetWebSocketNotifier(wsManager)
+
 	return &Handler{
 		service:     service,
 		ipamService: ipamService,
-		wsManager:   NewWebSocketManager(service),
+		wsManager:   wsManager,
 		userRepo:    userRepo,
 	}
 }
@@ -675,6 +680,9 @@ func (h *Handler) UpdateACL(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Notify all connected peers about the ACL change so they update their configs
+	h.wsManager.NotifyNetworkPeers(networkID)
 
 	c.JSON(http.StatusOK, acl)
 }

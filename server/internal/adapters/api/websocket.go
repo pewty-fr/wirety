@@ -178,6 +178,7 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 					Str("network_id", networkID).
 					Str("peer_id", peer.ID).
 					Str("hostname", heartbeat.Hostname).
+					Interface("peer_endpoints", heartbeat.PeerEndpoints).
 					Msg("Agent heartbeat processed")
 			}
 		}

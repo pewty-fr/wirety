@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, StyleSheet } from 'react-native';
-import { Title, ActivityIndicator, Card, Text, Button } from 'react-native-paper';
+import { View, ScrollView, StyleSheet, Alert, Clipboard } from 'react-native';
+import { Title, ActivityIndicator, Card, Text, Button, IconButton } from 'react-native-paper';
 import { useRoute } from '@react-navigation/native';
 import api from '../../services/api';
 
@@ -9,6 +9,7 @@ export const PeerTokenScreen = () => {
   const { networkId, peerId } = route.params as { networkId: string; peerId: string };
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     loadToken();
@@ -26,6 +27,17 @@ export const PeerTokenScreen = () => {
     }
   };
 
+  const handleCopy = () => {
+    try {
+      Clipboard.setString(token);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      Alert.alert('Error', 'Failed to copy to clipboard');
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -37,13 +49,31 @@ export const PeerTokenScreen = () => {
   return (
     <ScrollView style={styles.container}>
       <Card style={styles.card}>
-        <Card.Title title="Enrollment Token" />
+        <Card.Title 
+          title="Enrollment Token"
+          right={(props) => (
+            <IconButton
+              {...props}
+              icon={copied ? 'check' : 'content-copy'}
+              onPress={handleCopy}
+            />
+          )}
+        />
         <Card.Content>
           <Text style={styles.token}>{token}</Text>
           <Text style={styles.info}>
             Use this token to register the agent on the peer device.
           </Text>
         </Card.Content>
+        <Card.Actions>
+          <Button 
+            mode="contained" 
+            onPress={handleCopy}
+            icon={copied ? 'check' : 'content-copy'}
+          >
+            {copied ? 'Copied!' : 'Copy to Clipboard'}
+          </Button>
+        </Card.Actions>
       </Card>
     </ScrollView>
   );

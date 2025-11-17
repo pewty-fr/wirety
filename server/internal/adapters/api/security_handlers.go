@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 
+	"wirety/internal/adapters/api/middleware"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -100,8 +102,12 @@ func (h *Handler) GetSecurityIncident(c *gin.Context) {
 func (h *Handler) ResolveSecurityIncident(c *gin.Context) {
 	incidentID := c.Param("incidentId")
 
-	// TODO: Get user from auth context when authentication is fully implemented
+	// Get user from auth context
+	user := middleware.GetUserFromContext(c)
 	resolvedBy := "system"
+	if user != nil {
+		resolvedBy = user.Email
+	}
 
 	if err := h.service.ResolveSecurityIncident(c.Request.Context(), incidentID, resolvedBy); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

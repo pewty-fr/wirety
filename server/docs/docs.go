@@ -1061,6 +1061,11 @@ const docTemplate = `{
         },
         "/networks/{networkId}/peers/{peerId}/reconnect": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Re-establish connections between a peer and all jump servers in the network",
                 "consumes": [
                     "application/json"
