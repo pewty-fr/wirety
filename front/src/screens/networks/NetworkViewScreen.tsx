@@ -13,10 +13,6 @@ export const NetworkViewScreen = () => {
   const [network, setNetwork] = useState<Network | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadNetwork();
-  }, [id]);
-
   useFocusEffect(
     useCallback(() => {
       loadNetwork();

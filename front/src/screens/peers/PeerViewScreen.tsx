@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, Alert } from 'react-native';
-import { Title, Card, Text, Button, ActivityIndicator, Chip, IconButton } from 'react-native-paper';
+import { Title, Card, Text, Button, ActivityIndicator, Chip, IconButton, List, Divider } from 'react-native-paper';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import api from '../../services/api';
 import { Peer } from '../../types/api';
+import { PeerSessionStatus } from '../../types/security';
 import { formatDate } from '../../utils/validation';
 
 export const PeerViewScreen = () => {
@@ -11,17 +12,25 @@ export const PeerViewScreen = () => {
   const route = useRoute();
   const { networkId, peerId } = route.params as { networkId: string; peerId: string };
   const [peer, setPeer] = useState<Peer | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<PeerSessionStatus | null>(null);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadPeer();
-  }, [peerId]);
 
   useFocusEffect(
     useCallback(() => {
       loadPeer();
+      loadSessionStatus();
     }, [networkId, peerId])
   );
+
+  const loadSessionStatus = async () => {
+    try {
+      const data = await api.getPeerSessionStatus(networkId, peerId);
+      setSessionStatus(data);
+    } catch (error) {
+      // Session status might not be available for all peers
+      console.log('Session status not available');
+    }
+  };
 
   useEffect(() => {
     if (peer) {
@@ -102,6 +111,21 @@ export const PeerViewScreen = () => {
             {peer.is_jump && <Chip mode="flat">Jump Server</Chip>}
             {peer.is_isolated && <Chip mode="flat">Isolated</Chip>}
             {peer.full_encapsulation && <Chip mode="flat">Full Encapsulation</Chip>}
+            {sessionStatus?.has_active_agent && (
+              <Chip mode="flat" icon="check-circle" style={{ backgroundColor: '#4caf50' }} textStyle={{ color: 'white' }}>
+                Connected
+              </Chip>
+            )}
+            {sessionStatus?.suspicious_activity && (
+              <Chip mode="flat" icon="alert" style={{ backgroundColor: '#ff5722' }} textStyle={{ color: 'white' }}>
+                Security Alert
+              </Chip>
+            )}
+            {sessionStatus?.conflicting_sessions && sessionStatus.conflicting_sessions.length > 0 && (
+              <Chip mode="flat" icon="alert-circle" style={{ backgroundColor: '#f44336' }} textStyle={{ color: 'white' }}>
+                Session Conflict
+              </Chip>
+            )}
           </View>
 
           <View style={styles.row}>
@@ -141,6 +165,87 @@ export const PeerViewScreen = () => {
         </Card.Content>
       </Card>
 
+      {sessionStatus && (
+        <Card style={styles.card}>
+          <Card.Title title="Security Details" />
+          <Card.Content>
+            <View style={styles.securityStatus}>
+              <Text style={styles.label}>Active Agent:</Text>
+              <Chip
+                mode="flat"
+                style={[
+                  styles.statusChip,
+                  { backgroundColor: sessionStatus.has_active_agent ? '#4caf50' : '#f44336' },
+                ]}
+                textStyle={styles.statusChipText}
+              >
+                {sessionStatus.has_active_agent ? 'Connected' : 'Disconnected'}
+              </Chip>
+            </View>
+
+            {sessionStatus.current_session && (
+              <>
+                <Divider style={styles.divider} />
+                <Text style={styles.sectionTitle}>Current Session</Text>
+                <List.Item
+                  title="Hostname"
+                  description={sessionStatus.current_session.hostname}
+                  left={(props) => <List.Icon {...props} icon="laptop" />}
+                />
+                <List.Item
+                  title="Endpoint"
+                  description={sessionStatus.current_session.reported_endpoint || 'N/A'}
+                  left={(props) => <List.Icon {...props} icon="ip-network" />}
+                />
+                <List.Item
+                  title="System Uptime"
+                  description={formatUptime(sessionStatus.current_session.system_uptime)}
+                  left={(props) => <List.Icon {...props} icon="clock-outline" />}
+                />
+                <List.Item
+                  title="Last Seen"
+                  description={new Date(sessionStatus.current_session.last_seen).toLocaleString()}
+                  left={(props) => <List.Icon {...props} icon="update" />}
+                />
+              </>
+            )}
+
+            {sessionStatus.conflicting_sessions && sessionStatus.conflicting_sessions.length > 0 && (
+              <>
+                <Divider style={styles.divider} />
+                <Text style={styles.sectionTitle}>Conflicting Sessions</Text>
+                <Text style={styles.warningText}>Multiple agents detected using this peer</Text>
+                {sessionStatus.conflicting_sessions.map((session, index) => (
+                  <List.Item
+                    key={session.session_id}
+                    title={session.hostname}
+                    description={`Last seen: ${new Date(session.last_seen).toLocaleString()}`}
+                    left={(props) => <List.Icon {...props} icon="alert-circle" color="#f44336" />}
+                  />
+                ))}
+              </>
+            )}
+
+            {sessionStatus.recent_endpoint_changes && sessionStatus.recent_endpoint_changes.length > 0 && (
+              <>
+                <Divider style={styles.divider} />
+                <Text style={styles.sectionTitle}>Recent Endpoint Changes (24h)</Text>
+                {sessionStatus.recent_endpoint_changes.map((change, index) => (
+                  <View key={index} style={styles.endpointChange}>
+                    <Text style={styles.changeTime}>
+                      {new Date(change.changed_at).toLocaleTimeString()}
+                    </Text>
+                    <Text style={styles.changeEndpoints}>
+                      {change.old_endpoint} → {change.new_endpoint}
+                    </Text>
+                  </View>
+                ))}
+              </>
+            )}
+          </Card.Content>
+        </Card>
+      )}
+
       <View style={styles.actions}>
         <Button
           mode="contained"
@@ -174,6 +279,19 @@ export const PeerViewScreen = () => {
   );
 };
 
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+
+  return parts.length > 0 ? parts.join(' ') : '< 1m';
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -202,6 +320,43 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginRight: 8,
     width: 120,
+  },
+  securityStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  statusChip: {
+    height: 28,
+  },
+  statusChipText: {
+    color: 'white',
+    fontSize: 12,
+  },
+  divider: {
+    marginVertical: 12,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  warningText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  endpointChange: {
+    marginBottom: 12,
+  },
+  changeTime: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+  },
+  changeEndpoints: {
+    fontSize: 14,
+    fontFamily: 'monospace',
   },
   actions: {
     padding: 16,

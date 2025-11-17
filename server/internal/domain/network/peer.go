@@ -20,6 +20,7 @@ type Peer struct {
 	JumpNatInterface     string    `json:"jump_nat_interface,omitempty"`     // NAT interface for jump server
 	IsIsolated           bool      `json:"is_isolated"`                      // Regular peers only: isolated from other peers
 	FullEncapsulation    bool      `json:"full_encapsulation"`               // Regular peers only: route all traffic (0.0.0.0/0) through jump
+	OwnerID              string    `json:"owner_id,omitempty"`               // User ID who owns this peer (empty for admin-created peers)
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }

@@ -1,6 +1,9 @@
 package network
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // IPAMPrefix holds minimal information about an allocated prefix
 type IPAMPrefix struct {
@@ -45,4 +48,22 @@ type Repository interface {
 	ListChildPrefixes(ctx context.Context, parentCIDR string) ([]*IPAMPrefix, error)
 	AcquireIP(ctx context.Context, cidr string) (string, error)
 	ReleaseIP(ctx context.Context, cidr string, ip string) error
+
+	// Agent session operations
+	CreateOrUpdateSession(ctx context.Context, networkID string, session *AgentSession) error
+	GetSession(ctx context.Context, networkID, peerID string) (*AgentSession, error)
+	GetActiveSessionsForPeer(ctx context.Context, networkID, peerID string) ([]*AgentSession, error)
+	DeleteSession(ctx context.Context, networkID, sessionID string) error
+	ListSessions(ctx context.Context, networkID string) ([]*AgentSession, error)
+
+	// Endpoint change tracking
+	RecordEndpointChange(ctx context.Context, networkID string, change *EndpointChange) error
+	GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*EndpointChange, error)
+
+	// Security incident operations
+	CreateSecurityIncident(ctx context.Context, incident *SecurityIncident) error
+	GetSecurityIncident(ctx context.Context, incidentID string) (*SecurityIncident, error)
+	ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*SecurityIncident, error)
+	ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*SecurityIncident, error)
+	ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error
 }

@@ -5,6 +5,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import api from '../../services/api';
 import { Network } from '../../types/api';
 import { Pagination } from '../../components/Pagination';
+import { useDebounce } from '../../hooks/useDebounce';
 
 export const NetworkListScreen = () => {
   const navigation = useNavigation();
@@ -13,11 +14,12 @@ export const NetworkListScreen = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebounce(searchQuery, 500);
 
   const loadNetworks = async () => {
     setLoading(true);
     try {
-      const response = await api.getNetworks(page, 20, searchQuery);
+      const response = await api.getNetworks(page, 20, debouncedSearchQuery);
       setNetworks(response.data);
       setTotalPages(Math.ceil(response.total / response.page_size));
     } catch (error) {
@@ -27,14 +29,10 @@ export const NetworkListScreen = () => {
     }
   };
 
-  useEffect(() => {
-    loadNetworks();
-  }, [page, searchQuery]);
-
   useFocusEffect(
     useCallback(() => {
       loadNetworks();
-    }, [page, searchQuery])
+    }, [page, debouncedSearchQuery])
   );
 
   const renderNetwork = ({ item }: { item: Network }) => (

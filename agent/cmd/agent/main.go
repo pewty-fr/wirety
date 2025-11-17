@@ -67,7 +67,7 @@ func main() {
 		return dnsadapter.NewServer(domain, peers)
 	}
 	fwAdapter := firewall.NewAdapter(iface, natIface)
-	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, wsURL)
+	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, wsURL, iface)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

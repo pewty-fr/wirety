@@ -5,6 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import api from '../../services/api';
 import { IPAMAllocation } from '../../types/api';
 import { Pagination } from '../../components/Pagination';
+import { useDebounce } from '../../hooks/useDebounce';
 
 export const IPAMListScreen = () => {
   const [allocations, setAllocations] = useState<IPAMAllocation[]>([]);
@@ -12,11 +13,12 @@ export const IPAMListScreen = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebounce(searchQuery, 500);
 
   const loadAllocations = async () => {
     setLoading(true);
     try {
-      const response = await api.getIPAM(page, 20, searchQuery);
+      const response = await api.getIPAM(page, 20, debouncedSearchQuery);
       setAllocations(response.data);
       setTotalPages(Math.ceil(response.total / response.page_size));
     } catch (error) {
@@ -26,14 +28,10 @@ export const IPAMListScreen = () => {
     }
   };
 
-  useEffect(() => {
-    loadAllocations();
-  }, [page, searchQuery]);
-
   useFocusEffect(
     useCallback(() => {
       loadAllocations();
-    }, [page, searchQuery])
+    }, [page, debouncedSearchQuery])
   );
 
   const renderAllocation = ({ item }: { item: IPAMAllocation }) => (

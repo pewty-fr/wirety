@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"wirety/internal/application/network"
+	domain "wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -155,10 +156,30 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 		return
 	}
 	for {
-		_, _, err := conn.ReadMessage()
+		msgType, message, err := conn.ReadMessage()
 		if err != nil {
 			log.Info().Str("network_id", networkID).Str("peer_id", peer.ID).Msg("WebSocket token connection closed")
 			break
+		}
+
+		// Process heartbeat messages from agent
+		if msgType == websocket.TextMessage {
+			var heartbeat domain.AgentHeartbeat
+			if err := json.Unmarshal(message, &heartbeat); err != nil {
+				log.Warn().Err(err).Msg("Failed to parse heartbeat message")
+				continue
+			}
+
+			// Process the heartbeat
+			if err := h.service.ProcessAgentHeartbeat(c.Request.Context(), networkID, peer.ID, &heartbeat); err != nil {
+				log.Error().Err(err).Msg("Failed to process agent heartbeat")
+			} else {
+				log.Debug().
+					Str("network_id", networkID).
+					Str("peer_id", peer.ID).
+					Str("hostname", heartbeat.Hostname).
+					Msg("Agent heartbeat processed")
+			}
 		}
 	}
 }

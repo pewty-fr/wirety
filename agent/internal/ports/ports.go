@@ -16,6 +16,7 @@ type DNSStarterPort interface {
 type WebSocketClientPort interface {
 	Connect(url string) error
 	ReadMessage() ([]byte, error)
+	WriteMessage(data []byte) error
 	Close() error
 }
 

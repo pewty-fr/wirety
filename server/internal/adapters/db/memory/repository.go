@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"wirety/internal/domain/network"
 
@@ -13,19 +14,25 @@ import (
 
 // Repository is an in-memory implementation of the network repository
 type Repository struct {
-	mu          sync.RWMutex
-	networks    map[string]*network.Network
-	ipam        goipam.Ipamer
-	connections map[string]map[string]*network.PeerConnection // networkID -> connectionKey -> PeerConnection
+	mu              sync.RWMutex
+	networks        map[string]*network.Network
+	ipam            goipam.Ipamer
+	connections     map[string]map[string]*network.PeerConnection // networkID -> connectionKey -> PeerConnection
+	sessions        map[string]map[string]*network.AgentSession   // networkID -> sessionID -> AgentSession
+	endpointChanges map[string][]*network.EndpointChange          // networkID -> []EndpointChange
+	incidents       map[string]*network.SecurityIncident          // incidentID -> SecurityIncident
 }
 
 // NewRepository creates a new in-memory repository
 func NewRepository() *Repository {
 	ctx := context.Background()
 	repo := &Repository{
-		networks:    make(map[string]*network.Network),
-		ipam:        goipam.New(ctx),
-		connections: make(map[string]map[string]*network.PeerConnection),
+		networks:        make(map[string]*network.Network),
+		ipam:            goipam.New(ctx),
+		connections:     make(map[string]map[string]*network.PeerConnection),
+		sessions:        make(map[string]map[string]*network.AgentSession),
+		endpointChanges: make(map[string][]*network.EndpointChange),
+		incidents:       make(map[string]*network.SecurityIncident),
 	}
 	return repo
 }
@@ -398,5 +405,193 @@ func (r *Repository) DeleteConnection(ctx context.Context, networkID, peer1ID, p
 
 	key := connectionKey(peer1ID, peer2ID)
 	delete(r.connections[networkID], key)
+	return nil
+}
+
+// Agent session operations
+
+// CreateOrUpdateSession creates or updates an agent session
+func (r *Repository) CreateOrUpdateSession(ctx context.Context, networkID string, session *network.AgentSession) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.sessions[networkID] == nil {
+		r.sessions[networkID] = make(map[string]*network.AgentSession)
+	}
+
+	r.sessions[networkID][session.SessionID] = session
+	return nil
+}
+
+// GetSession retrieves a specific session by session ID
+func (r *Repository) GetSession(ctx context.Context, networkID, sessionID string) (*network.AgentSession, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.sessions[networkID] == nil {
+		return nil, fmt.Errorf("session not found")
+	}
+
+	session, exists := r.sessions[networkID][sessionID]
+	if !exists {
+		return nil, fmt.Errorf("session not found")
+	}
+
+	return session, nil
+}
+
+// GetActiveSessionsForPeer retrieves all active sessions for a specific peer
+func (r *Repository) GetActiveSessionsForPeer(ctx context.Context, networkID, peerID string) ([]*network.AgentSession, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var sessions []*network.AgentSession
+	if r.sessions[networkID] == nil {
+		return sessions, nil
+	}
+
+	for _, session := range r.sessions[networkID] {
+		if session.PeerID == peerID {
+			sessions = append(sessions, session)
+		}
+	}
+
+	return sessions, nil
+}
+
+// DeleteSession deletes a session
+func (r *Repository) DeleteSession(ctx context.Context, networkID, sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.sessions[networkID] == nil {
+		return fmt.Errorf("session not found")
+	}
+
+	delete(r.sessions[networkID], sessionID)
+	return nil
+}
+
+// ListSessions lists all sessions in a network
+func (r *Repository) ListSessions(ctx context.Context, networkID string) ([]*network.AgentSession, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var sessions []*network.AgentSession
+	if r.sessions[networkID] == nil {
+		return sessions, nil
+	}
+
+	for _, session := range r.sessions[networkID] {
+		sessions = append(sessions, session)
+	}
+
+	return sessions, nil
+}
+
+// Endpoint change tracking
+
+// RecordEndpointChange records an endpoint change for a peer
+func (r *Repository) RecordEndpointChange(ctx context.Context, networkID string, change *network.EndpointChange) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.endpointChanges[networkID] == nil {
+		r.endpointChanges[networkID] = make([]*network.EndpointChange, 0)
+	}
+
+	r.endpointChanges[networkID] = append(r.endpointChanges[networkID], change)
+	return nil
+}
+
+// GetEndpointChanges retrieves endpoint changes for a peer since a given time
+func (r *Repository) GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*network.EndpointChange, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var changes []*network.EndpointChange
+	if r.endpointChanges[networkID] == nil {
+		return changes, nil
+	}
+
+	for _, change := range r.endpointChanges[networkID] {
+		if change.PeerID == peerID && change.ChangedAt.After(since) {
+			changes = append(changes, change)
+		}
+	}
+
+	return changes, nil
+}
+
+// Security incident operations
+
+// CreateSecurityIncident creates a new security incident
+func (r *Repository) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.incidents[incident.ID] = incident
+	return nil
+}
+
+// GetSecurityIncident retrieves a security incident by ID
+func (r *Repository) GetSecurityIncident(ctx context.Context, incidentID string) (*network.SecurityIncident, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	incident, exists := r.incidents[incidentID]
+	if !exists {
+		return nil, fmt.Errorf("incident not found")
+	}
+
+	return incident, nil
+}
+
+// ListSecurityIncidents lists all security incidents, optionally filtered by resolved status
+func (r *Repository) ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*network.SecurityIncident, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var incidents []*network.SecurityIncident
+	for _, incident := range r.incidents {
+		if resolved == nil || incident.Resolved == *resolved {
+			incidents = append(incidents, incident)
+		}
+	}
+
+	return incidents, nil
+}
+
+// ListSecurityIncidentsByNetwork lists security incidents for a specific network
+func (r *Repository) ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*network.SecurityIncident, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var incidents []*network.SecurityIncident
+	for _, incident := range r.incidents {
+		if incident.NetworkID == networkID {
+			if resolved == nil || incident.Resolved == *resolved {
+				incidents = append(incidents, incident)
+			}
+		}
+	}
+
+	return incidents, nil
+}
+
+// ResolveSecurityIncident marks a security incident as resolved
+func (r *Repository) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	incident, exists := r.incidents[incidentID]
+	if !exists {
+		return fmt.Errorf("incident not found")
+	}
+
+	incident.Resolved = true
+	incident.ResolvedAt = time.Now()
+	incident.ResolvedBy = resolvedBy
+
 	return nil
 }

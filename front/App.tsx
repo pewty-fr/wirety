@@ -4,9 +4,15 @@ import { Platform, View, StyleSheet } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Provider as PaperProvider } from 'react-native-paper';
+import { ActivityIndicator } from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import SideTabBar, { SideTabBarExtraProps } from './src/components/SideTabBar';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { AuthProvider, useAuth } from './src/contexts/AuthContext';
+import { UserMenu } from './src/components/UserMenu';
+
+// Auth screens
+import { LoginScreen } from './src/screens/auth/LoginScreen';
 
 // Network screens
 import { NetworkListScreen } from './src/screens/networks/NetworkListScreen';
@@ -28,6 +34,14 @@ import { PeerNetworkGraphScreen } from './src/screens/peers/PeerNetworkGraphScre
 
 // IPAM screens
 import { IPAMListScreen } from './src/screens/ipam/IPAMListScreen';
+
+// Security screens
+import { SecurityIncidentListScreen } from './src/screens/security/SecurityIncidentListScreen';
+
+// User management screens
+import { UserListScreen } from './src/screens/users/UserListScreen';
+import { UserDetailScreen } from './src/screens/users/UserDetailScreen';
+import { DefaultPermissionsScreen } from './src/screens/users/DefaultPermissionsScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -81,6 +95,41 @@ function IPAMStack() {
   );
 }
 
+// Security Stack
+function SecurityStack() {
+  return (
+    <Stack.Navigator>
+      <Stack.Screen name="SecurityIncidentList" component={SecurityIncidentListScreen} options={{ title: 'Security Incidents' }} />
+    </Stack.Navigator>
+  );
+}
+
+// User Management Stack
+function UserStack() {
+  return (
+    <Stack.Navigator>
+      <Stack.Screen 
+        name="UserList" 
+        component={UserListScreen} 
+        options={{ 
+          title: 'Users',
+          headerRight: () => <UserMenu />
+        }} 
+      />
+      <Stack.Screen 
+        name="UserView" 
+        component={UserDetailScreen} 
+        options={{ title: 'User Details' }} 
+      />
+      <Stack.Screen 
+        name="DefaultPermissions" 
+        component={DefaultPermissionsScreen} 
+        options={{ title: 'Default Permissions' }} 
+      />
+    </Stack.Navigator>
+  );
+}
+
 // Main Tab Navigator
 function MainTabs() {
   return (
@@ -112,6 +161,24 @@ function MainTabs() {
           title: 'IPAM',
         }}
       />
+      <Tab.Screen
+        name="Security"
+        component={SecurityStack}
+        options={{
+          headerShown: false,
+          tabBarIcon: ({ color, size }) => <Icon name="shield-alert" size={size} color={color} />,
+          title: 'Security',
+        }}
+      />
+      <Tab.Screen
+        name="Users"
+        component={UserStack}
+        options={{
+          headerShown: false,
+          tabBarIcon: ({ color, size }) => <Icon name="account-multiple" size={size} color={color} />,
+          title: 'Users',
+        }}
+      />
     </Tab.Navigator>
   );
 }
@@ -119,14 +186,43 @@ function MainTabs() {
 export default function App() {
   return (
     <PaperProvider>
-      <NavigationContainer>
-        {Platform.OS === 'web' ? (
-          <WebWithSidebar />
-        ) : (
-          <MainTabs />
-        )}
-      </NavigationContainer>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
     </PaperProvider>
+  );
+}
+
+function AppContent() {
+  const { isLoading, isAuthenticated, authConfig } = useAuth();
+
+  if (isLoading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
+  // If auth is enabled and user is not authenticated, show login
+  if (authConfig?.enabled && !isAuthenticated) {
+    return (
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Login" component={LoginScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    );
+  }
+
+  return (
+    <NavigationContainer>
+      {Platform.OS === 'web' ? (
+        <WebWithSidebar />
+      ) : (
+        <MainTabs />
+      )}
+    </NavigationContainer>
   );
 }
 
@@ -161,6 +257,16 @@ function WebWithSidebar() {
                 component={IPAMStack}
                 options={{ headerShown: false, title: 'IPAM', tabBarIcon: ({ color, size }) => <Icon name="ip-network" size={size} color={color} /> }}
               />
+              <Tab.Screen
+                name="Security"
+                component={SecurityStack}
+                options={{ headerShown: false, title: 'Security', tabBarIcon: ({ color, size }) => <Icon name="shield-alert" size={size} color={color} /> }}
+              />
+              <Tab.Screen
+                name="Users"
+                component={UserStack}
+                options={{ headerShown: false, title: 'Users', tabBarIcon: ({ color, size }) => <Icon name="account-multiple" size={size} color={color} /> }}
+              />
       </Tab.Navigator>
     </View>
   );
@@ -178,5 +284,10 @@ const styles = StyleSheet.create({
   },
   webSceneCollapsed: {
     marginLeft: 64,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

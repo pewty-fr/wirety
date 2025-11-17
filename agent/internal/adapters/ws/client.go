@@ -29,6 +29,13 @@ func (c *Client) ReadMessage() ([]byte, error) {
 	return msg, err
 }
 
+func (c *Client) WriteMessage(data []byte) error {
+	if c.conn == nil {
+		return websocket.ErrBadHandshake
+	}
+	return c.conn.WriteMessage(websocket.TextMessage, data)
+}
+
 func (c *Client) Close() error {
 	if c.conn != nil {
 		return c.conn.Close()

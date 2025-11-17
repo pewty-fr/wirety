@@ -1,5 +1,131 @@
 basePath: /api/v1
 definitions:
+  api.AuthConfigResponse:
+    properties:
+      client_id:
+        type: string
+      enabled:
+        type: boolean
+      issuer_url:
+        type: string
+    type: object
+  api.IPAMAllocation:
+    properties:
+      allocated:
+        type: boolean
+      ip:
+        type: string
+      network_cidr:
+        type: string
+      network_id:
+        type: string
+      network_name:
+        type: string
+      peer_id:
+        type: string
+      peer_name:
+        type: string
+    type: object
+  api.PaginatedNetworks:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/network.Network'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  api.PaginatedPeers:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/network.Peer'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  api.TokenRequest:
+    properties:
+      code:
+        type: string
+      redirect_uri:
+        type: string
+    required:
+    - code
+    - redirect_uri
+    type: object
+  api.TokenResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      token_type:
+        type: string
+    type: object
+  auth.DefaultNetworkPermissions:
+    properties:
+      default_authorized_networks:
+        items:
+          type: string
+        type: array
+      default_role:
+        $ref: '#/definitions/auth.Role'
+    type: object
+  auth.Role:
+    enum:
+    - administrator
+    - user
+    type: string
+    x-enum-varnames:
+    - RoleAdministrator
+    - RoleUser
+  auth.User:
+    properties:
+      authorized_networks:
+        description: Network IDs the user can access
+        items:
+          type: string
+        type: array
+      created_at:
+        type: string
+      email:
+        description: User email from OIDC
+        type: string
+      id:
+        description: OIDC subject ID
+        type: string
+      last_login_at:
+        type: string
+      name:
+        description: Display name from OIDC
+        type: string
+      role:
+        allOf:
+        - $ref: '#/definitions/auth.Role'
+        description: User role (administrator or user)
+      updated_at:
+        type: string
+    type: object
+  auth.UserUpdateRequest:
+    properties:
+      authorized_networks:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      role:
+        $ref: '#/definitions/auth.Role'
+    type: object
   network.ACL:
     properties:
       blocked_peers:
@@ -32,6 +158,51 @@ definitions:
         type: string
       target_peer:
         description: Target peer ID or "*" for all
+        type: string
+    type: object
+  network.AgentSession:
+    properties:
+      first_seen:
+        description: First connection timestamp
+        type: string
+      hostname:
+        description: Agent hostname
+        type: string
+      last_seen:
+        description: Last heartbeat timestamp
+        type: string
+      peer_id:
+        description: Peer ID this session belongs to
+        type: string
+      reported_endpoint:
+        description: Endpoint as reported by other agents
+        type: string
+      session_id:
+        description: Unique session identifier
+        type: string
+      system_uptime:
+        description: Host uptime in seconds
+        type: integer
+      wireguard_uptime:
+        description: WireGuard interface uptime in seconds
+        type: integer
+    type: object
+  network.EndpointChange:
+    properties:
+      changed_at:
+        description: When the change was detected
+        type: string
+      new_endpoint:
+        description: New endpoint (IP:port)
+        type: string
+      old_endpoint:
+        description: Previous endpoint (IP:port)
+        type: string
+      peer_id:
+        description: ID of the peer whose endpoint changed
+        type: string
+      source:
+        description: '"agent" (self-reported) or "wireguard" (observed from handshakes)'
         type: string
     type: object
   network.Network:
@@ -118,6 +289,9 @@ definitions:
         type: integer
       name:
         type: string
+      owner_id:
+        description: User ID who owns this peer (empty for admin-created peers)
+        type: string
       private_key:
         description: Only stored for the peer itself
         type: string
@@ -152,6 +326,29 @@ definitions:
     required:
     - name
     type: object
+  network.PeerSessionStatus:
+    properties:
+      conflicting_sessions:
+        description: Multiple agents detected
+        items:
+          $ref: '#/definitions/network.AgentSession'
+        type: array
+      current_session:
+        $ref: '#/definitions/network.AgentSession'
+      has_active_agent:
+        type: boolean
+      last_checked:
+        type: string
+      peer_id:
+        type: string
+      recent_endpoint_changes:
+        items:
+          $ref: '#/definitions/network.EndpointChange'
+        type: array
+      suspicious_activity:
+        description: Rapid endpoint changes
+        type: boolean
+    type: object
   network.PeerUpdateRequest:
     properties:
       additional_allowed_ips:
@@ -167,6 +364,41 @@ definitions:
       listen_port:
         type: integer
       name:
+        type: string
+    type: object
+  network.SecurityIncident:
+    properties:
+      details:
+        description: Human-readable description
+        type: string
+      detected_at:
+        type: string
+      endpoints:
+        description: List of endpoints involved
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      incident_type:
+        description: '"shared_config", "session_conflict", "suspicious_activity"'
+        type: string
+      network_id:
+        type: string
+      network_name:
+        type: string
+      peer_id:
+        type: string
+      peer_name:
+        type: string
+      public_key:
+        description: The public key involved in the incident
+        type: string
+      resolved:
+        type: boolean
+      resolved_at:
+        type: string
+      resolved_by:
         type: string
     type: object
 host: localhost:8080
@@ -213,9 +445,58 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Resolve agent enrollment token
       tags:
       - agent
+  /auth/config:
+    get:
+      description: Get public authentication configuration (no auth required)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AuthConfigResponse'
+      summary: Get authentication configuration
+      tags:
+      - auth
+  /auth/token:
+    post:
+      consumes:
+      - application/json
+      description: Exchange OIDC authorization code for access token
+      parameters:
+      - description: Token exchange request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.TokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.TokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Exchange authorization code for access token
+      tags:
+      - auth
   /health:
     get:
       description: Check if the API is healthy
@@ -228,9 +509,49 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Health check
       tags:
       - health
+  /ipam:
+    get:
+      description: Get a list of all IP allocations across all networks with pagination
+        and filtering
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      - description: Filter by network name, IP, or peer name
+        in: query
+        name: filter
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all IP allocations
+      tags:
+      - ipam
   /ipam/available-cidrs:
     get:
       description: Returns a list of CIDRs sized to hold at least max_peers peers
@@ -271,12 +592,20 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Suggest available CIDRs
       tags:
       - ipam
-  /networks:
+  /ipam/networks/{networkId}:
     get:
-      description: Get a list of all networks
+      description: Get all IP allocations for a specific network
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
       produces:
       - application/json
       responses:
@@ -284,15 +613,60 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/network.Network'
+              $ref: '#/definitions/api.IPAMAllocation'
             type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
           schema:
             additionalProperties:
               type: string
             type: object
-      summary: List all networks
+      security:
+      - BearerAuth: []
+      summary: Get network IPAM allocations
+      tags:
+      - ipam
+  /networks:
+    get:
+      description: Get a paginated list of networks. Supports optional filtering by
+        name or CIDR substring.
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      - description: Filter by network name or CIDR
+        in: query
+        name: filter
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.PaginatedNetworks'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List networks (paginated)
       tags:
       - networks
     post:
@@ -325,6 +699,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Create a new network
       tags:
       - networks
@@ -353,6 +729,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Delete a network
       tags:
       - networks
@@ -378,6 +756,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Get a network
       tags:
       - networks
@@ -416,6 +796,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Update a network
       tags:
       - networks
@@ -441,6 +823,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Get ACL configuration
       tags:
       - acl
@@ -479,17 +863,34 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Update ACL configuration
       tags:
       - acl
   /networks/{networkId}/peers:
     get:
-      description: Get a list of all peers in a network
+      description: Get a paginated list of peers in a network. Supports optional filtering
+        by name, address (IP), or ID substring.
       parameters:
       - description: Network ID
         in: path
         name: networkId
         required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      - description: Filter by peer name, IP address or ID
+        in: query
+        name: filter
         type: string
       produces:
       - application/json
@@ -497,16 +898,16 @@ paths:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/network.Peer'
-            type: array
+            $ref: '#/definitions/api.PaginatedPeers'
         "500":
           description: Internal Server Error
           schema:
             additionalProperties:
               type: string
             type: object
-      summary: List all peers
+      security:
+      - BearerAuth: []
+      summary: List peers (paginated)
       tags:
       - peers
     post:
@@ -544,6 +945,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Create a new peer
       tags:
       - peers
@@ -570,6 +973,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Delete a peer
       tags:
       - peers
@@ -599,6 +1004,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Get a peer
       tags:
       - peers
@@ -642,12 +1049,15 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Update a peer
       tags:
       - peers
   /networks/{networkId}/peers/{peerId}/config:
     get:
-      description: Get WireGuard configuration for a specific peer
+      description: Get WireGuard configuration for a specific peer returned as JSON
+        object
       parameters:
       - description: Network ID
         in: path
@@ -660,19 +1070,496 @@ paths:
         required: true
         type: string
       produces:
-      - text/plain
+      - application/json
       responses:
         "200":
-          description: WireGuard configuration
+          description: JSON object containing config key
           schema:
-            type: string
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Get peer configuration
       tags:
       - peers
+  /networks/{networkId}/peers/{peerId}/reconnect:
+    post:
+      consumes:
+      - application/json
+      description: Re-establish connections between a peer and all jump servers in
+        the network
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Peer ID
+        in: path
+        name: peerId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Reconnect a peer to jump servers
+      tags:
+      - peers
+  /networks/{networkId}/peers/{peerId}/session:
+    get:
+      description: Get the security status of a peer's active sessions
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Peer ID
+        in: path
+        name: peerId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/network.PeerSessionStatus'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get peer session status
+      tags:
+      - peers
+  /networks/{networkId}/security/incidents:
+    get:
+      consumes:
+      - application/json
+      description: Get a list of security incidents for a specific network
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      - description: Filter by resolved status
+        in: query
+        name: resolved
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/network.SecurityIncident'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List security incidents for a network
+      tags:
+      - security
+  /networks/{networkId}/sessions:
+    get:
+      description: Get all active agent sessions in a network (admin only)
+      parameters:
+      - description: Network ID
+        in: path
+        name: networkId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/network.AgentSession'
+            type: array
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List network sessions
+      tags:
+      - networks
+  /security/incidents:
+    get:
+      consumes:
+      - application/json
+      description: Get a list of all security incidents, optionally filtered by resolved
+        status
+      parameters:
+      - description: Filter by resolved status
+        in: query
+        name: resolved
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/network.SecurityIncident'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all security incidents
+      tags:
+      - security
+  /security/incidents/{incidentId}:
+    get:
+      consumes:
+      - application/json
+      description: Get details of a specific security incident
+      parameters:
+      - description: Incident ID
+        in: path
+        name: incidentId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/network.SecurityIncident'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a security incident
+      tags:
+      - security
+  /security/incidents/{incidentId}/resolve:
+    post:
+      consumes:
+      - application/json
+      description: Mark a security incident as resolved
+      parameters:
+      - description: Incident ID
+        in: path
+        name: incidentId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Resolve a security incident
+      tags:
+      - security
+  /users:
+    get:
+      description: Get a list of all users (admin only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/auth.User'
+            type: array
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all users
+      tags:
+      - users
+  /users/{userId}:
+    delete:
+      description: Delete a user (admin only)
+      parameters:
+      - description: User ID
+        in: path
+        name: userId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete user
+      tags:
+      - users
+    get:
+      description: Get details for a specific user (admin only)
+      parameters:
+      - description: User ID
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.User'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get user details
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Update user role and authorized networks (admin only)
+      parameters:
+      - description: User ID
+        in: path
+        name: userId
+        required: true
+        type: string
+      - description: User update request
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/auth.UserUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.User'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update user
+      tags:
+      - users
+  /users/defaults:
+    get:
+      description: Get default permissions for new users (admin only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.DefaultNetworkPermissions'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get default permissions
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Update default permissions for new users (admin only)
+      parameters:
+      - description: Default permissions
+        in: body
+        name: defaults
+        required: true
+        schema:
+          $ref: '#/definitions/auth.DefaultNetworkPermissions'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.DefaultNetworkPermissions'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update default permissions
+      tags:
+      - users
+  /users/me:
+    get:
+      description: Get the currently authenticated user's information
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.User'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get current user
+      tags:
+      - users
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and JWT token.
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

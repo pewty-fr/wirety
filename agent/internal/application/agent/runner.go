@@ -23,17 +23,29 @@ type WSMessage struct {
 }
 
 type Runner struct {
-	wsClient    ports.WebSocketClientPort
-	cfgWriter   ports.ConfigWriterPort
-	dnsFactory  func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort // factory to create DNS server instance
-	fwAdapter   ports.FirewallPort
-	wsURL       string
-	backoffBase time.Duration
-	backoffMax  time.Duration
+	wsClient          ports.WebSocketClientPort
+	cfgWriter         ports.ConfigWriterPort
+	dnsFactory        func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort // factory to create DNS server instance
+	fwAdapter         ports.FirewallPort
+	wsURL             string
+	wgInterface       string
+	backoffBase       time.Duration
+	backoffMax        time.Duration
+	heartbeatInterval time.Duration
 }
 
-func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string) *Runner {
-	return &Runner{wsClient: wsClient, cfgWriter: writer, dnsFactory: dnsFactory, fwAdapter: fwAdapter, wsURL: wsURL, backoffBase: time.Second, backoffMax: 30 * time.Second}
+func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string) *Runner {
+	return &Runner{
+		wsClient:          wsClient,
+		cfgWriter:         writer,
+		dnsFactory:        dnsFactory,
+		fwAdapter:         fwAdapter,
+		wsURL:             wsURL,
+		wgInterface:       wgInterface,
+		backoffBase:       time.Second,
+		backoffMax:        30 * time.Second,
+		heartbeatInterval: 30 * time.Second, // Send heartbeat every 30 seconds
+	}
 }
 
 func (r *Runner) Start(stop <-chan struct{}) {
@@ -60,9 +72,27 @@ func (r *Runner) Start(stop <-chan struct{}) {
 		}
 		backoff = r.backoffBase
 		log.Info().Str("url", r.wsURL).Msg("websocket connected")
+
+		// Start heartbeat goroutine
+		heartbeatTicker := time.NewTicker(r.heartbeatInterval)
+		defer heartbeatTicker.Stop()
+		heartbeatDone := make(chan struct{})
+
+		go func() {
+			for {
+				select {
+				case <-heartbeatDone:
+					return
+				case <-heartbeatTicker.C:
+					r.sendHeartbeat()
+				}
+			}
+		}()
+
 		for {
 			select {
 			case <-stop:
+				close(heartbeatDone)
 				_ = r.wsClient.Close()
 				return
 			default:
@@ -70,6 +100,7 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			msgBytes, err := r.wsClient.ReadMessage()
 			if err != nil {
 				log.Error().Err(err).Msg("websocket read error; reconnecting")
+				close(heartbeatDone)
 				_ = r.wsClient.Close()
 				break
 			}
@@ -101,5 +132,36 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				}
 			}
 		}
+	}
+}
+
+// sendHeartbeat sends system information to the server
+func (r *Runner) sendHeartbeat() {
+	sysInfo, err := CollectSystemInfo(r.wgInterface)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to collect system info for heartbeat")
+		return
+	}
+
+	heartbeat := map[string]interface{}{
+		"hostname":          sysInfo.Hostname,
+		"system_uptime":     sysInfo.SystemUptime,
+		"wireguard_uptime":  sysInfo.WireGuardUptime,
+		"reported_endpoint": sysInfo.ReportedEndpoint,
+	}
+
+	data, err := json.Marshal(heartbeat)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to marshal heartbeat")
+		return
+	}
+
+	if err := r.wsClient.WriteMessage(data); err != nil {
+		log.Debug().Err(err).Msg("failed to send heartbeat (will retry)")
+	} else {
+		log.Trace().
+			Str("hostname", sysInfo.Hostname).
+			Int64("system_uptime", sysInfo.SystemUptime).
+			Msg("heartbeat sent")
 	}
 }

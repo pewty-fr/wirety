@@ -4,8 +4,10 @@ import (
 	"net/http"
 	"strconv"
 
+	"wirety/internal/adapters/api/middleware"
 	"wirety/internal/application/ipam"
 	"wirety/internal/application/network"
+	"wirety/internal/domain/auth"
 	domain "wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +22,7 @@ type Handler struct {
 	service     *network.Service
 	ipamService *ipam.Service
 	wsManager   *WebSocketManager
+	userRepo    auth.Repository
 }
 
 // PaginatedNetworks represents a paginated list of networks
@@ -39,61 +42,112 @@ type PaginatedPeers struct {
 }
 
 // NewHandler creates a new API handler
-func NewHandler(service *network.Service, ipamService *ipam.Service) *Handler {
+func NewHandler(service *network.Service, ipamService *ipam.Service, userRepo auth.Repository) *Handler {
 	return &Handler{
 		service:     service,
 		ipamService: ipamService,
 		wsManager:   NewWebSocketManager(service),
+		userRepo:    userRepo,
 	}
 }
 
 // RegisterRoutes registers all API routes
-func (h *Handler) RegisterRoutes(r *gin.Engine) {
+func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, requireAdmin gin.HandlerFunc, requireNetworkAccess gin.HandlerFunc) {
 	api := r.Group("/api/v1")
+
+	// Public routes (no auth required)
 	{
-		// Agent enrollment / token resolution
+		api.GET("/health", h.Health)
+		api.GET("/auth/config", h.GetAuthConfig)
+		api.POST("/auth/token", h.ExchangeToken)
+		// Agent endpoints (token-based authentication, not OIDC)
 		api.GET("/agent/resolve", h.ResolveAgent)
-		// Network routes
-		networks := api.Group("/networks")
+		api.GET("/ws", h.HandleWebSocketToken)               // token-based WebSocket
+		api.GET("/ws/:networkId/:peerId", h.HandleWebSocket) // legacy WebSocket
+	}
+
+	// Protected routes (auth required)
+	protected := api.Group("")
+	protected.Use(authMiddleware)
+	{
+		// User management routes
+		users := protected.Group("/users")
 		{
-			networks.POST("", h.CreateNetwork)
-			networks.GET("", h.ListNetworks)
-			networks.GET("/:networkId", h.GetNetwork)
-			networks.PUT("/:networkId", h.UpdateNetwork)
-			networks.DELETE("/:networkId", h.DeleteNetwork)
-
-			// Peer routes
-			peers := networks.Group("/:networkId/peers")
+			users.GET("/me", h.GetCurrentUser)
+			// Admin only routes
+			adminUsers := users.Group("")
+			adminUsers.Use(requireAdmin)
 			{
-				peers.POST("", h.CreatePeer)
-				peers.GET("", h.ListPeers)
-				peers.GET("/:peerId", h.GetPeer)
-				peers.PUT("/:peerId", h.UpdatePeer)
-				peers.DELETE("/:peerId", h.DeletePeer)
-				peers.GET("/:peerId/config", h.GetPeerConfig)
-			}
-
-			// ACL routes
-			acl := networks.Group("/:networkId/acl")
-			{
-				acl.GET("", h.GetACL)
-				acl.PUT("", h.UpdateACL)
+				adminUsers.GET("", h.ListUsers)
+				adminUsers.GET("/defaults", h.GetDefaultPermissions)
+				adminUsers.PUT("/defaults", h.UpdateDefaultPermissions)
+				adminUsers.GET("/:userId", h.GetUser)
+				adminUsers.PUT("/:userId", h.UpdateUser)
+				adminUsers.DELETE("/:userId", h.DeleteUser)
 			}
 		}
 
-		// WebSocket endpoints for config updates (legacy by IDs and token-based)
-		api.GET("/ws/:networkId/:peerId", h.HandleWebSocket) // legacy
-		api.GET("/ws", h.HandleWebSocketToken)               // token-based (?token=...)
-		api.GET("/health", h.Health)
-		api.GET("/ipam/available-cidrs", h.GetAvailableCIDRs)
+		// Network routes (admin or authorized users)
+		networks := protected.Group("/networks")
+		{
+			// List/Create networks - admin only
+			networks.GET("", h.ListNetworks)
+			networks.POST("", requireAdmin, h.CreateNetwork)
+
+			// Specific network operations - requires network access
+			networkOps := networks.Group("/:networkId")
+			networkOps.Use(requireNetworkAccess)
+			{
+				networkOps.GET("", h.GetNetwork)
+				networkOps.PUT("", requireAdmin, h.UpdateNetwork)
+				networkOps.DELETE("", requireAdmin, h.DeleteNetwork)
+
+				// Peer routes
+				peers := networkOps.Group("/peers")
+				{
+					peers.POST("", h.CreatePeer)
+					peers.GET("", h.ListPeers)
+					peers.GET("/:peerId", h.GetPeer)
+					peers.PUT("/:peerId", h.UpdatePeer)
+					peers.DELETE("/:peerId", h.DeletePeer)
+					peers.GET("/:peerId/config", h.GetPeerConfig)
+					peers.GET("/:peerId/session", h.GetPeerSessionStatus)
+					peers.POST("/:peerId/reconnect", h.ReconnectPeer)
+				}
+
+				// Network session management (admin only)
+				networkOps.GET("/sessions", h.ListNetworkSessions)
+
+				// Network security incidents
+				networkOps.GET("/security/incidents", h.ListNetworkSecurityIncidents)
+
+				// ACL routes (admin only)
+				acl := networkOps.Group("/acl")
+				acl.Use(requireAdmin)
+				{
+					acl.GET("", h.GetACL)
+					acl.PUT("", h.UpdateACL)
+				}
+			}
+		}
 
 		// IPAM routes
-		ipam := api.Group("/ipam")
+		ipam := protected.Group("/ipam")
 		{
+			ipam.GET("/available-cidrs", h.GetAvailableCIDRs)
 			ipam.GET("", h.ListIPAMAllocations)
-			ipam.GET("/networks/:networkId", h.GetNetworkIPAM)
+			ipam.GET("/networks/:networkId", requireNetworkAccess, h.GetNetworkIPAM)
+		}
+
+		// Security routes
+		security := protected.Group("/security")
+		{
+			security.GET("/incidents", h.ListSecurityIncidents)
+			security.GET("/incidents/:incidentId", h.GetSecurityIncident)
+			security.POST("/incidents/:incidentId/resolve", h.ResolveSecurityIncident)
 		}
 	}
+
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 }
 
@@ -110,6 +164,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 // @Failure      400 {object} map[string]string
 // @Failure      500 {object} map[string]string
 // @Router       /ipam/available-cidrs [get]
+// @Security     BearerAuth
 func (h *Handler) GetAvailableCIDRs(c *gin.Context) {
 	maxPeersStr := c.Query("max_peers")
 	if maxPeersStr == "" {
@@ -157,6 +212,8 @@ func (h *Handler) GetAvailableCIDRs(c *gin.Context) {
 //	@Failure		400		{object}	map[string]string
 //	@Failure		500		{object}	map[string]string
 //	@Router			/networks [post]
+//
+// @Security     BearerAuth
 func (h *Handler) CreateNetwork(c *gin.Context) {
 	var req domain.NetworkCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -183,6 +240,8 @@ func (h *Handler) CreateNetwork(c *gin.Context) {
 //	@Success		200			{object}	domain.Network
 //	@Failure		404			{object}	map[string]string
 //	@Router			/networks/{networkId} [get]
+//
+// @Security     BearerAuth
 func (h *Handler) GetNetwork(c *gin.Context) {
 	networkID := c.Param("networkId")
 
@@ -207,6 +266,7 @@ func (h *Handler) GetNetwork(c *gin.Context) {
 // @Success      200 {object} PaginatedNetworks
 // @Failure      500 {object} map[string]string
 // @Router       /networks [get]
+// @Security     BearerAuth
 func (h *Handler) ListNetworks(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
@@ -268,6 +328,8 @@ func (h *Handler) ListNetworks(c *gin.Context) {
 //	@Failure		400			{object}	map[string]string
 //	@Failure		404			{object}	map[string]string
 //	@Router			/networks/{networkId} [put]
+//
+// @Security     BearerAuth
 func (h *Handler) UpdateNetwork(c *gin.Context) {
 	networkID := c.Param("networkId")
 
@@ -302,6 +364,8 @@ func (h *Handler) UpdateNetwork(c *gin.Context) {
 //	@Success		204
 //	@Failure		404	{object}	map[string]string
 //	@Router			/networks/{networkId} [delete]
+//
+// @Security     BearerAuth
 func (h *Handler) DeleteNetwork(c *gin.Context) {
 	networkID := c.Param("networkId")
 
@@ -326,8 +390,10 @@ func (h *Handler) DeleteNetwork(c *gin.Context) {
 //	@Failure		400			{object}	map[string]string
 //	@Failure		500			{object}	map[string]string
 //	@Router			/networks/{networkId}/peers [post]
+//	@Security		BearerAuth
 func (h *Handler) CreatePeer(c *gin.Context) {
 	networkID := c.Param("networkId")
+	user := middleware.GetUserFromContext(c)
 
 	var req domain.PeerCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -335,7 +401,13 @@ func (h *Handler) CreatePeer(c *gin.Context) {
 		return
 	}
 
-	peer, err := h.service.AddPeer(c.Request.Context(), networkID, &req)
+	// Set owner ID for non-admin users
+	ownerID := ""
+	if user != nil && !user.IsAdministrator() {
+		ownerID = user.ID
+	}
+
+	peer, err := h.service.AddPeer(c.Request.Context(), networkID, &req, ownerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -358,6 +430,8 @@ func (h *Handler) CreatePeer(c *gin.Context) {
 //	@Success		200			{object}	domain.Peer
 //	@Failure		404			{object}	map[string]string
 //	@Router			/networks/{networkId}/peers/{peerId} [get]
+//
+// @Security     BearerAuth
 func (h *Handler) GetPeer(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
@@ -384,6 +458,7 @@ func (h *Handler) GetPeer(c *gin.Context) {
 // @Success      200 {object} PaginatedPeers
 // @Failure      500 {object} map[string]string
 // @Router       /networks/{networkId}/peers [get]
+// @Security     BearerAuth
 func (h *Handler) ListPeers(c *gin.Context) {
 	networkID := c.Param("networkId")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -446,9 +521,24 @@ func (h *Handler) ListPeers(c *gin.Context) {
 //	@Failure		400			{object}	map[string]string
 //	@Failure		404			{object}	map[string]string
 //	@Router			/networks/{networkId}/peers/{peerId} [put]
+//	@Security		BearerAuth
 func (h *Handler) UpdatePeer(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
+	user := middleware.GetUserFromContext(c)
+
+	// Get the peer to check ownership
+	peer, err := h.service.GetPeer(c.Request.Context(), networkID, peerID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "peer not found"})
+		return
+	}
+
+	// Check permission: admins can update any peer, users can only update their own
+	if user != nil && !user.CanManagePeer(networkID, peer.OwnerID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you can only manage your own peers"})
+		return
+	}
 
 	var req domain.PeerUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -456,7 +546,7 @@ func (h *Handler) UpdatePeer(c *gin.Context) {
 		return
 	}
 
-	peer, err := h.service.UpdatePeer(c.Request.Context(), networkID, peerID, &req)
+	peer, err = h.service.UpdatePeer(c.Request.Context(), networkID, peerID, &req)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -478,9 +568,24 @@ func (h *Handler) UpdatePeer(c *gin.Context) {
 //	@Success		204
 //	@Failure		404	{object}	map[string]string
 //	@Router			/networks/{networkId}/peers/{peerId} [delete]
+//	@Security		BearerAuth
 func (h *Handler) DeletePeer(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
+	user := middleware.GetUserFromContext(c)
+
+	// Get the peer to check ownership
+	peer, err := h.service.GetPeer(c.Request.Context(), networkID, peerID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "peer not found"})
+		return
+	}
+
+	// Check permission: admins can delete any peer, users can only delete their own
+	if user != nil && !user.CanManagePeer(networkID, peer.OwnerID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you can only manage your own peers"})
+		return
+	}
 
 	if err := h.service.DeletePeer(c.Request.Context(), networkID, peerID); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -504,6 +609,7 @@ func (h *Handler) DeletePeer(c *gin.Context) {
 // @Success      200 {object} map[string]string "JSON object containing config key"
 // @Failure      404 {object} map[string]string
 // @Router       /networks/{networkId}/peers/{peerId}/config [get]
+// @Security     BearerAuth
 func (h *Handler) GetPeerConfig(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
@@ -527,6 +633,8 @@ func (h *Handler) GetPeerConfig(c *gin.Context) {
 //	@Success		200			{object}	domain.ACL
 //	@Failure		404			{object}	map[string]string
 //	@Router			/networks/{networkId}/acl [get]
+//
+// @Security     BearerAuth
 func (h *Handler) GetACL(c *gin.Context) {
 	networkID := c.Param("networkId")
 
@@ -552,6 +660,8 @@ func (h *Handler) GetACL(c *gin.Context) {
 //	@Failure		400			{object}	map[string]string
 //	@Failure		404			{object}	map[string]string
 //	@Router			/networks/{networkId}/acl [put]
+//
+// @Security     BearerAuth
 func (h *Handler) UpdateACL(c *gin.Context) {
 	networkID := c.Param("networkId")
 
@@ -577,6 +687,8 @@ func (h *Handler) UpdateACL(c *gin.Context) {
 //	@Produce		json
 //	@Success		200	{object}	map[string]string
 //	@Router			/health [get]
+//
+// @Security     BearerAuth
 func (h *Handler) Health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -591,6 +703,7 @@ func (h *Handler) Health(c *gin.Context) {
 // @Failure      400 {object} map[string]string
 // @Failure      404 {object} map[string]string
 // @Router       /agent/resolve [get]
+// @Security     BearerAuth
 func (h *Handler) ResolveAgent(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
@@ -637,6 +750,7 @@ type IPAMAllocation struct {
 // @Success      200 {object} map[string]any
 // @Failure      500 {object} map[string]string
 // @Router       /ipam [get]
+// @Security     BearerAuth
 func (h *Handler) ListIPAMAllocations(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
@@ -721,6 +835,7 @@ func (h *Handler) ListIPAMAllocations(c *gin.Context) {
 // @Failure      404 {object} map[string]string
 // @Failure      500 {object} map[string]string
 // @Router       /ipam/networks/{networkId} [get]
+// @Security     BearerAuth
 func (h *Handler) GetNetworkIPAM(c *gin.Context) {
 	networkID := c.Param("networkId")
 
