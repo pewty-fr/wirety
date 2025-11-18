@@ -1,0 +1,17 @@
+apiVersion: v2
+name: wirety
+description: Secure, dynamic WireGuard mesh with agents and ACL-based incident response
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - wireguard
+  - vpn
+  - mesh
+  - security
+home: https://github.com/pewty/wirety
+sources:
+  - https://github.com/pewty/wirety
+maintainers:
+  - name: Wirety Team
+    email: support@wirety.io
