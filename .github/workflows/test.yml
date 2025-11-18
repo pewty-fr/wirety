@@ -20,14 +20,14 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '>=1.21.0'
+          go-version: '>=1.25.0'
           cache-dependency-path: agent/go.sum
       
       - name: Go mod download
         run: go mod download
       
       - name: Go lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           working-directory: agent
           args: --timeout=30m
@@ -51,14 +51,14 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '>=1.21.0'
+          go-version: '>=1.25.0'
           cache-dependency-path: server/go.sum
       
       - name: Go mod download
         run: go mod download
       
       - name: Go lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           working-directory: server
           args: --timeout=30m
