@@ -13,7 +13,7 @@ RUN npm ci
 COPY . .
 
 # Build the Docusaurus site
-RUN npm run build
+RUN NODE_OPTIONS="--no-webstorage" npm run build
 
 # Production stage
 FROM nginx:alpine
