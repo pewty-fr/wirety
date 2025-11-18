@@ -1,0 +1,28 @@
+{
+  "include-component-in-tag": true,
+  "release-type": "simple",
+  "separate-pull-requests": true,
+  "tag-separator": "/",
+  "packages": {
+    "agent": {
+      "release-type": "go",
+      "package-name": "wirety-agent"
+    },
+    "server": {
+      "release-type": "go",
+      "package-name": "wirety-server"
+    },
+    "front": {
+      "release-type": "node",
+      "package-name": "wirety-front"
+    },
+    "doc": {
+      "release-type": "node",
+      "package-name": "wirety-doc"
+    },
+    "helm": {
+      "release-type": "helm",
+      "package-name": "wirety-helm"
+    }
+  }
+}

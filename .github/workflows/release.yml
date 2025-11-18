@@ -1,0 +1,170 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'agent/v*'
+      - 'server/v*'
+      - 'front/v*'
+      - 'doc/v*'
+      - 'helm/v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  detect-component:
+    runs-on: ubuntu-latest
+    outputs:
+      component: ${{ steps.detect.outputs.component }}
+      version: ${{ steps.detect.outputs.version }}
+    steps:
+      - id: detect
+        run: |
+          TAG="${{ github.ref_name }}"
+          COMPONENT=$(echo $TAG | cut -d'/' -f1)
+          VERSION=$(echo $TAG | cut -d'/' -f2)
+          echo "component=$COMPONENT" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected component: $COMPONENT, version: $VERSION"
+
+  release-agent:
+    needs: detect-component
+    if: needs.detect-component.outputs.component == 'agent'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '>=1.25.0'
+      
+      - name: Build multi-platform binaries
+        run: |
+          cd agent
+          mkdir -p build
+          echo "Building agent binaries for release ${VERSION}"
+          VERSION=${{ needs.detect-component.outputs.version }}
+          GO_LDFLAGS="-s -w -X main.version=$VERSION"
+          GOOS=linux GOARCH=amd64 go build -ldflags "$GO_LDFLAGS" -o build/wirety-agent-linux-amd64 ./cmd/agent
+          GOOS=linux GOARCH=arm64 go build -ldflags "$GO_LDFLAGS" -o build/wirety-agent-linux-arm64 ./cmd/agent
+          GOOS=darwin GOARCH=amd64 go build -ldflags "$GO_LDFLAGS" -o build/wirety-agent-darwin-amd64 ./cmd/agent
+          GOOS=darwin GOARCH=arm64 go build -ldflags "$GO_LDFLAGS" -o build/wirety-agent-darwin-arm64 ./cmd/agent
+          GOOS=windows GOARCH=amd64 go build -ldflags "$GO_LDFLAGS" -o build/wirety-agent-windows-amd64.exe ./cmd/agent
+          (cd build && sha256sum * > checksums.txt)
+          ls -lh build
+      
+      - name: Upload release assets (binaries + checksums)
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            agent/build/wirety-agent-linux-amd64
+            agent/build/wirety-agent-linux-arm64
+            agent/build/wirety-agent-darwin-amd64
+            agent/build/wirety-agent-darwin-arm64
+            agent/build/wirety-agent-windows-amd64.exe
+            agent/build/checksums.txt
+          name: "wirety-agent-${{ needs.detect-component.outputs.version }}"
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-server:
+    needs: detect-component
+    if: needs.detect-component.outputs.component == 'server'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '>=1.5.0'
+      
+      - uses: ko-build/setup-ko@v0.7
+      
+      - name: Build and push
+        run: |
+          echo "$SCW_SECRET_KEY" | ko login rg.fr-par.scw.cloud -u nologin --password-stdin
+          cd server
+          # Push to Scaleway
+          KO_DOCKER_REPO=rg.fr-par.scw.cloud/wirety/server ko publish ./cmd --bare --tags ${{ needs.detect-component.outputs.version }},latest --platform=all
+
+  release-frontend:
+    needs: detect-component
+    if: needs.detect-component.outputs.component == 'front'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Scaleway
+        uses: docker/login-action@v3
+        with:
+          registry: rg.fr-par.scw.cloud
+          username: nologin
+          password: ${{ secrets.SCW_SECRET_KEY}}
+      
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./front
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            rg.fr-par.scw.cloud/wirety/front:${{ needs.detect-component.outputs.version }}
+            rg.fr-par.scw.cloud/wirety/front:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release-doc:
+    needs: detect-component
+    if: needs.detect-component.outputs.component == 'doc'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Scaleway
+        uses: docker/login-action@v3
+        with:
+          registry: rg.fr-par.scw.cloud
+          username: nologin
+          password: ${{ secrets.SCW_SECRET_KEY }}
+      
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./doc/website
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            rg.fr-par.scw.cloud/wirety/doc:${{ needs.detect-component.outputs.version }}
+            rg.fr-par.scw.cloud/wirety/doc:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release-helm:
+    needs: detect-component
+    if: needs.detect-component.outputs.component == 'helm'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+      
+      - name: Package Helm chart
+        run: |
+          echo "$SCW_SECRET_KEY" | helm registry login rg.fr-par.scw.cloud/wirety/chart -u nologin --password-stdin
+          helm package ./helm --version ${{ needs.detect-component.outputs.version }}
+          helm push wirety-${{ needs.detect-component.outputs.version }}.tgz oci://rg.fr-par.scw.cloud/wirety/chart
+
