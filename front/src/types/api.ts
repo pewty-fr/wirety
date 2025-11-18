@@ -33,6 +33,7 @@ export interface Peer {
   jump_nat_interface?: string;
   is_isolated: boolean;
   full_encapsulation: boolean;
+  use_agent: boolean; // Whether this peer uses the agent (dynamic) or static config
   created_at: string;
   updated_at: string;
   network_id?: string; // Added for when loading all peers across networks
@@ -47,6 +48,7 @@ export interface PeerCreateRequest {
   jump_nat_interface?: string;
   is_isolated: boolean;
   full_encapsulation: boolean;
+  use_agent: boolean; // Whether this peer uses the agent (dynamic) or static config
   additional_allowed_ips?: string[];
 }
 

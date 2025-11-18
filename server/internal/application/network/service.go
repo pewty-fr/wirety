@@ -114,15 +114,22 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 
 	// If CIDR changed, reallocate all peer IPs
 	if cidrChanged {
-		// Ensure new root prefix exists
-		if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDR); err != nil {
-			return nil, fmt.Errorf("failed to ensure new root prefix: %w", err)
-		}
-
-		// Get all peers
+		// Get all peers to check for static peers
 		peers, err := s.repo.ListPeers(ctx, networkID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list peers: %w", err)
+		}
+
+		// Check if any regular peers are using static config (not using agent)
+		for _, peer := range peers {
+			if !peer.IsJump && !peer.UseAgent {
+				return nil, fmt.Errorf("cannot change CIDR: network contains static regular peer '%s' which would require manual reconfiguration", peer.Name)
+			}
+		}
+
+		// Ensure new root prefix exists
+		if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDR); err != nil {
+			return nil, fmt.Errorf("failed to ensure new root prefix: %w", err)
 		}
 
 		// Release old IPs and allocate new ones
@@ -187,6 +194,7 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 		JumpNatInterface:     req.JumpNatInterface,
 		IsIsolated:           req.IsIsolated,
 		FullEncapsulation:    req.FullEncapsulation,
+		UseAgent:             req.UseAgent,             // Track if peer uses agent or static config
 		AdditionalAllowedIPs: req.AdditionalAllowedIPs, // default full network access (used for jump peers)
 		OwnerID:              ownerID,                  // Set the owner of the peer
 		CreatedAt:            now,
@@ -203,6 +211,11 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 	// Default listen port for jump peers if not provided
 	if peer.IsJump && peer.ListenPort == 0 {
 		peer.ListenPort = 51820
+	}
+
+	// Jump peers always use agent
+	if peer.IsJump {
+		peer.UseAgent = true
 	}
 
 	if err := s.repo.CreatePeer(ctx, networkID, peer); err != nil {

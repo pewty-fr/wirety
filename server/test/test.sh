@@ -33,21 +33,21 @@ JUMP_ID=$(echo "$JUMP_RESP" | jq -r '.id')
 echo "==> Creating isolated full encapsulation peer"
 PEER1_RESP=$(curl -s -X POST "${BASE_URL}/networks/${NETWORK_ID}/peers" \
 	-H 'Content-Type: application/json' \
-	-d '{"name":"iso-full","is_isolated":true,"full_encapsulation":true}')
+	-d '{"name":"iso-full","is_isolated":true,"full_encapsulation":true,"use_agent":false}')
 echo "$PEER1_RESP" | jq '.token'
 PEER1_ID=$(echo "$PEER1_RESP" | jq -r '.id')
 
 echo "==> Creating isolated normal encapsulation peer"
 PEER2_RESP=$(curl -s -X POST "${BASE_URL}/networks/${NETWORK_ID}/peers" \
 	-H 'Content-Type: application/json' \
-	-d '{"name":"iso-partial","is_isolated":true,"full_encapsulation":false}')
+	-d '{"name":"iso-partial","is_isolated":true,"full_encapsulation":false,"use_agent":true}')
 echo "$PEER2_RESP" | jq '.token'
 PEER2_ID=$(echo "$PEER2_RESP" | jq -r '.id')
 
 echo "==> Creating non-isolated normal encapsulation peer"
 PEER3_RESP=$(curl -s -X POST "${BASE_URL}/networks/${NETWORK_ID}/peers" \
 	-H 'Content-Type: application/json' \
-	-d '{"name":"shared","is_isolated":false,"full_encapsulation":false}')
+	-d '{"name":"shared","is_isolated":false,"full_encapsulation":false,"use_agent":true}')
 echo "$PEER3_RESP" | jq '.token'
 PEER3_ID=$(echo "$PEER3_RESP" | jq -r '.id')
 

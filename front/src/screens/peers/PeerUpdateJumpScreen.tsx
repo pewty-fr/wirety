@@ -84,17 +84,25 @@ export const PeerUpdateJumpScreen = () => {
 
   if (loading) {
     return (
-      <View style={styles.centered}>\n        <ActivityIndicator size="large" />\n      </View>
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" />
+      </View>
     );
   }
   if (!peer) {
     return (
-      <View style={styles.centered}>\n        <Text>Peer not found</Text>\n      </View>
+      <View style={styles.centered}>
+        <Text>Peer not found</Text>
+      </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>\n      <View style={styles.form}>\n        <Title>Update Jump Server</Title>\n        {errors.load && <HelperText type="error">{errors.load}</HelperText>}\n
+    <ScrollView style={styles.container}>
+      <View style={styles.form}>
+        <Title>Update Jump Server</Title>
+        {errors.load && <HelperText type="error">{errors.load}</HelperText>}
+
         <TextInput label="Name" value={name} onChangeText={setName} error={errors.name} />
         {errors.name && <HelperText type="error">{errors.name}</HelperText>}
 
@@ -104,7 +112,7 @@ export const PeerUpdateJumpScreen = () => {
         <TextInput label="Listen Port" value={listenPort} onChangeText={setListenPort} keyboardType="numeric" placeholder="51820" error={errors.listenPort} />
         {errors.listenPort && <HelperText type="error">{errors.listenPort}</HelperText>}
 
-  <TextInput label="NAT Interface (read-only)" value={natInterface} onChangeText={() => {}} disabled editable={false} />
+        <TextInput label="NAT Interface (read-only)" value={natInterface} onChangeText={() => {}} disabled editable={false} />
         <HelperText type="info">NAT interface cannot be changed after creation (backend limitation)</HelperText>
 
         <TextInput label="Additional Allowed IPs (optional)" value={additionalIPs} onChangeText={setAdditionalIPs} multiline placeholder="192.168.1.0/24, 10.0.0.0/8" />
@@ -114,7 +122,8 @@ export const PeerUpdateJumpScreen = () => {
 
         <FormButton title="Save Changes" onPress={handleSubmit} loading={saving} />
         <FormButton title="Cancel" onPress={() => navigation.goBack()} mode="outlined" />
-      </View>\n    </ScrollView>
+      </View>
+    </ScrollView>
   );
 };
 

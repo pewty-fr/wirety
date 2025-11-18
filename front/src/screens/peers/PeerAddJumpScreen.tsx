@@ -57,6 +57,7 @@ export const PeerAddJumpScreen = () => {
         jump_nat_interface: natInterface,
         is_isolated: false,
         full_encapsulation: false,
+        use_agent: true, // Jump servers always use agent
         additional_allowed_ips: additional_allowed_ips.length > 0 ? additional_allowed_ips : undefined,
       });
       // Go back twice: past choice screen to peer list

@@ -14,6 +14,7 @@ export const PeerAddRegularScreen = () => {
   const [endpoint, setEndpoint] = useState('');
   const [isIsolated, setIsIsolated] = useState(false);
   const [fullEncapsulation, setFullEncapsulation] = useState(false);
+  const [useAgent, setUseAgent] = useState(true); // Default to agent-based (dynamic)
   const [additionalIPs, setAdditionalIPs] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
@@ -46,6 +47,7 @@ export const PeerAddRegularScreen = () => {
         is_jump: false,
         is_isolated: isIsolated,
         full_encapsulation: fullEncapsulation,
+        use_agent: useAgent,
         additional_allowed_ips: additional_allowed_ips.length > 0 ? additional_allowed_ips : undefined,
       });
       // Go back twice: past choice screen to peer list
@@ -81,6 +83,16 @@ export const PeerAddRegularScreen = () => {
           error={errors.endpoint}
         />
         {errors.endpoint && <HelperText type="error">{errors.endpoint}</HelperText>}
+
+        <View style={styles.switchRow}>
+          <Text>Use Agent (Dynamic)</Text>
+          <Switch value={useAgent} onValueChange={setUseAgent} />
+        </View>
+        <HelperText type="info">
+          {useAgent 
+            ? 'Peer uses Wirety agent for automatic configuration (token-based)' 
+            : 'Peer uses static WireGuard configuration (manual setup)'}
+        </HelperText>
 
         <View style={styles.switchRow}>
           <Text>Isolated</Text>

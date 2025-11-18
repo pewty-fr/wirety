@@ -82,28 +82,42 @@ export const PeerUpdateRegularScreen = () => {
 
   if (loading) {
     return (
-      <View style={styles.centered}>\n        <ActivityIndicator size="large" />\n      </View>
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" />
+      </View>
     );
   }
 
   if (!peer) {
     return (
-      <View style={styles.centered}>\n        <Text>Peer not found</Text>\n      </View>
+      <View style={styles.centered}>
+        <Text>Peer not found</Text>
+      </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>\n      <View style={styles.form}>\n        <Title>Update Regular Peer</Title>\n        {errors.load && <HelperText type="error">{errors.load}</HelperText>}\n
+    <ScrollView style={styles.container}>
+      <View style={styles.form}>
+        <Title>Update Regular Peer</Title>
+        {errors.load && <HelperText type="error">{errors.load}</HelperText>}
+
         <TextInput label="Name" value={name} onChangeText={setName} error={errors.name} />
         {errors.name && <HelperText type="error">{errors.name}</HelperText>}
 
         <TextInput label="Endpoint (optional)" value={endpoint} onChangeText={setEndpoint} placeholder="1.2.3.4:51820" error={errors.endpoint} />
         {errors.endpoint && <HelperText type="error">{errors.endpoint}</HelperText>}
 
-        <View style={styles.switchRow}>\n          <Text>Isolated</Text>\n          <Switch value={isIsolated} onValueChange={setIsIsolated} />\n        </View>
+        <View style={styles.switchRow}>
+          <Text>Isolated</Text>
+          <Switch value={isIsolated} onValueChange={setIsIsolated} />
+        </View>
         <HelperText type="info">Isolated peers cannot connect to other regular peers</HelperText>
 
-        <View style={styles.switchRow}>\n          <Text>Full Encapsulation</Text>\n          <Switch value={fullEncapsulation} onValueChange={setFullEncapsulation} />\n        </View>
+        <View style={styles.switchRow}>
+          <Text>Full Encapsulation</Text>
+          <Switch value={fullEncapsulation} onValueChange={setFullEncapsulation} />
+        </View>
         <HelperText type="info">Route all traffic (0.0.0.0/0) through jump server</HelperText>
 
         <TextInput label="Additional Allowed IPs (optional)" value={additionalIPs} onChangeText={setAdditionalIPs} placeholder="192.168.1.0/24, 10.0.0.0/8" multiline />
@@ -113,7 +127,8 @@ export const PeerUpdateRegularScreen = () => {
 
         <FormButton title="Save Changes" onPress={handleSubmit} loading={saving} />
         <FormButton title="Cancel" onPress={() => navigation.goBack()} mode="outlined" />
-      </View>\n    </ScrollView>
+      </View>
+    </ScrollView>
   );
 };
 

@@ -196,7 +196,7 @@ export const PeerListScreen = () => {
           <View style={styles.chips}>
             {item.is_jump && <Chip mode="flat">Jump Server</Chip>}
             {item.is_isolated && <Chip mode="flat">Isolated</Chip>}
-            {item.full_encapsulation && <Chip mode="flat">Full Encap</Chip>}
+            {item.full_encapsulation && <Chip mode="flat">Full Encapsulation</Chip>}
             {sessionStatus?.has_active_agent && (
               <Chip mode="flat" icon="check-circle" style={{ backgroundColor: '#4caf50' }} textStyle={{ color: 'white' }}>
                 Connected

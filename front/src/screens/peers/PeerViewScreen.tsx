@@ -109,6 +109,8 @@ export const PeerViewScreen = () => {
         <Card.Content>
           <View style={styles.chips}>
             {peer.is_jump && <Chip mode="flat">Jump Server</Chip>}
+            {!peer.is_jump && peer.use_agent && <Chip mode="flat" icon="cloud">Agent-Based</Chip>}
+            {!peer.is_jump && !peer.use_agent && <Chip mode="flat" icon="cog">Static Config</Chip>}
             {peer.is_isolated && <Chip mode="flat">Isolated</Chip>}
             {peer.full_encapsulation && <Chip mode="flat">Full Encapsulation</Chip>}
             {sessionStatus?.has_active_agent && (
@@ -256,24 +258,44 @@ export const PeerViewScreen = () => {
         >
           Network Graph
         </Button>
-        <Button
-          mode="contained"
-          onPress={() =>
-            navigation.navigate('PeerToken' as never, { networkId, peerId } as never)
-          }
-          style={styles.button}
-        >
-          View Token
-        </Button>
-        <Button
-          mode="contained"
-          onPress={() =>
-            navigation.navigate('PeerConfig' as never, { networkId, peerId } as never)
-          }
-          style={styles.button}
-        >
-          View Config
-        </Button>
+        
+        {/* Jump peers: only show token (always use agent) */}
+        {peer.is_jump && (
+          <Button
+            mode="contained"
+            onPress={() =>
+              navigation.navigate('PeerToken' as never, { networkId, peerId } as never)
+            }
+            style={styles.button}
+          >
+            View Token
+          </Button>
+        )}
+        
+        {/* Regular peers: show token for agent-based, config for static */}
+        {!peer.is_jump && peer.use_agent && (
+          <Button
+            mode="contained"
+            onPress={() =>
+              navigation.navigate('PeerToken' as never, { networkId, peerId } as never)
+            }
+            style={styles.button}
+          >
+            View Token
+          </Button>
+        )}
+        
+        {!peer.is_jump && !peer.use_agent && (
+          <Button
+            mode="contained"
+            onPress={() =>
+              navigation.navigate('PeerConfig' as never, { networkId, peerId } as never)
+            }
+            style={styles.button}
+          >
+            View Config
+          </Button>
+        )}
       </View>
     </ScrollView>
   );
