@@ -40,7 +40,7 @@ Then open http://localhost:3000.
 ## Build
 
 ```bash
-npm run build
+NODE_OPTIONS="--no-webstorage" npm run build
 npm run serve   # Preview production build
 ```
 
