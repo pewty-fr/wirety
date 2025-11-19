@@ -58,7 +58,7 @@ func (s *Service) SuggestCIDRs(ctx context.Context, baseCIDR string, maxPeers, c
 
 	cidrs := make([]string, 0, count)
 	ipam := goipam.New(context.Background())
-	ipam.NewPrefix(ctx, baseCIDR)
+	_, _ = ipam.NewPrefix(ctx, baseCIDR)
 
 	for i := 0; i < count; i++ {
 

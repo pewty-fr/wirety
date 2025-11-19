@@ -4,12 +4,38 @@ import { ActivityIndicator, Text, Button } from 'react-native-paper';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 
+interface OIDCDiscovery {
+  issuer: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  userinfo_endpoint: string;
+  jwks_uri: string;
+}
+
 export const LoginScreen = () => {
   const { authConfig, login } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [discovery, setDiscovery] = useState<OIDCDiscovery | null>(null);
 
   useEffect(() => {
+    // Fetch OIDC discovery document
+    const fetchDiscovery = async () => {
+      if (authConfig?.enabled && authConfig.issuer_url) {
+        try {
+          const discoveryUrl = `${authConfig.issuer_url.replace(/\/$/, '')}/.well-known/openid-configuration`;
+          const response = await fetch(discoveryUrl);
+          const data = await response.json();
+          setDiscovery(data);
+        } catch (err) {
+          console.error('Failed to fetch OIDC discovery:', err);
+          setError('Failed to load authentication configuration');
+        }
+      }
+    };
+
+    fetchDiscovery();
+
     // Check if we're returning from OIDC redirect
     if (Platform.OS === 'web' && authConfig?.enabled) {
       const params = new URLSearchParams(window.location.search);
@@ -58,7 +84,8 @@ export const LoginScreen = () => {
   };
 
   const handleLogin = () => {
-    if (!authConfig?.enabled) {
+    if (!authConfig?.enabled || !discovery) {
+      setError('Authentication not properly configured');
       return;
     }
 
@@ -70,8 +97,8 @@ export const LoginScreen = () => {
     sessionStorage.setItem('oidc_state', state);
     sessionStorage.setItem('oidc_nonce', nonce);
 
-    // Build OIDC authorization URL
-    const authUrl = new URL(`${authConfig.issuer_url}/protocol/openid-connect/auth`);
+    // Build OIDC authorization URL using discovered endpoint
+    const authUrl = new URL(discovery.authorization_endpoint);
     authUrl.searchParams.set('client_id', authConfig.client_id);
     authUrl.searchParams.set('redirect_uri', redirectUri);
     authUrl.searchParams.set('response_type', 'code');
@@ -88,6 +115,15 @@ export const LoginScreen = () => {
       <View style={styles.container}>
         <ActivityIndicator size="large" />
         <Text style={styles.text}>Loading...</Text>
+      </View>
+    );
+  }
+
+  if (authConfig.enabled && !discovery) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" />
+        <Text style={styles.text}>Loading authentication...</Text>
       </View>
     );
   }

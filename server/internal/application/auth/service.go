@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"wirety/internal/config"
 	"wirety/internal/domain/auth"
+	"wirety/internal/infrastructure/oidc"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -180,10 +180,14 @@ func (s *Service) getPublicKey(ctx context.Context, kid string) (interface{}, er
 	}
 	s.jwksCacheMu.RUnlock()
 
-	// Fetch JWKS
-	jwksURL := strings.TrimSuffix(s.config.IssuerURL, "/") + "/protocol/openid-connect/certs"
+	// Discover OIDC endpoints via shared adapter
+	discovery, err := oidc.Discover(ctx, s.config.IssuerURL)
+	if err != nil {
+		return nil, fmt.Errorf("oidc discovery failed: %w", err)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", jwksURL, nil)
+	// Fetch JWKS from discovered endpoint
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discovery.JwksURI, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +196,9 @@ func (s *Service) getPublicKey(ctx context.Context, kid string) (interface{}, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch JWKS: status %d", resp.StatusCode)

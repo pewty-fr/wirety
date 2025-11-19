@@ -9,9 +9,12 @@ import (
 	"strings"
 
 	"wirety/internal/config"
+	"wirety/internal/infrastructure/oidc"
 
 	"github.com/gin-gonic/gin"
 )
+
+// Uses shared OIDC discovery adapter (internal/infrastructure/oidc)
 
 // AuthConfigResponse contains public authentication configuration
 type AuthConfigResponse struct {
@@ -75,8 +78,12 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
-	// Build token endpoint URL
-	tokenURL := fmt.Sprintf("%s/protocol/openid-connect/token", cfg.Auth.IssuerURL)
+	// Discover OIDC endpoints via shared adapter
+	discovery, err := oidc.Discover(c.Request.Context(), cfg.Auth.IssuerURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to discover OIDC endpoints: %v", err)})
+		return
+	}
 
 	// Prepare token exchange request
 	data := url.Values{}
@@ -86,13 +93,15 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	data.Set("client_id", cfg.Auth.ClientID)
 	data.Set("client_secret", cfg.Auth.ClientSecret)
 
-	// Make request to token endpoint
-	resp, err := http.Post(tokenURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	// Make request to token endpoint from discovery
+	resp, err := http.Post(discovery.TokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to exchange token: %v", err)})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

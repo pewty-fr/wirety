@@ -649,7 +649,7 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 		}
 		if currentSess.ReportedEndpoint == "" {
 			currentSess.ReportedEndpoint = endpoint
-			s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
+			_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
 			continue
 		}
 		if currentSess.ReportedEndpoint == endpoint {

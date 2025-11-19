@@ -73,7 +73,7 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 	}
 	defer func() {
 		h.wsManager.Unregister(networkID, peerID)
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	log.Info().
@@ -128,7 +128,7 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 	}
 	defer func() {
 		h.wsManager.Unregister(networkID, peer.ID)
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	log.Info().Str("network_id", networkID).Str("peer_id", peer.ID).Msg("WebSocket token connection established")
