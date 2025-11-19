@@ -1,0 +1,41 @@
+issuer: http://localhost:5556/dex
+
+storage:
+  type: sqlite3
+  config:
+    file: /data/dex.db
+
+web:
+  http: 0.0.0.0:5556
+  allowedOrigins: ['*']
+
+telemetry:
+  http: 0.0.0.0:5558
+
+oauth2:
+  skipApprovalScreen: false
+
+staticClients:
+- id: wirety
+  name: Wirety Local
+  secret: wirety-secret
+  redirectURIs:
+    - 'http://localhost:8081/'
+    - 'http://localhost:8080/callback'
+    - 'http://localhost:8080/oauth/callback'
+
+enablePasswordDB: true
+
+staticPasswords:
+- email: "test@example.com"
+  hash: "$2y$10$3i42st2tilsHSefi8O/KpuWISSUcaPmuNROeaDGxGDOKD3SDa8h2S"
+  username: "test"
+  userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
+- email: "test2@example.com"
+  hash: "$2y$10$3i42st2tilsHSefi8O/KpuWISSUcaPmuNROeaDGxGDOKD3SDa8h2S"
+  username: "test2"
+  userID: "08a8684b-db88-4b73-90a9-3cd1661f5467"
+
+logger:
+  level: debug
+  format: text
