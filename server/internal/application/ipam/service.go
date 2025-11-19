@@ -4,22 +4,20 @@ import (
 	"context"
 	"fmt"
 
-	"wirety/internal/domain/network"
+	"wirety/internal/domain/ipam"
 
 	goipam "github.com/metal-stack/go-ipam"
-
 	"github.com/rs/zerolog/log"
 )
 
-// Service provides IPAM helper operations backed by the domain Repository.
-// This allows later replacement of the memory repository with a DB-backed one
-// without changing application/service logic.
+// Service provides IPAM helper operations backed by an IPAM repository.
+// Hexagonal: application layer depends only on ipam.Repository abstraction.
 type Service struct {
-	repo network.Repository
+	repo ipam.Repository
 }
 
 // NewService constructs an IPAM service using the provided repository.
-func NewService(repo network.Repository) *Service { return &Service{repo: repo} }
+func NewService(repo ipam.Repository) *Service { return &Service{repo: repo} }
 
 // SuggestCIDRs returns a list of CIDRs sized to hold at least maxPeers peers.
 // baseCIDR is the root network we carve from (e.g. 10.0.0.0/8). count is how many suggestions.

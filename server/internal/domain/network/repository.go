@@ -39,16 +39,6 @@ type Repository interface {
 	ListConnections(ctx context.Context, networkID string) ([]*PeerConnection, error)
 	DeleteConnection(ctx context.Context, networkID, peer1ID, peer2ID string) error
 
-	// IPAM operations (to allow persistence of address management)
-	EnsureRootPrefix(ctx context.Context, cidr string) (*IPAMPrefix, error)
-	AcquireChildPrefix(ctx context.Context, parentCIDR string, prefixLen uint8) (*IPAMPrefix, error)
-	DeletePrefix(ctx context.Context, cidr string) error
-	AcquireSpecificChildPrefix(ctx context.Context, parentCIDR string, cidr string) (*IPAMPrefix, error)
-	ReleaseChildPrefix(ctx context.Context, cidr string) error
-	ListChildPrefixes(ctx context.Context, parentCIDR string) ([]*IPAMPrefix, error)
-	AcquireIP(ctx context.Context, cidr string) (string, error)
-	ReleaseIP(ctx context.Context, cidr string, ip string) error
-
 	// Agent session operations
 	CreateOrUpdateSession(ctx context.Context, networkID string, session *AgentSession) error
 	GetSession(ctx context.Context, networkID, peerID string) (*AgentSession, error)

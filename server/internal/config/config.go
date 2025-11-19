@@ -9,6 +9,7 @@ import (
 type Config struct {
 	HTTPPort string     `json:"http_port"`
 	Auth     AuthConfig `json:"auth"`
+	Database DBConfig   `json:"database"`
 }
 
 // AuthConfig holds authentication-related configuration
@@ -31,7 +32,19 @@ func LoadConfig() *Config {
 			ClientSecret: getEnv("AUTH_CLIENT_SECRET", ""),
 			JWKSCacheTTL: getEnvAsInt("AUTH_JWKS_CACHE_TTL", 3600),
 		},
+		Database: DBConfig{
+			Enabled:    getEnv("DB_ENABLED", "false") == "true",
+			DSN:        getEnv("DB_DSN", "postgres://wirety:wirety@localhost:5432/wirety?sslmode=disable"),
+			Migrations: getEnv("DB_MIGRATIONS_DIR", "internal/adapters/db/postgres/migrations"),
+		},
 	}
+}
+
+// DBConfig holds database configuration
+type DBConfig struct {
+	Enabled    bool   `json:"enabled"`
+	DSN        string `json:"dsn"`
+	Migrations string `json:"migrations"`
 }
 
 func getEnv(key, defaultValue string) string {

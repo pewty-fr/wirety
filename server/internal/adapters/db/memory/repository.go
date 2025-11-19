@@ -3,20 +3,16 @@ package memory
 import (
 	"context"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
 	"wirety/internal/domain/network"
-
-	goipam "github.com/metal-stack/go-ipam"
 )
 
 // Repository is an in-memory implementation of the network repository
 type Repository struct {
 	mu              sync.RWMutex
 	networks        map[string]*network.Network
-	ipam            goipam.Ipamer
 	connections     map[string]map[string]*network.PeerConnection // networkID -> connectionKey -> PeerConnection
 	sessions        map[string]map[string]*network.AgentSession   // networkID -> sessionID -> AgentSession
 	endpointChanges map[string][]*network.EndpointChange          // networkID -> []EndpointChange
@@ -25,10 +21,8 @@ type Repository struct {
 
 // NewRepository creates a new in-memory repository
 func NewRepository() *Repository {
-	ctx := context.Background()
 	repo := &Repository{
 		networks:        make(map[string]*network.Network),
-		ipam:            goipam.New(ctx),
 		connections:     make(map[string]map[string]*network.PeerConnection),
 		sessions:        make(map[string]map[string]*network.AgentSession),
 		endpointChanges: make(map[string][]*network.EndpointChange),
@@ -37,114 +31,7 @@ func NewRepository() *Repository {
 	return repo
 }
 
-// IPAM persistence methods
-func (r *Repository) EnsureRootPrefix(ctx context.Context, cidr string) (*network.IPAMPrefix, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	p, err := r.ipam.PrefixFrom(ctx, cidr)
-	if err != nil { // not found, create
-		p, err = r.ipam.NewPrefix(ctx, cidr)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create root prefix: %w", err)
-		}
-	}
-	usage := p.Usage()
-	return &network.IPAMPrefix{CIDR: p.Cidr, UsableHosts: int(usage.AvailableIPs), ParentCIDR: ""}, nil
-}
-
-func (r *Repository) DeletePrefix(ctx context.Context, cidr string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	_, err := r.ipam.DeletePrefix(ctx, cidr)
-	if err != nil {
-		return fmt.Errorf("prefix not found: %w", err)
-	}
-	return nil
-}
-
-func (r *Repository) AcquireChildPrefix(ctx context.Context, parentCIDR string, prefixLen uint8) (*network.IPAMPrefix, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	child, err := r.ipam.AcquireChildPrefix(ctx, parentCIDR, prefixLen)
-	if err != nil {
-		return nil, err
-	}
-	usage := child.Usage()
-	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil
-}
-
-func (r *Repository) AcquireSpecificChildPrefix(ctx context.Context, parentCIDR string, cidr string) (*network.IPAMPrefix, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	child, err := r.ipam.AcquireSpecificChildPrefix(ctx, parentCIDR, cidr)
-	if err != nil {
-		return nil, err
-	}
-	usage := child.Usage()
-	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil
-}
-
-func (r *Repository) ReleaseChildPrefix(ctx context.Context, cidr string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	prefix, err := r.ipam.PrefixFrom(ctx, cidr)
-	if err != nil {
-		return err
-	}
-	return r.ipam.ReleaseChildPrefix(ctx, prefix)
-}
-
-func (r *Repository) ListChildPrefixes(ctx context.Context, parentCIDR string) ([]*network.IPAMPrefix, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	parentPrefix, err := r.ipam.PrefixFrom(ctx, parentCIDR)
-	if err != nil {
-		return nil, fmt.Errorf("parent prefix not found: %w", err)
-	}
-	_, parentNet, err := net.ParseCIDR(parentPrefix.Cidr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid parent cidr")
-	}
-	all, err := r.ipam.ReadAllPrefixCidrs(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read all prefixes failed: %w", err)
-	}
-	out := make([]*network.IPAMPrefix, 0)
-	for _, cidr := range all {
-		if cidr == parentPrefix.Cidr {
-			continue
-		}
-		_, childNet, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
-		if parentNet.Contains(childNet.IP) && childNet.String() != parentNet.String() { // rough check for being within parent
-			cp, err := r.ipam.PrefixFrom(ctx, cidr)
-			if err != nil {
-				continue
-			}
-			usage := cp.Usage()
-			out = append(out, &network.IPAMPrefix{CIDR: cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)})
-		}
-	}
-	return out, nil
-}
-
-func (r *Repository) AcquireIP(ctx context.Context, cidr string) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	ipObj, err := r.ipam.AcquireIP(ctx, cidr)
-	if err != nil {
-		return "", err
-	}
-	return ipObj.IP.String(), nil
-}
-
-func (r *Repository) ReleaseIP(ctx context.Context, cidr string, ip string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.ipam.ReleaseIPFromPrefix(ctx, cidr, ip)
-}
+// (IPAM operations removed - now handled by dedicated IPAM repository)
 
 // CreateNetwork creates a new network
 func (r *Repository) CreateNetwork(ctx context.Context, net *network.Network) error {

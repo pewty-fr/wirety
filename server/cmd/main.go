@@ -1,20 +1,28 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"os"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	_ "github.com/lib/pq"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"wirety/internal/adapters/api"
 	"wirety/internal/adapters/api/middleware"
 	"wirety/internal/adapters/db/memory"
-	"wirety/internal/application/auth"
+	pgrepo "wirety/internal/adapters/db/postgres"
+	appauth "wirety/internal/application/auth"
 	"wirety/internal/application/ipam"
-	"wirety/internal/application/network"
+	appnetwork "wirety/internal/application/network"
 	"wirety/internal/config"
+	domainauth "wirety/internal/domain/auth"
+	domainipam "wirety/internal/domain/ipam"
+	domainnetwork "wirety/internal/domain/network"
 )
 
 //	@title			Wirety Server API
@@ -51,17 +59,50 @@ func main() {
 		Str("issuer_url", cfg.Auth.IssuerURL).
 		Msg("Starting Wirety server")
 
-	// Initialize repositories (in-memory for now)
-	repo := memory.NewRepository()
-	userRepo := memory.NewUserRepository()
+	// Initialize repositories (choose Postgres or in-memory)
+	var networkRepo domainnetwork.Repository
+	var ipamRepo domainipam.Repository
+	var userRepo domainauth.Repository
+
+	if cfg.Database.Enabled {
+		log.Info().Str("dsn", cfg.Database.DSN).Msg("Initializing Postgres repositories")
+		db, err := sql.Open("postgres", cfg.Database.DSN)
+		if err != nil {
+			log.Fatal().Err(err).Msg("open postgres")
+		}
+		db.SetMaxOpenConns(10)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(30 * time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			log.Fatal().Err(err).Msg("ping postgres")
+		}
+		// migrations
+		if err := pgrepo.RunMigrations(ctx, db, cfg.Database.Migrations); err != nil {
+			log.Fatal().Err(err).Msg("run migrations")
+		}
+		networkRepo = pgrepo.NewNetworkRepository(db)
+		var ipErr error
+		ipamRepo, ipErr = pgrepo.NewIPAMRepository(ctx, db)
+		if ipErr != nil {
+			log.Fatal().Err(ipErr).Msg("init ipam repository")
+		}
+		userRepo = pgrepo.NewUserRepository(db)
+	} else {
+		log.Warn().Msg("DB disabled - using in-memory repositories")
+		networkRepo = memory.NewRepository()
+		ipamRepo = memory.NewIPAMRepository(context.Background())
+		userRepo = memory.NewUserRepository()
+	}
 
 	// Initialize services
-	networkService := network.NewService(repo)
-	ipamService := ipam.NewService(repo)
+	networkService := appnetwork.NewService(networkRepo, ipamRepo)
+	ipamService := ipam.NewService(ipamRepo)
 
-	var authService *auth.Service
+	var authService *appauth.Service
 	if cfg.Auth.Enabled {
-		authService = auth.NewService(&cfg.Auth, userRepo)
+		authService = appauth.NewService(&cfg.Auth, userRepo)
 		log.Info().Msg("OIDC authentication enabled")
 	} else {
 		log.Warn().Msg("Authentication disabled - running in open mode with admin permissions")
@@ -97,3 +138,5 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to start server")
 	}
 }
+
+// ctxWithLog creates a basic context for db operations (placeholder for structured contexts)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"wirety/internal/domain/ipam"
 	"wirety/internal/domain/network"
 	"wirety/pkg/wireguard"
 
@@ -21,7 +22,7 @@ type WebSocketNotifier interface {
 
 // Service implements the business logic for network management
 type Service struct {
-	repo       network.Repository
+	repo       FullRepository
 	wsNotifier WebSocketNotifier
 }
 
@@ -47,9 +48,9 @@ func (s *Service) ResolveAgentToken(ctx context.Context, token string) (string, 
 }
 
 // NewService creates a new network service
-func NewService(repo network.Repository) *Service {
+func NewService(networkRepo network.Repository, ipamRepo ipam.Repository) *Service {
 	return &Service{
-		repo: repo,
+		repo: NewCombinedRepository(networkRepo, ipamRepo),
 	}
 }
 
