@@ -1,28 +1,31 @@
 import { useState, useEffect } from 'react';
 import Modal from './Modal';
 import api from '../api/client';
-import type { Peer } from '../types';
+import type { Peer, Network } from '../types';
+import { isValidCIDR, getCIDRError } from '../utils/validation';
 
 interface RegularPeerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
   networkId: string;
+  networks?: Network[];
   peer?: Peer | null;
 }
 
-export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId, peer }: RegularPeerModalProps) {
+export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId, networks = [], peer }: RegularPeerModalProps) {
   const [formData, setFormData] = useState({
     name: '',
-    endpoint: '',
     is_isolated: false,
     full_encapsulation: false,
     use_agent: false,
     additional_allowed_ips: [] as string[],
   });
+  const [selectedNetworkId, setSelectedNetworkId] = useState(networkId);
   const [ipInput, setIpInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ipError, setIpError] = useState<string | null>(null);
 
   const isEditMode = !!peer;
 
@@ -30,7 +33,6 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
     if (peer) {
       setFormData({
         name: peer.name,
-        endpoint: peer.endpoint || '',
         is_isolated: peer.is_isolated,
         full_encapsulation: peer.full_encapsulation,
         use_agent: peer.use_agent,
@@ -39,15 +41,15 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
     } else {
       setFormData({
         name: '',
-        endpoint: '',
         is_isolated: false,
         full_encapsulation: false,
         use_agent: false,
         additional_allowed_ips: [],
       });
+      setSelectedNetworkId(networkId || (networks.length > 0 ? networks[0].id : ''));
     }
     setError(null);
-  }, [peer, isOpen]);
+  }, [peer, isOpen, networkId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,15 +60,13 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
       if (isEditMode && peer) {
         await api.updatePeer(networkId, peer.id, {
           name: formData.name,
-          endpoint: formData.endpoint || undefined,
           is_isolated: formData.is_isolated,
           full_encapsulation: formData.full_encapsulation,
           additional_allowed_ips: formData.additional_allowed_ips.length > 0 ? formData.additional_allowed_ips : undefined,
         });
       } else {
-        await api.createPeer(networkId, {
+        await api.createPeer(selectedNetworkId, {
           name: formData.name,
-          endpoint: formData.endpoint || undefined,
           is_jump: false,
           is_isolated: formData.is_isolated,
           full_encapsulation: formData.full_encapsulation,
@@ -85,8 +85,13 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
 
   const addIp = () => {
     if (ipInput.trim()) {
+      if (!isValidCIDR(ipInput.trim())) {
+        setIpError(getCIDRError(ipInput.trim()) || 'Invalid CIDR format');
+        return;
+      }
       setFormData({ ...formData, additional_allowed_ips: [...formData.additional_allowed_ips, ipInput.trim()] });
       setIpInput('');
+      setIpError(null);
     }
   };
 
@@ -108,6 +113,28 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
           </div>
         )}
 
+        {/* Network (only for create) */}
+        {!isEditMode && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Network <span className="text-red-500">*</span>
+            </label>
+            <select
+              required
+              value={selectedNetworkId}
+              onChange={(e) => setSelectedNetworkId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            >
+              {networks.map((network) => (
+                <option key={network.id} value={network.id}>
+                  {network.name} ({network.cidr})
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-sm text-gray-500">Select the network for this peer</p>
+          </div>
+        )}
+
         {/* Name */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -118,24 +145,9 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
             required
             value={formData.name}
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             placeholder="e.g., Laptop - John"
           />
-        </div>
-
-        {/* Endpoint */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Endpoint
-          </label>
-          <input
-            type="text"
-            value={formData.endpoint}
-            onChange={(e) => setFormData({ ...formData, endpoint: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-            placeholder="e.g., 203.0.113.10:51820"
-          />
-          <p className="mt-1 text-sm text-gray-500">External endpoint (optional for dynamic peers)</p>
         </div>
 
         {/* Use Agent (only for create) */}
@@ -188,18 +200,32 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
             Additional Allowed IPs
           </label>
           <div className="flex gap-2 mb-2">
-            <input
-              type="text"
-              value={ipInput}
-              onChange={(e) => setIpInput(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addIp())}
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              placeholder="e.g., 192.168.1.0/24"
-            />
+            <div className="flex-1">
+              <input
+                type="text"
+                value={ipInput}
+                onChange={(e) => {
+                  setIpInput(e.target.value);
+                  if (e.target.value && !isValidCIDR(e.target.value)) {
+                    setIpError(getCIDRError(e.target.value));
+                  } else {
+                    setIpError(null);
+                  }
+                }}
+                onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addIp())}
+                className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+                  ipError ? 'border-red-300 dark:border-red-600' : 'border-gray-300 dark:border-gray-600'
+                }`}
+                placeholder="e.g., 192.168.1.0/24"
+              />
+              {ipError && (
+                <p className="mt-1 text-sm text-red-600">{ipError}</p>
+              )}
+            </div>
             <button
               type="button"
               onClick={addIp}
-              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+              className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
             >
               Add
             </button>
@@ -207,7 +233,7 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
           {formData.additional_allowed_ips.length > 0 && (
             <div className="space-y-1">
               {formData.additional_allowed_ips.map((ip, index) => (
-                <div key={index} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded">
+                <div key={index} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded">
                   <span className="text-sm text-gray-700">{ip}</span>
                   <button
                     type="button"
@@ -228,7 +254,7 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+            className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
           >
             Cancel
           </button>

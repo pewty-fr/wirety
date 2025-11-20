@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faUsers } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
+import UserDetailModal from '../../components/UserDetailModal';
 import api from '../../api/client';
 import type { User } from '../../types';
 
@@ -8,6 +11,8 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   const pageSize = 20;
 
@@ -19,8 +24,10 @@ export default function UsersPage() {
     setLoading(true);
     try {
       const response = await api.getUsers(page, pageSize);
-      setUsers(response.data || []);
-      setTotal(response.total || 0);
+      // Backend returns array directly, not paginated response
+      const usersArray = Array.isArray(response) ? response : (response.data || []);
+      setUsers(usersArray);
+      setTotal(usersArray.length);
     } catch (error) {
       console.error('Failed to load users:', error);
       setUsers([]);
@@ -28,6 +35,11 @@ export default function UsersPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleUserClick = (user: User) => {
+    setSelectedUser(user);
+    setIsDetailModalOpen(true);
   };
 
   const totalPages = Math.ceil(total / pageSize);
@@ -46,68 +58,74 @@ export default function UsersPage() {
           </div>
         ) : users.length === 0 ? (
           <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-            <div className="text-gray-400 text-5xl mb-4">👥</div>
+            <div className="text-gray-400 text-5xl mb-4">
+              <FontAwesomeIcon icon={faUsers} />
+            </div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">No users found</h3>
             <p className="text-gray-500">Users will appear here once they are created</p>
           </div>
         ) : (
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     User
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Role
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Networks Access
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Last Login
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {users.map((user) => (
-                  <tr key={user.id} className="hover:bg-gray-50">
+                  <tr 
+                    key={user.id} 
+                    onClick={() => handleUserClick(user)}
+                    className="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                  >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="flex-shrink-0 h-10 w-10">
-                          <div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
-                            <span className="text-primary-700 font-medium text-sm">
+                          <div className="h-10 w-10 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
+                            <span className="text-primary-700 dark:text-primary-300 font-medium text-sm">
                               {user.name.charAt(0).toUpperCase()}
                             </span>
                           </div>
                         </div>
                         <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900">{user.name}</div>
-                          <div className="text-sm text-gray-500">{user.email}</div>
+                          <div className="text-sm font-medium text-gray-900 dark:text-white">{user.name}</div>
+                          <div className="text-sm text-gray-500 dark:text-gray-400">{user.email}</div>
                         </div>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       {user.role === 'administrator' ? (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
                           Administrator
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200">
                           User
                         </span>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                       {user.role === 'administrator' ? (
-                        <span className="text-gray-500">All networks</span>
+                        <span className="text-gray-500 dark:text-gray-400">All networks</span>
                       ) : user.authorized_networks.length === 0 ? (
-                        <span className="text-gray-500">No access</span>
+                        <span className="text-gray-500 dark:text-gray-400">No access</span>
                       ) : (
                         <span>{user.authorized_networks.length} network{user.authorized_networks.length !== 1 ? 's' : ''}</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                       {user.last_login_at ? new Date(user.last_login_at).toLocaleDateString() : 'Never'}
                     </td>
                   </tr>
@@ -142,6 +160,13 @@ export default function UsersPage() {
           </div>
         )}
       </div>
+
+      {/* Detail Modal */}
+      <UserDetailModal
+        isOpen={isDetailModalOpen}
+        onClose={() => setIsDetailModalOpen(false)}
+        user={selectedUser}
+      />
     </div>
   );
 }

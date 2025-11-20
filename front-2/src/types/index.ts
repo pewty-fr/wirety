@@ -16,15 +16,56 @@ export interface Peer {
   endpoint: string;
   listen_port?: number;
   additional_allowed_ips?: string[];
+  token?: string;
   is_jump: boolean;
   jump_nat_interface?: string;
   is_isolated: boolean;
   full_encapsulation: boolean;
   use_agent: boolean;
+  owner_id?: string;
   created_at: string;
   updated_at: string;
   network_id?: string;
   network_name?: string;
+  session?: PeerSession;
+  session_status?: PeerSessionStatus;
+}
+
+export interface PeerSession {
+  peer_id: string;
+  reported_endpoint?: string;
+  last_seen?: string;
+  connected: boolean;
+}
+
+export interface PeerSessionStatus {
+  peer_id: string;
+  has_active_agent: boolean;
+  current_session?: AgentSession;
+  conflicting_sessions?: AgentSession[];
+  recent_endpoint_changes?: EndpointChange[];
+  suspicious_activity: boolean;
+  last_checked: string;
+}
+
+export interface AgentSession {
+  peer_id: string;
+  hostname: string;
+  system_uptime: number;
+  wireguard_uptime: number;
+  reported_endpoint: string;
+  peer_endpoints?: Record<string, string>;
+  last_seen: string;
+  first_seen: string;
+  session_id: string;
+}
+
+export interface EndpointChange {
+  peer_id: string;
+  old_endpoint: string;
+  new_endpoint: string;
+  changed_at: string;
+  source: string;
 }
 
 export interface IPAMAllocation {
@@ -62,6 +103,22 @@ export interface User {
   created_at: string;
   updated_at: string;
   last_login_at: string;
+}
+
+export interface ACLRule {
+  id: string;
+  source_peer: string;
+  target_peer: string;
+  action: string;
+  description: string;
+}
+
+export interface ACL {
+  id: string;
+  name: string;
+  enabled: boolean;
+  blocked_peers: Record<string, boolean>;
+  rules: ACLRule[];
 }
 
 export interface PaginatedResponse<T> {

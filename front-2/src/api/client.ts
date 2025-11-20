@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { AxiosInstance } from 'axios';
-import type { Network, Peer, IPAMAllocation, SecurityIncident, User, PaginatedResponse } from '../types';
+import type { Network, Peer, IPAMAllocation, SecurityIncident, User, PaginatedResponse, PeerSessionStatus, ACL } from '../types';
 
 class ApiClient {
   private client: AxiosInstance;
@@ -11,6 +11,15 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
       },
+    });
+
+    // Add request interceptor to include auth token
+    this.client.interceptors.request.use((config) => {
+      const token = localStorage.getItem('access_token');
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
     });
   }
 
@@ -53,11 +62,19 @@ class ApiClient {
         const params = new URLSearchParams({ page: '1', page_size: '100' });
         const response = await this.client.get(`/networks/${network.id}/peers?${params}`);
         const peers = response.data.data || [];
-        // Add network info to each peer
-        peers.forEach((peer: Peer) => {
+        // Add network info to each peer and fetch session status for agents
+        for (const peer of peers) {
           peer.network_id = network.id;
           peer.network_name = network.name;
-        });
+          // Fetch session status for peers using agents
+          if (peer.use_agent) {
+            try {
+              peer.session_status = await this.getPeerSessionStatus(network.id, peer.id);
+            } catch (error) {
+              console.warn(`Failed to fetch session status for peer ${peer.id}:`, error);
+            }
+          }
+        }
         allPeers.push(...peers);
       } catch (error) {
         console.warn(`Failed to fetch peers for network ${network.id}:`, error);
@@ -79,6 +96,32 @@ class ApiClient {
     const params = new URLSearchParams({ page: page.toString(), page_size: pageSize.toString() });
     const response = await this.client.get(`/networks/${networkId}/peers?${params}`);
     return response.data;
+  }
+
+  async getAllNetworkPeers(networkId: string): Promise<Peer[]> {
+    // Get all peers for a network (no pagination)
+    const params = new URLSearchParams({ page: '1', page_size: '1000' });
+    const response = await this.client.get(`/networks/${networkId}/peers?${params}`);
+    return response.data.data || [];
+  }
+
+  async getPeerSessionStatus(networkId: string, peerId: string): Promise<PeerSessionStatus> {
+    const response = await this.client.get(`/networks/${networkId}/peers/${peerId}/session`);
+    return response.data;
+  }
+
+  async getPeer(networkId: string, peerId: string): Promise<Peer> {
+    const response = await this.client.get(`/networks/${networkId}/peers/${peerId}`);
+    const peer = response.data;
+    // Fetch session status for peers using agents
+    if (peer.use_agent) {
+      try {
+        peer.session_status = await this.getPeerSessionStatus(networkId, peerId);
+      } catch (error) {
+        console.warn(`Failed to fetch session status for peer ${peerId}:`, error);
+      }
+    }
+    return peer;
   }
 
   async createPeer(networkId: string, data: {
@@ -112,6 +155,12 @@ class ApiClient {
     await this.client.delete(`/networks/${networkId}/peers/${peerId}`);
   }
 
+  async getPeerConfig(networkId: string, peerId: string): Promise<string> {
+    const response = await this.client.get(`/networks/${networkId}/peers/${peerId}/config`);
+    // API returns { config: string }
+    return response.data.config;
+  }
+
   // IPAM
   async getIPAMAllocations(page: number = 1, pageSize: number = 20, filter?: string): Promise<{ data: IPAMAllocation[], total: number, page: number, page_size: number }> {
     const params = new URLSearchParams({ page: page.toString(), page_size: pageSize.toString() });
@@ -125,9 +174,28 @@ class ApiClient {
     return response.data;
   }
 
+  async getSuggestedCIDRs(maxPeers: number, count: number = 10, baseCIDR: string = '10.0.0.0/8'): Promise<{
+    base_cidr: string;
+    requested_max_peers: number;
+    suggested_prefix: number;
+    usable_hosts: number;
+    cidrs: string[];
+  }> {
+    const params = new URLSearchParams({
+      max_peers: maxPeers.toString(),
+      count: count.toString(),
+      base_cidr: baseCIDR,
+    });
+    const response = await this.client.get(`/ipam/available-cidrs?${params}`);
+    return response.data;
+  }
+
   // Security
-  async getSecurityIncidents(page: number = 1, pageSize: number = 20): Promise<{ data: SecurityIncident[], total: number, page: number, page_size: number }> {
+  async getSecurityIncidents(page: number = 1, pageSize: number = 20, resolved?: boolean): Promise<{ data: SecurityIncident[], total: number, page: number, page_size: number }> {
     const params = new URLSearchParams({ page: page.toString(), page_size: pageSize.toString() });
+    if (resolved !== undefined) {
+      params.append('resolved', resolved.toString());
+    }
     const response = await this.client.get(`/security/incidents?${params}`);
     return response.data;
   }
@@ -137,14 +205,26 @@ class ApiClient {
   }
 
   // Users
-  async getUsers(page: number = 1, pageSize: number = 20): Promise<PaginatedResponse<User>> {
+  async getCurrentUser(): Promise<User> {
+    const response = await this.client.get('/users/me');
+    return response.data;
+  }
+
+  async getUsers(page: number = 1, pageSize: number = 20): Promise<User[]> {
     const params = new URLSearchParams({ page: page.toString(), page_size: pageSize.toString() });
     const response = await this.client.get(`/users?${params}`);
+    // Backend returns array directly, not paginated response
     return response.data;
   }
 
   async getUser(id: string): Promise<User> {
     const response = await this.client.get(`/users/${id}`);
+    return response.data;
+  }
+
+  // ACL
+  async getACL(networkId: string): Promise<ACL> {
+    const response = await this.client.get(`/networks/${networkId}/acl`);
     return response.data;
   }
 }

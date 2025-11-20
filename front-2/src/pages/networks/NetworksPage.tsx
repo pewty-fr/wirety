@@ -1,12 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faNetworkWired } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import NetworkModal from '../../components/NetworkModal';
+import NetworkDetailModal from '../../components/NetworkDetailModal';
 import api from '../../api/client';
+import { useAuth } from '../../contexts/AuthContext';
 import type { Network } from '../../types';
 import { computeCapacityFromCIDR } from '../../utils/networkCapacity';
+import { useDebounce } from '../../hooks/useDebounce';
 
 export default function NetworksPage() {
+  const { user } = useAuth();
   const [networks, setNetworks] = useState<Network[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -14,17 +19,21 @@ export default function NetworksPage() {
   const [filter, setFilter] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingNetwork, setEditingNetwork] = useState<Network | null>(null);
+  const [selectedNetwork, setSelectedNetwork] = useState<Network | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
+  const isAdmin = user?.role === 'administrator';
   const pageSize = 20;
+  const debouncedFilter = useDebounce(filter, 500);
 
   useEffect(() => {
     loadNetworks();
-  }, [page, filter]);
+  }, [page, debouncedFilter]);
 
   const loadNetworks = async () => {
     setLoading(true);
     try {
-      const response = await api.getNetworks(page, pageSize, filter);
+      const response = await api.getNetworks(page, pageSize, debouncedFilter);
       setNetworks(response.data || []);
       setTotal(response.total || 0);
     } catch (error) {
@@ -36,22 +45,9 @@ export default function NetworksPage() {
     }
   };
 
-  const handleDelete = async (network: Network) => {
-    if (!confirm(`Are you sure you want to delete network "${network.name}"? This action cannot be undone.`)) {
-      return;
-    }
-    
-    try {
-      await api.deleteNetwork(network.id);
-      loadNetworks();
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to delete network');
-    }
-  };
-
-  const handleEdit = (network: Network) => {
-    setEditingNetwork(network);
-    setIsModalOpen(true);
+  const handleNetworkClick = (network: Network) => {
+    setSelectedNetwork(network);
+    setIsDetailModalOpen(true);
   };
 
   const handleCreate = () => {
@@ -76,13 +72,17 @@ export default function NetworksPage() {
         title="Networks" 
         subtitle={`${total} network${total !== 1 ? 's' : ''} total`}
         action={
-          <button
-            onClick={handleCreate}
-            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-2"
-          >
-            <span className="text-xl">+</span>
-            Create Network
-          </button>
+          isAdmin ? (
+            <button
+              onClick={handleCreate}
+              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-2 cursor-pointer transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Create Network
+            </button>
+          ) : undefined
         }
       />
 
@@ -97,7 +97,7 @@ export default function NetworksPage() {
               setFilter(e.target.value);
               setPage(1);
             }}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
           />
         </div>
 
@@ -107,10 +107,12 @@ export default function NetworksPage() {
             <div className="text-gray-500">Loading networks...</div>
           </div>
         ) : networks.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-            <div className="text-gray-400 text-5xl mb-4">🌐</div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No networks found</h3>
-            <p className="text-gray-500">
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-12 text-center">
+            <div className="text-gray-400 dark:text-gray-500 text-5xl mb-4">
+              <FontAwesomeIcon icon={faNetworkWired} />
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No networks found</h3>
+            <p className="text-gray-500 dark:text-gray-400">
               {filter ? 'Try adjusting your search criteria' : 'Get started by creating your first network'}
             </p>
           </div>
@@ -119,36 +121,35 @@ export default function NetworksPage() {
             {networks.map((network) => (
               <div
                 key={network.id}
-                className="bg-white rounded-lg border border-gray-200 hover:border-primary-300 hover:shadow-md transition-all"
+                onClick={() => handleNetworkClick(network)}
+                className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 hover:border-primary-300 dark:hover:border-primary-500 hover:shadow-md transition-all cursor-pointer"
               >
-                <Link
-                  to={`/networks/${network.id}`}
-                  className="block p-6"
-                >
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
                         {network.name}
                       </h3>
-                      <p className="text-sm text-gray-500">{network.cidr}</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">{network.cidr}</p>
                     </div>
-                    <span className="text-2xl">🌐</span>
+                    <span className="text-2xl">
+                      <FontAwesomeIcon icon={faNetworkWired} className="text-primary-600 dark:text-primary-400" />
+                    </span>
                   </div>
                   
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Domain</span>
-                      <span className="text-gray-900 font-medium">{network.domain}</span>
+                      <span className="text-gray-500 dark:text-gray-400">Domain</span>
+                      <span className="text-gray-900 dark:text-white font-medium">{network.domain}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Peers</span>
-                      <span className="text-gray-900 font-medium">
+                      <span className="text-gray-500 dark:text-gray-400">Peers</span>
+                      <span className="text-gray-900 dark:text-white font-medium">
                         {network.peer_count ?? 0}
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Available Slots</span>
-                      <span className="text-gray-900 font-medium">
+                      <span className="text-gray-500 dark:text-gray-400">Available Slots</span>
+                      <span className="text-gray-900 dark:text-white font-medium">
                         {(() => {
                           const capacity = computeCapacityFromCIDR(network.cidr);
                           const used = network.peer_count ?? 0;
@@ -158,37 +159,14 @@ export default function NetworksPage() {
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Created</span>
-                      <span className="text-gray-900 font-medium">
+                      <span className="text-gray-500 dark:text-gray-400">Created</span>
+                      <span className="text-gray-900 dark:text-white font-medium">
                         {new Date(network.created_at).toLocaleDateString()}
                       </span>
                     </div>
                   </div>
-                </Link>
-                
-                {/* Action Buttons */}
-                <div className="px-6 pb-4 flex gap-2 border-t border-gray-100 pt-4">
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handleEdit(network);
-                    }}
-                    className="flex-1 px-3 py-2 text-sm text-gray-700 bg-gray-100 rounded hover:bg-gray-200 transition-colors"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handleDelete(network);
-                    }}
-                    className="flex-1 px-3 py-2 text-sm text-red-600 bg-red-50 rounded hover:bg-red-100 transition-colors"
-                  >
-                    Delete
-                  </button>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         )}
 
@@ -218,12 +196,20 @@ export default function NetworksPage() {
         )}
       </div>
 
-      {/* Network Modal */}
+      {/* Create/Edit Modal */}
       <NetworkModal
         isOpen={isModalOpen}
         onClose={handleModalClose}
         onSuccess={handleModalSuccess}
         network={editingNetwork}
+      />
+
+      {/* Detail Modal */}
+      <NetworkDetailModal
+        isOpen={isDetailModalOpen}
+        onClose={() => setIsDetailModalOpen(false)}
+        network={selectedNetwork}
+        onUpdate={loadNetworks}
       />
     </div>
   );
