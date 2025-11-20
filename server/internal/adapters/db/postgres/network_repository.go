@@ -49,7 +49,7 @@ func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*
 	}
 	// Load peers
 	n.Peers = make(map[string]*network.Peer)
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,jump_nat_interface,is_isolated,full_encapsulation,use_agent,owner_id,created_at,updated_at FROM peers WHERE network_id=$1`, networkID)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,is_isolated,full_encapsulation,use_agent,owner_id,created_at,updated_at FROM peers WHERE network_id=$1`, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("load peers: %w", err)
 	}
@@ -58,7 +58,7 @@ func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*
 	for rows.Next() {
 		var p network.Peer
 		var addrs []string
-		err = rows.Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.JumpNatInterface, &p.IsIsolated, &p.FullEncapsulation, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
+		err = rows.Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.IsIsolated, &p.FullEncapsulation, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan peer: %w", err)
 		}
@@ -119,8 +119,8 @@ func (r *NetworkRepository) CreatePeer(ctx context.Context, networkID string, p 
 	now := time.Now()
 	p.CreatedAt = now
 	p.UpdatedAt = now
-	_, err := r.db.ExecContext(ctx, `INSERT INTO peers (id,network_id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,jump_nat_interface,is_isolated,full_encapsulation,use_agent,owner_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-		p.ID, networkID, p.Name, p.PublicKey, p.PrivateKey, p.Address, p.Endpoint, p.ListenPort, pq.Array(p.AdditionalAllowedIPs), p.Token, p.IsJump, p.JumpNatInterface, p.IsIsolated, p.FullEncapsulation, p.UseAgent, p.OwnerID, p.CreatedAt, p.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `INSERT INTO peers (id,network_id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,is_isolated,full_encapsulation,use_agent,owner_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+		p.ID, networkID, p.Name, p.PublicKey, p.PrivateKey, p.Address, p.Endpoint, p.ListenPort, pq.Array(p.AdditionalAllowedIPs), p.Token, p.IsJump, p.IsIsolated, p.FullEncapsulation, p.UseAgent, p.OwnerID, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create peer: %w", err)
 	}
@@ -130,8 +130,8 @@ func (r *NetworkRepository) CreatePeer(ctx context.Context, networkID string, p 
 func (r *NetworkRepository) GetPeer(ctx context.Context, networkID, peerID string) (*network.Peer, error) {
 	var p network.Peer
 	var addrs []string
-	err := r.db.QueryRowContext(ctx, `SELECT id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,jump_nat_interface,is_isolated,full_encapsulation,use_agent,owner_id,created_at,updated_at FROM peers WHERE id=$1 AND network_id=$2`, peerID, networkID).
-		Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.JumpNatInterface, &p.IsIsolated, &p.FullEncapsulation, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
+	err := r.db.QueryRowContext(ctx, `SELECT id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,is_isolated,full_encapsulation,use_agent,owner_id,created_at,updated_at FROM peers WHERE id=$1 AND network_id=$2`, peerID, networkID).
+		Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.IsIsolated, &p.FullEncapsulation, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("peer not found")
@@ -144,8 +144,8 @@ func (r *NetworkRepository) GetPeer(ctx context.Context, networkID, peerID strin
 
 func (r *NetworkRepository) UpdatePeer(ctx context.Context, networkID string, p *network.Peer) error {
 	p.UpdatedAt = time.Now()
-	res, err := r.db.ExecContext(ctx, `UPDATE peers SET name=$3,public_key=$4,private_key=$5,address=$6,endpoint=$7,listen_port=$8,additional_allowed_ips=$9,token=$10,is_jump=$11,jump_nat_interface=$12,is_isolated=$13,full_encapsulation=$14,use_agent=$15,owner_id=$16,updated_at=$17 WHERE id=$1 AND network_id=$2`,
-		p.ID, networkID, p.Name, p.PublicKey, p.PrivateKey, p.Address, p.Endpoint, p.ListenPort, pq.Array(p.AdditionalAllowedIPs), p.Token, p.IsJump, p.JumpNatInterface, p.IsIsolated, p.FullEncapsulation, p.UseAgent, p.OwnerID, p.UpdatedAt)
+	res, err := r.db.ExecContext(ctx, `UPDATE peers SET name=$3,public_key=$4,private_key=$5,address=$6,endpoint=$7,listen_port=$8,additional_allowed_ips=$9,token=$10,is_jump=$11,is_isolated=$12,full_encapsulation=$13,use_agent=$14,owner_id=$15,updated_at=$16 WHERE id=$1 AND network_id=$2`,
+		p.ID, networkID, p.Name, p.PublicKey, p.PrivateKey, p.Address, p.Endpoint, p.ListenPort, pq.Array(p.AdditionalAllowedIPs), p.Token, p.IsJump, p.IsIsolated, p.FullEncapsulation, p.UseAgent, p.OwnerID, p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update peer: %w", err)
 	}
@@ -169,7 +169,7 @@ func (r *NetworkRepository) DeletePeer(ctx context.Context, networkID, peerID st
 }
 
 func (r *NetworkRepository) ListPeers(ctx context.Context, networkID string) ([]*network.Peer, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,jump_nat_interface,is_isolated,full_encapsulation,use_agent,owner_id,created_at,updated_at FROM peers WHERE network_id=$1 ORDER BY created_at ASC`, networkID)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,is_isolated,full_encapsulation,use_agent,owner_id,created_at,updated_at FROM peers WHERE network_id=$1 ORDER BY created_at ASC`, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %w", err)
 	}
@@ -178,7 +178,7 @@ func (r *NetworkRepository) ListPeers(ctx context.Context, networkID string) ([]
 	for rows.Next() {
 		var p network.Peer
 		var addrs []string
-		err = rows.Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.JumpNatInterface, &p.IsIsolated, &p.FullEncapsulation, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
+		err = rows.Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump,&p.IsIsolated, &p.FullEncapsulation, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}

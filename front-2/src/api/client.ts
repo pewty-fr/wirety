@@ -129,7 +129,6 @@ class ApiClient {
     endpoint?: string;
     listen_port?: number;
     is_jump: boolean;
-    jump_nat_interface?: string;
     is_isolated?: boolean;
     full_encapsulation?: boolean;
     use_agent: boolean;

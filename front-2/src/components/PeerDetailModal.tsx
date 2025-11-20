@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faServer, faLaptop, faRocket } from '@fortawesome/free-solid-svg-icons';
 import Modal from './Modal';
 import JumpPeerModal from './JumpPeerModal';
 import RegularPeerModal from './RegularPeerModal';
 import NetworkTopology from './NetworkTopology';
+import { usePeer, useNetworkPeers } from '../hooks/useQueries';
 import api from '../api/client';
 import type { Peer } from '../types';
 
@@ -18,56 +19,23 @@ interface PeerDetailModalProps {
 export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: PeerDetailModalProps) {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [currentPeer, setCurrentPeer] = useState<Peer | null>(peer);
-  const [networkPeers, setNetworkPeers] = useState<Peer[]>([]);
-  const [loadingPeers, setLoadingPeers] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
   const [configText, setConfigText] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [configCopied, setConfigCopied] = useState(false);
 
-  const peerDetailsLoadedRef = useRef(false);
-  const networkPeersLoadedRef = useRef(false);
+  // Use React Query to fetch peer details and network peers
+  const { data: currentPeer, refetch: refetchPeer } = usePeer(
+    peer?.network_id || '',
+    peer?.id || '',
+    isOpen // poll only when modal open
+  );
 
-  useEffect(() => {
-    if (isOpen && peer?.network_id && peer?.id) {
-      if (!peerDetailsLoadedRef.current) {
-        peerDetailsLoadedRef.current = true;
-        loadPeerDetails();
-      }
-      if (!networkPeersLoadedRef.current) {
-        networkPeersLoadedRef.current = true;
-        loadNetworkPeers();
-      }
-    }
-  }, [isOpen, peer?.network_id, peer?.id]);
-
-  const loadPeerDetails = async () => {
-    if (!peer?.network_id || !peer?.id) return;
-    
-    try {
-      const updatedPeer = await api.getPeer(peer.network_id, peer.id);
-      setCurrentPeer(updatedPeer);
-    } catch (error) {
-      console.error('Failed to load peer details:', error);
-      setCurrentPeer(peer);
-    }
-  };
-
-  const loadNetworkPeers = async () => {
-    if (!peer?.network_id) return;
-    
-    setLoadingPeers(true);
-    try {
-      const peers = await api.getAllNetworkPeers(peer.network_id);
-      setNetworkPeers(peers);
-    } catch (error) {
-      console.error('Failed to load network peers:', error);
-      setNetworkPeers([]);
-    } finally {
-      setLoadingPeers(false);
-    }
-  };
+  const { data: networkPeers = [], isLoading: loadingPeers } = useNetworkPeers(
+    peer?.network_id || '',
+    isOpen && !!peer?.network_id,
+    isOpen // poll topology while open
+  );
 
   const handleClose = () => {
     // Reset state before closing
@@ -75,7 +43,6 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
     setConfigText(null);
     setConfigError(null);
     setConfigCopied(false);
-    setCurrentPeer(null);
     onClose();
   };
 
@@ -105,7 +72,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
 
   const handleEditSuccess = () => {
     setIsEditModalOpen(false);
-    loadPeerDetails(); // Reload peer details after edit
+    refetchPeer(); // Reload peer details after edit
     onUpdate();
   };
 
@@ -127,28 +94,6 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
               <div>
                 <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{displayPeer.name}</h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">ID: {displayPeer.id}</p>
-                <div className="flex items-center gap-2 mt-2">
-                  {/* WireGuard status dot */}
-                  <span className={`w-3 h-3 rounded-full ${
-                    displayPeer.session_status?.current_session?.reported_endpoint ? 'bg-green-500' : 'bg-red-500'
-                  }`} title={displayPeer.session_status?.current_session?.reported_endpoint ? 'WireGuard Up' : 'WireGuard Down'}></span>
-                  {/* Type badge (Jump / Regular) */}
-                  {displayPeer.is_jump ? (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                      Jump
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                      Regular
-                    </span>
-                  )}
-                  {/* Agent badge dot */}
-                  <span className="flex items-center gap-1">
-                    <span className={`w-3 h-3 rounded-full ${
-                      !displayPeer.use_agent ? 'bg-gray-400' : (displayPeer.session_status?.has_active_agent ? 'bg-green-500' : 'bg-red-500')
-                    }`} title={!displayPeer.use_agent ? 'No Agent' : (displayPeer.session_status?.has_active_agent ? 'Agent Connected' : 'Agent Disconnected')}></span>
-                  </span>
-                </div>
               </div>
             </div>
           </div>
@@ -161,15 +106,9 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
 
           {/* Connection Info */}
           {displayPeer.is_jump ? (
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-500 mb-1">IP Address</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-white">{displayPeer.address}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-500 mb-1">Configured Endpoint</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-white">{displayPeer.endpoint || 'N/A'}</p>
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-500 mb-1">IP Address</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-white">{displayPeer.address}</p>
             </div>
           ) : (
             <div>
@@ -330,15 +269,15 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
           {/* Jump Server Specific */}
           {displayPeer.is_jump && (
             <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Jump Server Configuration</h4>
-              <div className="grid grid-cols-2 gap-4">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Peer Configuration</h4>
+              <div className="space-y-2">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Listen Port</label>
                   <p className="text-sm text-gray-900 dark:text-white">{displayPeer.listen_port || 'N/A'}</p>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">NAT Interface</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{displayPeer.jump_nat_interface || 'N/A'}</p>
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Endpoint</label>
+                  <p className="text-sm text-gray-900 dark:text-white">{displayPeer.endpoint || 'N/A'}</p>
                 </div>
               </div>
             </div>

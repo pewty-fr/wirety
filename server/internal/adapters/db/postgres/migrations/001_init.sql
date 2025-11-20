@@ -38,7 +38,6 @@ CREATE TABLE IF NOT EXISTS peers (
     additional_allowed_ips TEXT[] NOT NULL DEFAULT '{}',
     token TEXT,
     is_jump BOOLEAN NOT NULL DEFAULT FALSE,
-    jump_nat_interface TEXT,
     is_isolated BOOLEAN NOT NULL DEFAULT FALSE,
     full_encapsulation BOOLEAN NOT NULL DEFAULT FALSE,
     use_agent BOOLEAN NOT NULL DEFAULT TRUE,

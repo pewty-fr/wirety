@@ -17,7 +17,6 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
     name: '',
     endpoint: '',
     listen_port: 51820,
-    jump_nat_interface: '',
     use_agent: true, // Always use agent mode for jump peers
   });
   const [selectedNetworkId, setSelectedNetworkId] = useState(networkId);
@@ -32,7 +31,6 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
         name: peer.name,
         endpoint: peer.endpoint || '',
         listen_port: peer.listen_port || 51820,
-        jump_nat_interface: peer.jump_nat_interface || '',
         use_agent: peer.use_agent,
       });
     } else {
@@ -40,7 +38,6 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
         name: '',
         endpoint: '',
         listen_port: 51820,
-        jump_nat_interface: '',
         use_agent: true, // Always use agent mode for jump peers
       });
       setSelectedNetworkId(networkId || (networks.length > 0 ? networks[0].id : ''));
@@ -66,7 +63,6 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
           endpoint: formData.endpoint || undefined,
           listen_port: formData.listen_port,
           is_jump: true,
-          jump_nat_interface: formData.jump_nat_interface || undefined,
           use_agent: formData.use_agent,
         });
       }
@@ -161,22 +157,6 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
           <p className="mt-1 text-sm text-gray-500">WireGuard listen port (default: 51820)</p>
         </div>
 
-        {/* NAT Interface (only for create) */}
-        {!isEditMode && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              NAT Interface
-            </label>
-            <input
-              type="text"
-              value={formData.jump_nat_interface}
-              onChange={(e) => setFormData({ ...formData, jump_nat_interface: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              placeholder="e.g., eth0"
-            />
-            <p className="mt-1 text-sm text-gray-500">Network interface for NAT/masquerading</p>
-          </div>
-        )}
 
         {/* Use Agent (only for create) */}
         {!isEditMode && (

@@ -109,7 +109,6 @@ curl -X POST http://localhost:8080/api/v1/networks/<network-id>/peers \
     "public_key": "<public-key>",
     "endpoint": "195.154.74.61:51820",
     "is_jump": true,
-    "jump_nat_interface": "eth0"
   }'
 
 # Add an isolated peer (user device)

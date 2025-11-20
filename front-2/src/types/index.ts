@@ -18,7 +18,6 @@ export interface Peer {
   additional_allowed_ips?: string[];
   token?: string;
   is_jump: boolean;
-  jump_nat_interface?: string;
   is_isolated: boolean;
   full_encapsulation: boolean;
   use_agent: boolean;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
-import type { Peer, ACL } from '../types';
-import api from '../api/client';
+import type { Peer } from '../types';
+import { useACL } from '../hooks/useQueries';
 
 interface NetworkTopologyProps {
   peer: Peer;
@@ -11,27 +11,9 @@ interface NetworkTopologyProps {
 export default function NetworkTopology({ peer, allPeers }: NetworkTopologyProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [acl, setACL] = useState<ACL | null>(null);
 
-  const aclLoadedRef = useRef(false);
-
-  useEffect(() => {
-    if (peer.network_id && !aclLoadedRef.current) {
-      aclLoadedRef.current = true;
-      loadACL();
-    }
-  }, [peer.network_id]);
-
-  const loadACL = async () => {
-    if (!peer.network_id) return;
-    try {
-      const loadedACL = await api.getACL(peer.network_id);
-      setACL(loadedACL);
-    } catch (error) {
-      console.warn('Failed to load ACL:', error);
-      setACL(null);
-    }
-  };
+  // Use React Query to load ACL
+  const { data: acl } = useACL(peer.network_id || '', !!peer.network_id);
 
   // Generate Mermaid diagram definition
   const generateMermaidDiagram = (): string => {

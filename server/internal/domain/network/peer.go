@@ -4,7 +4,7 @@ import "time"
 
 // Peer represents a network participant in the WireGuard mesh
 // Two types of peers exist:
-// - Jump peers: Act as hubs with NatInterface, route all traffic
+// - Jump peers: Act as hubs routing traffic for regular peers
 // - Regular peers: Connect through jump peers, can be isolated or fully encapsulated
 type Peer struct {
 	ID                   string    `json:"id"`
@@ -17,7 +17,6 @@ type Peer struct {
 	AdditionalAllowedIPs []string  `json:"additional_allowed_ips,omitempty"` // Additional IPs this peer can route to
 	Token                string    `json:"token,omitempty"`                  // Agent enrollment token (secret)
 	IsJump               bool      `json:"is_jump"`                          // Whether this peer acts as a jump server (hub)
-	JumpNatInterface     string    `json:"jump_nat_interface,omitempty"`     // NAT interface for jump server
 	IsIsolated           bool      `json:"is_isolated"`                      // Regular peers only: isolated from other peers
 	FullEncapsulation    bool      `json:"full_encapsulation"`               // Regular peers only: route all traffic (0.0.0.0/0) through jump
 	UseAgent             bool      `json:"use_agent"`                        // Whether this peer uses the agent (dynamic) or static config
@@ -40,7 +39,6 @@ type PeerCreateRequest struct {
 	Endpoint             string   `json:"endpoint,omitempty"`
 	ListenPort           int      `json:"listen_port,omitempty"`
 	IsJump               bool     `json:"is_jump"`
-	JumpNatInterface     string   `json:"jump_nat_interface,omitempty"`
 	IsIsolated           bool     `json:"is_isolated"`
 	FullEncapsulation    bool     `json:"full_encapsulation"`
 	UseAgent             bool     `json:"use_agent"`

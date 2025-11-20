@@ -1,22 +1,15 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faServer, faLaptop, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import JumpPeerModal from '../../components/JumpPeerModal';
 import RegularPeerModal from '../../components/RegularPeerModal';
 import PeerDetailModal from '../../components/PeerDetailModal';
-import api from '../../api/client';
-import type { Peer, Network, ACL } from '../../types';
+import { useNetworks, usePeers, useACLs, useSecurityIncidents } from '../../hooks/useQueries';
+import type { Peer } from '../../types';
 
 export default function PeersPage() {
-  const [peers, setPeers] = useState<Peer[]>([]);
-  const [networks, setNetworks] = useState<Network[]>([]);
-  const [networkACLs, setNetworkACLs] = useState<Record<string, ACL>>({});
-  const [blockedPeers, setBlockedPeers] = useState<Set<string>>(new Set());
-  const [incidentPeerIds, setIncidentPeerIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
   const [isJumpModalOpen, setIsJumpModalOpen] = useState(false);
   const [isRegularModalOpen, setIsRegularModalOpen] = useState(false);
   const [editingPeer, setEditingPeer] = useState<Peer | null>(null);
@@ -32,102 +25,21 @@ export default function PeersPage() {
 
   const pageSize = 20;
 
-  // Guard refs to prevent duplicate calls under React StrictMode in development
-  const networksLoadedRef = useRef(false);
-  const peersLoadedRef = useRef(false);
-  const aclsLoadedRef = useRef(false);
-  const incidentsLoadedRef = useRef(false);
+  // React Query hooks
+  const { data: networks = [], isLoading: networksLoading } = useNetworks();
+  const { data: peersData, isLoading: peersLoading, refetch: refetchPeers } = usePeers(page, pageSize);
+  const { data: networkACLs = {}, isLoading: aclsLoading } = useACLs(networks);
+  const { data: incidentsData } = useSecurityIncidents(false, 200);
 
-  useEffect(() => {
-    if (networksLoadedRef.current) return;
-    networksLoadedRef.current = true;
-    loadNetworks();
-  }, []);
+  const peers = peersData?.peers || [];
+  const total = peersData?.total || 0;
+  const incidentPeerIds = incidentsData?.incidentPeerIds || new Set<string>();
+  const loading = networksLoading || peersLoading || aclsLoading;
 
-  useEffect(() => {
-    if (!networks.length || aclsLoadedRef.current) return;
-    aclsLoadedRef.current = true;
-    loadACLs();
-  }, [networks]);
-
-  useEffect(() => {
-    if (incidentsLoadedRef.current) return;
-    incidentsLoadedRef.current = true;
-    loadIncidents();
-  }, []);
-
-  useEffect(() => {
-    if (peersLoadedRef.current && page === 1) {
-      // prevent duplicate initial load; allow subsequent page changes
-      return;
-    }
-    peersLoadedRef.current = true;
-    loadPeers();
-  }, [page]);
-
-  useEffect(() => {
-    updateBlockedPeers(peers);
-  }, [networkACLs, peers]);
-
-  const loadNetworks = async () => {
-    try {
-      const response = await api.getNetworks(1, 100);
-      setNetworks(response.data || []);
-    } catch (error) {
-      console.error('Failed to load networks:', error);
-    }
-  };
-
-  const loadPeers = async () => {
-    setLoading(true);
-    try {
-      const response = await api.getAllPeers(page, pageSize);
-      setPeers(response.peers || []);
-      setTotal(response.total || 0);
-    } catch (error) {
-      console.error('Failed to load peers:', error);
-      setPeers([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadACLs = async () => {
-    try {
-      const acls: Record<string, ACL> = {};
-      for (const network of networks) {
-        try {
-          const acl = await api.getACL(network.id);
-          acls[network.id] = acl;
-        } catch (error) {
-          console.warn(`Failed to load ACL for network ${network.id}:`, error);
-        }
-      }
-      setNetworkACLs(acls);
-    } catch (error) {
-      console.error('Failed to load ACLs:', error);
-    }
-  };
-
-  const loadIncidents = async () => {
-    try {
-      const response = await api.getSecurityIncidents(1, 200, false);
-      const incidentPeers = new Set<string>();
-      response.data.forEach(inc => {
-        if (!inc.resolved && inc.peer_id) {
-          incidentPeers.add(inc.peer_id);
-        }
-      });
-      setIncidentPeerIds(incidentPeers);
-    } catch (error) {
-      console.error('Failed to load security incidents:', error);
-    }
-  };
-
-  const updateBlockedPeers = (peersList: Peer[]) => {
+  // Calculate blocked peers from ACLs
+  const blockedPeers = useMemo(() => {
     const blocked = new Set<string>();
-    peersList.forEach(peer => {
+    peers.forEach(peer => {
       if (peer.network_id && networkACLs[peer.network_id]) {
         const acl = networkACLs[peer.network_id];
         if (acl.enabled && acl.blocked_peers && acl.blocked_peers[peer.id]) {
@@ -135,8 +47,8 @@ export default function PeersPage() {
         }
       }
     });
-    setBlockedPeers(blocked);
-  };
+    return blocked;
+  }, [peers, networkACLs]);
 
   const handlePeerClick = (peer: Peer) => {
     setSelectedPeer(peer);
@@ -171,7 +83,7 @@ export default function PeersPage() {
   };
 
   const handleModalSuccess = () => {
-    loadPeers();
+    refetchPeers();
   };
 
   // Apply filters to peers
@@ -455,7 +367,7 @@ export default function PeersPage() {
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         peer={selectedPeer}
-        onUpdate={loadPeers}
+        onUpdate={refetchPeers}
       />
     </div>
   );

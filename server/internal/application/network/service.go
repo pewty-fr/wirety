@@ -192,7 +192,6 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 		Endpoint:             req.Endpoint,
 		ListenPort:           req.ListenPort,
 		IsJump:               req.IsJump,
-		JumpNatInterface:     req.JumpNatInterface,
 		IsIsolated:           req.IsIsolated,
 		FullEncapsulation:    req.FullEncapsulation,
 		UseAgent:             req.UseAgent,             // Track if peer uses agent or static config
@@ -555,7 +554,7 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 				if err == nil {
 					net, err := s.repo.GetNetwork(ctx, networkID)
 					if err == nil {
-
+						// Check if there's already an open incident of this type for this peer
 						resolved := false
 						incidents, err := s.repo.ListSecurityIncidentsByNetwork(ctx, networkID, &resolved)
 						if err == nil {
@@ -768,9 +767,59 @@ func (s *Service) GetSecurityIncident(ctx context.Context, incidentID string) (*
 	return s.repo.GetSecurityIncident(ctx, incidentID)
 }
 
-// ResolveSecurityIncident marks a security incident as resolved
+// ResolveSecurityIncident marks a security incident as resolved and removes the peer from all ACLs
 func (s *Service) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
-	return s.repo.ResolveSecurityIncident(ctx, incidentID, resolvedBy)
+	// First get the incident to find the peer ID
+	incident, err := s.repo.GetSecurityIncident(ctx, incidentID)
+	if err != nil {
+		return fmt.Errorf("failed to get incident: %w", err)
+	}
+
+	// Resolve the incident
+	if err := s.repo.ResolveSecurityIncident(ctx, incidentID, resolvedBy); err != nil {
+		return err
+	}
+
+	// Get all networks to check for the blocked peer in all ACLs
+	networks, err := s.repo.ListNetworks(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	// Remove the peer from blocked list in all network ACLs
+	var unblocked []string
+	for _, net := range networks {
+		acl, err := s.repo.GetACL(ctx, net.ID)
+		if err != nil {
+			// If ACL doesn't exist for this network, skip
+			continue
+		}
+
+		// Check if peer is blocked in this network
+		if acl.BlockedPeers != nil && acl.BlockedPeers[incident.PeerID] {
+			// Remove peer from blocked list
+			delete(acl.BlockedPeers, incident.PeerID)
+
+			// Update ACL in repository
+			if err := s.repo.UpdateACL(ctx, net.ID, acl); err != nil {
+				fmt.Printf("WARNING: Failed to update ACL for network %s: %v\n", net.Name, err)
+				continue
+			}
+
+			unblocked = append(unblocked, net.Name)
+
+			// Notify all connected peers in this network about the ACL change
+			if s.wsNotifier != nil {
+				s.wsNotifier.NotifyNetworkPeers(net.ID)
+			}
+		}
+	}
+
+	if len(unblocked) > 0 {
+		fmt.Printf("SECURITY: Unblocked peer %s in ACLs for networks: %v\n", incident.PeerName, unblocked)
+	}
+
+	return nil
 }
 
 // ReconnectPeer removes a peer from the ACL blocked list to re-enable communication
@@ -938,25 +987,40 @@ func (s *Service) detectAndHandleSharedConfigs(ctx context.Context, networkID st
 			sharedConfigPeers[peer.ID] = true
 			peerEndpoints[peer.ID] = endpoints
 
-			// Create security incident for this peer
+			// Create security incident for this peer only if one doesn't already exist
 			net, err := s.repo.GetNetwork(ctx, networkID)
 			if err == nil {
-				incident := &network.SecurityIncident{
-					ID:           fmt.Sprintf("incident-%s-%d", peer.ID, now.Unix()),
-					PeerID:       peer.ID,
-					PeerName:     peer.Name,
-					NetworkID:    networkID,
-					NetworkName:  net.Name,
-					IncidentType: network.IncidentTypeSharedConfig,
-					DetectedAt:   now,
-					PublicKey:    peer.PublicKey,
-					Endpoints:    endpoints,
-					Details:      fmt.Sprintf("Peer %s detected at %d different endpoints within 30 minutes: %v", peer.Name, len(endpoints), endpoints),
-					Resolved:     false,
+				// Check if there's already an open incident of this type for this peer
+				resolved := false
+				existingIncidents, err := s.repo.ListSecurityIncidentsByNetwork(ctx, networkID, &resolved)
+				hasOpenIncident := false
+				if err == nil {
+					for _, existingIncident := range existingIncidents {
+						if existingIncident.IncidentType == network.IncidentTypeSharedConfig && existingIncident.PeerID == peer.ID {
+							hasOpenIncident = true
+							break
+						}
+					}
 				}
 
-				if err := s.repo.CreateSecurityIncident(ctx, incident); err != nil {
-					fmt.Printf("failed to create security incident: %v\n", err)
+				if !hasOpenIncident {
+					incident := &network.SecurityIncident{
+						ID:           fmt.Sprintf("incident-%s-%d", peer.ID, now.Unix()),
+						PeerID:       peer.ID,
+						PeerName:     peer.Name,
+						NetworkID:    networkID,
+						NetworkName:  net.Name,
+						IncidentType: network.IncidentTypeSharedConfig,
+						DetectedAt:   now,
+						PublicKey:    peer.PublicKey,
+						Endpoints:    endpoints,
+						Details:      fmt.Sprintf("Peer %s detected at %d different endpoints within 30 minutes: %v", peer.Name, len(endpoints), endpoints),
+						Resolved:     false,
+					}
+
+					if err := s.repo.CreateSecurityIncident(ctx, incident); err != nil {
+						fmt.Printf("failed to create security incident: %v\n", err)
+					}
 				}
 			}
 		}
@@ -1009,22 +1073,37 @@ func (s *Service) detectAndHandleSuspicousActivity(ctx context.Context, networkI
 			suspiciousActivityPeers[peer.ID] = true
 			net, err := s.repo.GetNetwork(ctx, networkID)
 			if err == nil {
-				incident := &network.SecurityIncident{
-					ID:           fmt.Sprintf("incident-%s-%d", peer.ID, now.Unix()),
-					PeerID:       peer.ID,
-					PeerName:     peer.Name,
-					NetworkID:    networkID,
-					NetworkName:  net.Name,
-					IncidentType: network.IncidentTypeSuspiciousActivity,
-					DetectedAt:   now,
-					PublicKey:    peer.PublicKey,
-					Endpoints:    endpoints,
-					Details:      fmt.Sprintf("Peer %s has %d endpoint changes within 24 hours", peer.Name, len(changes)),
-					Resolved:     false,
+				// Check if there's already an open incident of this type for this peer
+				resolved := false
+				existingIncidents, err := s.repo.ListSecurityIncidentsByNetwork(ctx, networkID, &resolved)
+				hasOpenIncident := false
+				if err == nil {
+					for _, existingIncident := range existingIncidents {
+						if existingIncident.IncidentType == network.IncidentTypeSuspiciousActivity && existingIncident.PeerID == peer.ID {
+							hasOpenIncident = true
+							break
+						}
+					}
 				}
 
-				if err := s.repo.CreateSecurityIncident(ctx, incident); err != nil {
-					fmt.Printf("failed to create security incident: %v\n", err)
+				if !hasOpenIncident {
+					incident := &network.SecurityIncident{
+						ID:           fmt.Sprintf("incident-%s-%d", peer.ID, now.Unix()),
+						PeerID:       peer.ID,
+						PeerName:     peer.Name,
+						NetworkID:    networkID,
+						NetworkName:  net.Name,
+						IncidentType: network.IncidentTypeSuspiciousActivity,
+						DetectedAt:   now,
+						PublicKey:    peer.PublicKey,
+						Endpoints:    endpoints,
+						Details:      fmt.Sprintf("Peer %s has more than %d endpoint changes within 24 hours", peer.Name, network.MaxEndpointChangesPerDay),
+						Resolved:     false,
+					}
+
+					if err := s.repo.CreateSecurityIncident(ctx, incident); err != nil {
+						fmt.Printf("failed to create security incident: %v\n", err)
+					}
 				}
 			}
 		}
