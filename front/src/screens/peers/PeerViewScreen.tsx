@@ -1,19 +1,27 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, Alert } from 'react-native';
 import { Title, Card, Text, Button, ActivityIndicator, Chip, IconButton, List, Divider } from 'react-native-paper';
+import { NetworkGraphComponent } from '../../components/NetworkGraphComponent';
+import { UserMenu } from '../../components/UserMenu';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../../App';
 import api from '../../services/api';
 import { Peer } from '../../types/api';
-import { PeerSessionStatus } from '../../types/security';
+import { PeerSessionStatus, SecurityIncident } from '../../types/security';
 import { formatDate } from '../../utils/validation';
 
 export const PeerViewScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute();
   const { networkId, peerId } = route.params as { networkId: string; peerId: string };
   const [peer, setPeer] = useState<Peer | null>(null);
   const [sessionStatus, setSessionStatus] = useState<PeerSessionStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [networkPeers, setNetworkPeers] = useState<Peer[]>([]);
+  const [incidents, setIncidents] = useState<SecurityIncident[]>([]);
+  const [nodes, setNodes] = useState<any[]>([]);
+  const [edges, setEdges] = useState<any[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -36,13 +44,13 @@ export const PeerViewScreen = () => {
     if (peer) {
       navigation.setOptions({
         headerRight: () => (
-          <View style={{ flexDirection: 'row' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <IconButton
               icon="pencil"
               onPress={() =>
                 navigation.navigate(
-                  peer.is_jump ? ('PeerUpdateJump' as never) : ('PeerUpdateRegular' as never),
-                  { networkId, peerId } as never
+                  peer.is_jump ? 'PeerUpdateJump' : 'PeerUpdateRegular',
+                  { networkId, peerId }
                 )
               }
             />
@@ -50,6 +58,7 @@ export const PeerViewScreen = () => {
               icon="delete"
               onPress={handleDelete}
             />
+            <UserMenu />
           </View>
         ),
       });
@@ -59,13 +68,107 @@ export const PeerViewScreen = () => {
   const loadPeer = async () => {
     setLoading(true);
     try {
+      // Always fetch peer first; if this fails we can't render anything.
       const data = await api.getPeer(networkId, peerId);
       setPeer(data);
+
+      // Optimistically seed graph with current peer so UI never shows "Topology unavailable".
+      setNodes([
+        {
+          id: data.id,
+            name: data.name,
+            type: 'current',
+            address: data.address,
+            endpoint: data.endpoint,
+            is_jump: data.is_jump,
+            is_isolated: data.is_isolated,
+            full_encapsulation: data.full_encapsulation,
+        },
+      ]);
+      setEdges([]);
+
+      // Fetch peers & incidents independently; tolerate failures.
+      let peers: Peer[] = [];
+      try {
+        const peersResp = await api.getPeers(networkId, 1, 1000, '');
+        peers = peersResp.data;
+        setNetworkPeers(peers);
+      } catch (e) {
+        console.warn('Failed to load network peers; proceeding with single-node topology');
+      }
+      let inc: SecurityIncident[] = [];
+      try {
+        inc = await api.getNetworkSecurityIncidents(networkId, false);
+        setIncidents(inc);
+      } catch (e) {
+        console.warn('Failed to load incidents; continuing without incident overlays');
+      }
+
+      if (peers.length > 0 || inc.length > 0) {
+        generateGraph(data, peers, inc);
+      }
     } catch (error) {
       console.error('Failed to load peer:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const generateGraph = (currentPeer: Peer, allPeers: Peer[], incidents: SecurityIncident[]) => {
+    const incidentPeerIds = new Set(incidents.filter(i => !i.resolved).map(i => i.peer_id));
+    const graphNodes: any[] = [];
+    const graphEdges: any[] = [];
+
+    graphNodes.push({
+      id: currentPeer.id,
+      name: currentPeer.name,
+      type: 'current',
+      address: currentPeer.address,
+      endpoint: currentPeer.endpoint,
+      is_jump: currentPeer.is_jump,
+      is_isolated: currentPeer.is_isolated,
+      full_encapsulation: currentPeer.full_encapsulation,
+      incident: incidentPeerIds.has(currentPeer.id)
+    });
+
+    const jumpServers = allPeers.filter(p => p.is_jump);
+    const otherPeers = allPeers.filter(p => !p.is_jump && p.id !== currentPeer.id);
+
+    if (currentPeer.is_jump) {
+      otherPeers.forEach(p => {
+        graphNodes.push({
+          id: p.id,
+          name: p.name,
+          type: 'regular',
+          address: p.address,
+          is_isolated: p.is_isolated,
+          full_encapsulation: p.full_encapsulation,
+          incident: incidentPeerIds.has(p.id)
+        });
+        const blocked = p.is_isolated || incidentPeerIds.has(p.id);
+        graphEdges.push({
+          from: currentPeer.id,
+          to: p.id,
+          type: blocked ? 'blocked' : 'direct',
+          label: blocked ? (p.is_isolated ? 'Isolated' : 'Incident') : 'Direct'
+        });
+      });
+    } else {
+      jumpServers.forEach(j => {
+        graphNodes.push({ id: j.id, name: j.name, type: 'jump', address: j.address, incident: incidentPeerIds.has(j.id) });
+        const blocked = incidentPeerIds.has(j.id) || incidentPeerIds.has(currentPeer.id);
+        graphEdges.push({ from: currentPeer.id, to: j.id, type: blocked ? 'blocked' : 'tunnel', label: blocked ? 'Incident' : 'Tunnel' });
+      });
+      otherPeers.forEach(p => {
+        graphNodes.push({ id: p.id, name: p.name, type: 'regular', address: p.address, incident: incidentPeerIds.has(p.id), is_isolated: p.is_isolated });
+        jumpServers.forEach(j => {
+          const blocked = p.is_isolated || incidentPeerIds.has(p.id) || incidentPeerIds.has(j.id);
+          graphEdges.push({ from: j.id, to: p.id, type: blocked ? 'blocked' : 'tunnel', label: blocked ? (p.is_isolated ? 'Isolated' : 'Incident') : 'Via Jump' });
+        });
+      });
+    }
+    setNodes(graphNodes);
+    setEdges(graphEdges);
   };
 
   const handleDelete = async () => {
@@ -248,24 +351,25 @@ export const PeerViewScreen = () => {
         </Card>
       )}
 
+      <Card style={styles.card}>
+        <Card.Title title="Network Topology" />
+        <Card.Content>
+          {nodes.length === 0 ? (
+            <Text style={{ color: '#666' }}>Topology unavailable</Text>
+          ) : (
+            <NetworkGraphComponent nodes={nodes} edges={edges} currentPeerId={peer.id} />
+          )}
+        </Card.Content>
+      </Card>
+
       <View style={styles.actions}>
-        <Button
-          mode="contained"
-          onPress={() =>
-            navigation.navigate('PeerNetworkGraph' as never, { networkId, peerId } as never)
-          }
-          style={styles.button}
-        >
-          Network Graph
-        </Button>
+        {/* Embedded network graph replaces separate navigation */}
         
         {/* Jump peers: only show token (always use agent) */}
         {peer.is_jump && (
           <Button
             mode="contained"
-            onPress={() =>
-              navigation.navigate('PeerToken' as never, { networkId, peerId } as never)
-            }
+            onPress={() => navigation.navigate('PeerToken', { networkId, peerId })}
             style={styles.button}
           >
             View Token
@@ -276,9 +380,7 @@ export const PeerViewScreen = () => {
         {!peer.is_jump && peer.use_agent && (
           <Button
             mode="contained"
-            onPress={() =>
-              navigation.navigate('PeerToken' as never, { networkId, peerId } as never)
-            }
+            onPress={() => navigation.navigate('PeerToken', { networkId, peerId })}
             style={styles.button}
           >
             View Token
@@ -288,9 +390,7 @@ export const PeerViewScreen = () => {
         {!peer.is_jump && !peer.use_agent && (
           <Button
             mode="contained"
-            onPress={() =>
-              navigation.navigate('PeerConfig' as never, { networkId, peerId } as never)
-            }
+            onPress={() => navigation.navigate('PeerConfig', { networkId, peerId })}
             style={styles.button}
           >
             View Config

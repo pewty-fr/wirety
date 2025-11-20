@@ -2,13 +2,17 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, FlatList, StyleSheet } from 'react-native';
 import { Text, Card, Searchbar, FAB } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../../App';
 import api from '../../services/api';
 import { Network } from '../../types/api';
 import { Pagination } from '../../components/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
 
+import { computeCapacityFromCIDR, formatCapacity } from '../../utils/networkCapacity';
+
 export const NetworkListScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [networks, setNetworks] = useState<Network[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -35,17 +39,26 @@ export const NetworkListScreen = () => {
     }, [page, debouncedSearchQuery])
   );
 
-  const renderNetwork = ({ item }: { item: Network }) => (
-    <Card
-      style={styles.card}
-      onPress={() => navigation.navigate('NetworkView' as never, { id: item.id } as never)}
-    >
-      <Card.Title title={item.name} subtitle={item.cidr} />
-      <Card.Content>
-        <Text>Domain: {item.domain}</Text>
-      </Card.Content>
-    </Card>
-  );
+  const renderNetwork = ({ item }: { item: Network }) => {
+  const peerCount = item.peer_count;
+    const capacity = computeCapacityFromCIDR(item.cidr);
+    const remaining = capacity != null && peerCount != null && peerCount >= 0 ? capacity - peerCount : null;
+    return (
+      <Card
+        style={styles.card}
+        onPress={() => navigation.navigate('NetworkView', { id: item.id })}
+      >
+        <Card.Title title={item.name} subtitle={item.cidr} />
+        <Card.Content>
+          <Text>Domain: {item.domain}</Text>
+          <Text>
+            Peers: {peerCount == null ? '…' : peerCount.toLocaleString()}{' '}
+            / {formatCapacity(capacity)}{remaining != null && remaining >= 0 ? ` (left ${remaining.toLocaleString()})` : ''}
+          </Text>
+        </Card.Content>
+      </Card>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -70,7 +83,7 @@ export const NetworkListScreen = () => {
       <FAB
         style={styles.fab}
         icon="plus"
-        onPress={() => navigation.navigate('NetworkAdd' as never)}
+        onPress={() => navigation.navigate('NetworkAdd')}
       />
     </View>
   );

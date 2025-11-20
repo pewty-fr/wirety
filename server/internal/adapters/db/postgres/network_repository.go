@@ -54,6 +54,7 @@ func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*
 		return nil, fmt.Errorf("load peers: %w", err)
 	}
 	defer rows.Close()
+	count := 0
 	for rows.Next() {
 		var p network.Peer
 		var addrs []string
@@ -63,7 +64,9 @@ func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*
 		}
 		p.AdditionalAllowedIPs = addrs
 		n.AddPeer(&p)
+		count++
 	}
+	n.PeerCount = count
 	// Reattach ACL if present (ephemeral)
 	n.ACL = r.acls[networkID]
 	return &n, nil
@@ -92,7 +95,7 @@ func (r *NetworkRepository) DeleteNetwork(ctx context.Context, networkID string)
 }
 
 func (r *NetworkRepository) ListNetworks(ctx context.Context) ([]*network.Network, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,cidr,domain,created_at,updated_at FROM networks ORDER BY created_at ASC`)
+	rows, err := r.db.QueryContext(ctx, `SELECT n.id,n.name,n.cidr,n.domain,n.created_at,n.updated_at, COALESCE(p.peer_count,0) AS peer_count FROM networks n LEFT JOIN (SELECT network_id, COUNT(*) AS peer_count FROM peers GROUP BY network_id) p ON p.network_id = n.id ORDER BY n.created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
@@ -100,7 +103,7 @@ func (r *NetworkRepository) ListNetworks(ctx context.Context) ([]*network.Networ
 	out := make([]*network.Network, 0)
 	for rows.Next() {
 		var n network.Network
-		err = rows.Scan(&n.ID, &n.Name, &n.CIDR, &n.Domain, &n.CreatedAt, &n.UpdatedAt)
+		err = rows.Scan(&n.ID, &n.Name, &n.CIDR, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &n.PeerCount)
 		if err != nil {
 			return nil, err
 		}

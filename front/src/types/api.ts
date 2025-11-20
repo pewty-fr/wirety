@@ -6,6 +6,7 @@ export interface Network {
   gateway_peer_id?: string;
   created_at: string;
   updated_at: string;
+  peer_count?: number; // aggregated from server
 }
 
 export interface NetworkCreateRequest {

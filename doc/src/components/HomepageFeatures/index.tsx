@@ -11,32 +11,57 @@ type FeatureItem = {
 
 const FeatureList: FeatureItem[] = [
   {
-    title: 'Easy to Use',
+    title: 'Secure WireGuard Mesh',
     Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
-        Docusaurus was designed from the ground up to be easily installed and
-        used to get your website up and running quickly.
+        Build and operate encrypted overlay networks in minutes. Wirety automates peer
+        provisioning, keys, ACLs and isolation so you can focus on your infrastructure—not
+        manual tunnel management.
       </>
     ),
   },
   {
-    title: 'Focus on What Matters',
-    Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
+    title: 'Real‑Time Topology & Insight',
+    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
-        Docusaurus lets you focus on your docs, and we&apos;ll do the chores. Go
-        ahead and move your docs into the <code>docs</code> directory.
+        Always know how peers connect. Interactive topology highlights jump servers, direct
+        paths, blocked edges and security incidents, giving actionable observability across
+        environments.
       </>
     ),
   },
   {
-    title: 'Powered by React',
-    Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
+    title: 'Zero‑Touch Peer Lifecycle',
+    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
-        Extend or customize your website layout by reusing React. Docusaurus can
-        be extended while reusing the same header and footer.
+        Agents or static configs—your choice. Issue tokens, rotate credentials, enforce full
+        tunnel or isolation policies, and adjust allowed networks centrally with no manual
+        reconfiguration on hosts.
+      </>
+    ),
+  },
+  {
+    title: 'Integrated Security Response',
+    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
+    description: (
+      <>
+        Detect conflicting sessions, endpoint churn and suspicious activity. Wirety raises
+        incidents and can automatically block affected peers, reducing dwell time and
+        tightening your blast radius.
+      </>
+    ),
+  },
+  {
+    title: 'Capacity & Governance',
+    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
+    // Svg: require('@site/static/img/undraw_capacity.svg').default,
+    description: (
+      <>
+        Track peer counts, CIDR capacity and remaining slots per network. Role‑based access
+        controls and default authorization templates keep growth predictable and compliant.
       </>
     ),
   },

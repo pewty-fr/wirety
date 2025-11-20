@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, FlatList, StyleSheet } from 'react-native';
 import { Text, Card, Searchbar, FAB, Chip, Menu, Button } from 'react-native-paper';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../../App';
 import api from '../../services/api';
 import { Peer, Network } from '../../types/api';
 import { PeerSessionStatus } from '../../types/security';
@@ -9,7 +11,7 @@ import { Pagination } from '../../components/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
 
 export const PeerListScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute();
   const params = route.params as { networkId?: string } | undefined;
   const networkId = params?.networkId;
@@ -182,10 +184,11 @@ export const PeerListScreen = () => {
       <Card
         style={styles.card}
         onPress={() =>
-          navigation.navigate(
-            'PeerView' as never,
-            { networkId: item.network_id || networkId, peerId: item.id, isJump: item.is_jump } as never
-          )
+          navigation.navigate('PeerView', {
+            networkId: item.network_id || networkId!,
+            peerId: item.id,
+            isJump: item.is_jump,
+          })
         }
       >
         <Card.Title 
@@ -198,8 +201,13 @@ export const PeerListScreen = () => {
             {item.is_isolated && <Chip mode="flat">Isolated</Chip>}
             {item.full_encapsulation && <Chip mode="flat">Full Encapsulation</Chip>}
             {sessionStatus?.has_active_agent && (
-              <Chip mode="flat" icon="check-circle" style={{ backgroundColor: '#4caf50' }} textStyle={{ color: 'white' }}>
-                Connected
+              <Chip mode="flat" icon="account-check" style={{ backgroundColor: '#4caf50' }} textStyle={{ color: 'white' }}>
+                Agent
+              </Chip>
+            )}
+            {!!sessionStatus?.current_session?.reported_endpoint && (
+              <Chip mode="flat" icon="access-point" style={{ backgroundColor: '#2e7d32' }} textStyle={{ color: 'white' }}>
+                WG Up
               </Chip>
             )}
             {sessionStatus?.suspicious_activity && (
@@ -282,7 +290,7 @@ export const PeerListScreen = () => {
           style={styles.fab}
           icon="plus"
           onPress={() =>
-            navigation.navigate('PeerAddChoice' as never, { networkId: networkId || filterNetworkId } as never)
+            navigation.navigate('PeerAddChoice', { networkId: (networkId || filterNetworkId)! })
           }
         />
       )}

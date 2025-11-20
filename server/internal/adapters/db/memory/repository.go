@@ -55,6 +55,7 @@ func (r *Repository) GetNetwork(ctx context.Context, networkID string) (*network
 	if !exists {
 		return nil, fmt.Errorf("network not found")
 	}
+	net.PeerCount = len(net.Peers)
 
 	return net, nil
 }
@@ -92,6 +93,7 @@ func (r *Repository) ListNetworks(ctx context.Context) ([]*network.Network, erro
 
 	networks := make([]*network.Network, 0, len(r.networks))
 	for _, net := range r.networks {
+		net.PeerCount = len(net.Peers)
 		networks = append(networks, net)
 	}
 

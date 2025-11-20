@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
 import { Title, Card, Text, Button, ActivityIndicator, IconButton } from 'react-native-paper';
+import { UserMenu } from '../../components/UserMenu';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../../App';
 import api from '../../services/api';
-import { Network } from '../../types/api';
+import { Network, Peer } from '../../types/api';
+import { computeCapacityFromCIDR } from '../../utils/networkCapacity';
 import { formatDate } from '../../utils/validation';
 
 export const NetworkViewScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute();
   const { id } = route.params as { id: string };
   const [network, setNetwork] = useState<Network | null>(null);
   const [loading, setLoading] = useState(true);
+  const [peerCount, setPeerCount] = useState<number | null>(null);
+  const [capacity, setCapacity] = useState<number | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -23,15 +29,16 @@ export const NetworkViewScreen = () => {
     if (network) {
       navigation.setOptions({
         headerRight: () => (
-          <View style={{ flexDirection: 'row' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <IconButton
               icon="pencil"
-              onPress={() => navigation.navigate('NetworkUpdate' as never, { id } as never)}
+              onPress={() => navigation.navigate('NetworkUpdate', { id })}
             />
             <IconButton
               icon="delete"
               onPress={handleDelete}
             />
+            <UserMenu />
           </View>
         ),
       });
@@ -43,6 +50,10 @@ export const NetworkViewScreen = () => {
     try {
       const data = await api.getNetwork(id);
       setNetwork(data);
+      // Compute capacity from CIDR
+      setCapacity(computeCapacityFromCIDR(data.cidr));
+      // Use aggregated peer_count if present
+      setPeerCount(data.peer_count ?? null);
     } catch (error) {
       console.error('Failed to load network:', error);
     } finally {
@@ -89,6 +100,13 @@ export const NetworkViewScreen = () => {
             <Text>{network.domain}</Text>
           </View>
           <View style={styles.row}>
+            <Text style={styles.label}>Peers:</Text>
+            <Text>
+              {peerCount == null ? '…' : peerCount.toLocaleString()} / {capacity == null ? 'N/A' : capacity.toLocaleString()}{' '}
+              {peerCount != null && capacity != null ? `(left ${(capacity - peerCount).toLocaleString()})` : ''}
+            </Text>
+          </View>
+          <View style={styles.row}>
             <Text style={styles.label}>Created:</Text>
             <Text>{formatDate(network.created_at)}</Text>
           </View>
@@ -102,7 +120,7 @@ export const NetworkViewScreen = () => {
       <View style={styles.actions}>
         <Button
           mode="contained"
-          onPress={() => navigation.navigate('PeerList' as never, { networkId: id } as never)}
+          onPress={() => navigation.navigate('PeerList', { networkId: id })}
           style={styles.button}
         >
           View Peers

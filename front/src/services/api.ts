@@ -157,6 +157,13 @@ class ApiClient {
     return data;
   }
 
+  async getNetworkSecurityIncidents(networkId: string, resolved?: boolean): Promise<SecurityIncident[]> {
+    const params: any = {};
+    if (resolved !== undefined) params.resolved = resolved;
+    const { data } = await this.client.get(`/networks/${networkId}/security/incidents`, { params });
+    return data;
+  }
+
   // Security incidents (mock for now - will be implemented in backend)
   async getSecurityIncidents(resolved?: boolean): Promise<SecurityIncident[]> {
     // This will need backend implementation to track blocked peers

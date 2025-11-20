@@ -53,7 +53,7 @@ export const NetworkGraphComponent: React.FC<NetworkGraphComponentProps> = ({
   currentPeerId
 }) => {
   const screenWidth = Dimensions.get('window').width - 32;
-  const diagramHeight = 500;
+  const diagramHeight = 480;
   const [zoom, setZoom] = useState(1);
   const [panX, setPanX] = useState(0);
   const [panY, setPanY] = useState(0);
@@ -69,28 +69,25 @@ export const NetworkGraphComponent: React.FC<NetworkGraphComponentProps> = ({
       const radius = node.type === 'current' ? 30 : node.type === 'jump' ? 25 : 20;
       const color = getNodeColor(node);
       
+      // Radial layered layout: current peer center, jumps inner ring, regular outer ring, internet top.
       if (node.id === currentPeerId) {
-        // Current peer in center
-        x = centerX;
-        y = centerY;
+        x = centerX; y = centerY;
       } else if (node.type === 'internet') {
-        // Internet at top
-        x = centerX;
-        y = centerY - 180;
-      } else if (node.type === 'jump') {
-        // Jump servers in inner ring
-        const jumpNodes = nodes.filter(n => n.type === 'jump');
-        const jumpIndex = jumpNodes.findIndex(n => n.id === node.id);
-        const angle = (jumpIndex * 2 * Math.PI) / Math.max(jumpNodes.length, 1);
-        x = centerX + Math.cos(angle) * 120;
-        y = centerY + Math.sin(angle) * 120;
+        x = centerX; y = centerY - 170;
       } else {
-        // Regular peers in outer ring
+        const jumpNodes = nodes.filter(n => n.type === 'jump');
         const regularNodes = nodes.filter(n => n.type === 'regular');
-        const regularIndex = regularNodes.findIndex(n => n.id === node.id);
-        const angle = (regularIndex * 2 * Math.PI) / Math.max(regularNodes.length, 1);
-        x = centerX + Math.cos(angle) * 200;
-        y = centerY + Math.sin(angle) * 200;
+        if (node.type === 'jump') {
+          const jumpIndex = jumpNodes.findIndex(n => n.id === node.id);
+          const angle = (jumpIndex * 2 * Math.PI) / Math.max(jumpNodes.length, 1);
+          x = centerX + Math.cos(angle) * 110;
+          y = centerY + Math.sin(angle) * 110;
+        } else {
+          const regularIndex = regularNodes.findIndex(n => n.id === node.id);
+          const angle = (regularIndex * 2 * Math.PI) / Math.max(regularNodes.length, 1);
+          x = centerX + Math.cos(angle) * 190;
+          y = centerY + Math.sin(angle) * 190;
+        }
       }
       
       positions.push({
@@ -126,8 +123,8 @@ export const NetworkGraphComponent: React.FC<NetworkGraphComponentProps> = ({
   
   const getStrokeDashArray = (edgeType: string): string => {
     switch (edgeType) {
-      case 'blocked': return '8,4';
-      case 'tunnel': return '12,4';
+      case 'blocked': return '6,3';
+      case 'tunnel': return '10,4';
       default: return '';
     }
   };
@@ -198,15 +195,7 @@ export const NetworkGraphComponent: React.FC<NetworkGraphComponentProps> = ({
               viewBox={`${-panX/zoom} ${-panY/zoom} ${screenWidth/zoom} ${diagramHeight/zoom}`}
             >
               <Defs>
-                <Marker
-                  id="arrowhead"
-                  markerWidth="10"
-                  markerHeight="10"
-                  refX="9"
-                  refY="3"
-                  orient="auto"
-                  markerUnits="strokeWidth"
-                >
+                <Marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
                   <Path d="M0,0 L0,6 L9,3 z" fill="#666" />
                 </Marker>
               </Defs>
@@ -216,40 +205,42 @@ export const NetworkGraphComponent: React.FC<NetworkGraphComponentProps> = ({
                 {edges.map((edge, index) => {
                   const fromPos = getPosition(edge.from);
                   const toPos = getPosition(edge.to);
-                  
                   if (!fromPos || !toPos) return null;
-                  
-                  // Calculate edge endpoints (from edge of circles, not centers)
                   const dx = toPos.x - fromPos.x;
                   const dy = toPos.y - fromPos.y;
                   const distance = Math.sqrt(dx * dx + dy * dy);
                   const unitX = dx / distance;
                   const unitY = dy / distance;
-                  
                   const startX = fromPos.x + unitX * fromPos.radius;
                   const startY = fromPos.y + unitY * fromPos.radius;
                   const endX = toPos.x - unitX * toPos.radius;
                   const endY = toPos.y - unitY * toPos.radius;
-                  
+                  // Curved path control point (perpendicular offset)
+                  const midX = (startX + endX) / 2;
+                  const midY = (startY + endY) / 2;
+                  const perpX = -unitY;
+                  const perpY = unitX;
+                  const curveStrength = Math.min(40, distance / 6);
+                  const cpx = midX + perpX * curveStrength;
+                  const cpy = midY + perpY * curveStrength;
+                  const pathData = `M ${startX} ${startY} Q ${cpx} ${cpy} ${endX} ${endY}`;
                   return (
                     <G key={`edge-${index}`}>
-                      <Line
-                        x1={startX}
-                        y1={startY}
-                        x2={endX}
-                        y2={endY}
+                      <Path
+                        d={pathData}
                         stroke={getEdgeColor(edge.type)}
-                        strokeWidth="2"
+                        strokeWidth={2}
+                        fill="none"
                         strokeDasharray={getStrokeDashArray(edge.type)}
                         markerEnd="url(#arrowhead)"
                       />
                       {edge.label && (
                         <SvgText
-                          x={(startX + endX) / 2}
-                          y={(startY + endY) / 2 - 5}
+                          x={cpx}
+                          y={cpy - 6}
                           textAnchor="middle"
                           fontSize="10"
-                          fill="#666"
+                          fill="#555"
                           fontWeight="500"
                         >
                           {edge.label}
@@ -289,21 +280,21 @@ export const NetworkGraphComponent: React.FC<NetworkGraphComponentProps> = ({
                         x={pos.x}
                         y={pos.y}
                         textAnchor="middle"
-                        fontSize="12"
+                        fontSize="11"
                         fill="#FFFFFF"
-                        fontWeight="bold"
+                        fontWeight="600"
                       >
-                        {pos.node.name.length > 8 ? pos.node.name.substring(0, 8) + '...' : pos.node.name}
+                        {pos.node.name.length > 10 ? pos.node.name.substring(0, 10) + '…' : pos.node.name}
                       </SvgText>
                       
                       {/* Address below node */}
                       {pos.node.address && (
                         <SvgText
                           x={pos.x}
-                          y={pos.y + pos.radius + 15}
+                          y={pos.y + pos.radius + 14}
                           textAnchor="middle"
-                          fontSize="10"
-                          fill="#666"
+                          fontSize="9"
+                          fill="#444"
                         >
                           {pos.node.address}
                         </SvgText>
@@ -313,22 +304,21 @@ export const NetworkGraphComponent: React.FC<NetworkGraphComponentProps> = ({
                       {isIsolated && (
                         <SvgText
                           x={pos.x}
-                          y={pos.y + pos.radius + 28}
+                          y={pos.y + pos.radius + 26}
                           textAnchor="middle"
-                          fontSize="9"
+                          fontSize="8"
                           fill="#F44336"
                           fontWeight="bold"
                         >
                           ISOLATED
                         </SvgText>
                       )}
-                      
                       {isFullEncap && (
                         <SvgText
                           x={pos.x}
-                          y={pos.y + pos.radius + (isIsolated ? 40 : 28)}
+                          y={pos.y + pos.radius + (isIsolated ? 38 : 26)}
                           textAnchor="middle"
-                          fontSize="9"
+                          fontSize="8"
                           fill="#9C27B0"
                           fontWeight="bold"
                         >

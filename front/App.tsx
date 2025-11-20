@@ -43,13 +43,44 @@ import { UserListScreen } from './src/screens/users/UserListScreen';
 import { UserDetailScreen } from './src/screens/users/UserDetailScreen';
 import { DefaultPermissionsScreen } from './src/screens/users/DefaultPermissionsScreen';
 
-const Stack = createNativeStackNavigator();
+// Root stack param list for typed navigation across all screens
+export type RootStackParamList = {
+  Login: undefined;
+  NetworkList: undefined;
+  NetworkAdd: undefined;
+  NetworkView: { id: string };
+  NetworkUpdate: { id: string };
+  PeerList: { networkId?: string };
+  PeerAddChoice: { networkId: string };
+  PeerAddRegular: { networkId: string };
+  PeerAddJump: { networkId: string };
+  PeerView: { networkId: string; peerId: string; isJump?: boolean };
+  PeerNetworkGraph: { networkId: string; peerId: string };
+  PeerToken: { networkId: string; peerId: string };
+  PeerConfig: { networkId: string; peerId: string };
+  PeerUpdateRegular: { networkId: string; peerId: string };
+  PeerUpdateJump: { networkId: string; peerId: string };
+  IPAMList: undefined;
+  SecurityIncidentList: undefined;
+  UserList: undefined;
+  UserView: { userId: string };
+  DefaultPermissions: undefined;
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
+
+// Common stack wrapper that injects UserMenu into headerRight across screens.
+const CommonStack: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <Stack.Navigator screenOptions={{ headerRight: () => <UserMenu /> }}>
+    {children}
+  </Stack.Navigator>
+);
 
 // Network Stack
 function NetworkStack() {
   return (
-    <Stack.Navigator>
+    <CommonStack>
       <Stack.Screen name="NetworkList" component={NetworkListScreen} options={{ title: 'Networks' }} />
       <Stack.Screen name="NetworkAdd" component={NetworkAddScreen} options={{ title: 'Add Network' }} />
       <Stack.Screen name="NetworkView" component={NetworkViewScreen} options={{ title: 'Network Details' }} />
@@ -64,14 +95,14 @@ function NetworkStack() {
       <Stack.Screen name="PeerConfig" component={PeerConfigScreen} options={{ title: 'Peer Config' }} />
   <Stack.Screen name="PeerUpdateRegular" component={PeerUpdateRegularScreen} options={{ title: 'Update Regular Peer' }} />
   <Stack.Screen name="PeerUpdateJump" component={PeerUpdateJumpScreen} options={{ title: 'Update Jump Peer' }} />
-    </Stack.Navigator>
+    </CommonStack>
   );
 }
 
 // Peers Stack (alternative entry point)
 function PeerStack() {
   return (
-    <Stack.Navigator>
+    <CommonStack>
       <Stack.Screen name="PeerList" component={PeerListScreen} options={{ title: 'Peers' }} />
       <Stack.Screen name="PeerAddChoice" component={PeerAddChoiceScreen} options={{ title: 'Add Peer' }} />
       <Stack.Screen name="PeerAddRegular" component={PeerAddRegularScreen} options={{ title: 'Add Regular Peer' }} />
@@ -82,38 +113,37 @@ function PeerStack() {
       <Stack.Screen name="PeerConfig" component={PeerConfigScreen} options={{ title: 'Peer Config' }} />
   <Stack.Screen name="PeerUpdateRegular" component={PeerUpdateRegularScreen} options={{ title: 'Update Regular Peer' }} />
   <Stack.Screen name="PeerUpdateJump" component={PeerUpdateJumpScreen} options={{ title: 'Update Jump Peer' }} />
-    </Stack.Navigator>
+    </CommonStack>
   );
 }
 
 // IPAM Stack
 function IPAMStack() {
   return (
-    <Stack.Navigator>
+    <CommonStack>
       <Stack.Screen name="IPAMList" component={IPAMListScreen} options={{ title: 'IPAM' }} />
-    </Stack.Navigator>
+    </CommonStack>
   );
 }
 
 // Security Stack
 function SecurityStack() {
   return (
-    <Stack.Navigator>
+    <CommonStack>
       <Stack.Screen name="SecurityIncidentList" component={SecurityIncidentListScreen} options={{ title: 'Security Incidents' }} />
-    </Stack.Navigator>
+    </CommonStack>
   );
 }
 
 // User Management Stack
 function UserStack() {
   return (
-    <Stack.Navigator>
+    <CommonStack>
       <Stack.Screen 
         name="UserList" 
         component={UserListScreen} 
         options={{ 
-          title: 'Users',
-          headerRight: () => <UserMenu />
+          title: 'Users'
         }} 
       />
       <Stack.Screen 
@@ -126,7 +156,7 @@ function UserStack() {
         component={DefaultPermissionsScreen} 
         options={{ title: 'Default Permissions' }} 
       />
-    </Stack.Navigator>
+    </CommonStack>
   );
 }
 

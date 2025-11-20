@@ -6,9 +6,10 @@ import "time"
 type Network struct {
 	ID        string           `json:"id"`
 	Name      string           `json:"name"`
-	CIDR      string           `json:"cidr"`   // Network CIDR (e.g., "10.0.0.0/16")
-	Domain    string           `json:"domain"` // DNS domain for the network
-	Peers     map[string]*Peer `json:"peers"`  // Peer ID -> Peer
+	CIDR      string           `json:"cidr"`       // Network CIDR (e.g., "10.0.0.0/16")
+	Domain    string           `json:"domain"`     // DNS domain for the network
+	Peers     map[string]*Peer `json:"-"`          // Peer ID -> Peer
+	PeerCount int              `json:"peer_count"` // Computed number of peers for lightweight listing
 	ACL       *ACL             `json:"acl"`
 	CreatedAt time.Time        `json:"created_at"`
 	UpdatedAt time.Time        `json:"updated_at"`

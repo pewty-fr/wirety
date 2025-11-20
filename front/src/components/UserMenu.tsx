@@ -24,12 +24,15 @@ export const UserMenu = () => {
 
   const handleProfile = () => {
     closeMenu();
-    navigation.navigate('UserProfile' as never);
+    // Deep navigate to the Users tab then into the UserView screen with current user's id.
+    // Cast navigation to any to avoid cross-navigator typing friction.
+    (navigation as any).navigate('Users', { screen: 'UserView', params: { userId: user.id } });
   };
 
   const handleUsers = () => {
     closeMenu();
-    navigation.navigate('UserList' as never);
+    // Navigate to the Users tab root (UserList).
+    (navigation as any).navigate('Users');
   };
 
   return (
