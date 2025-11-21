@@ -27,7 +27,7 @@ jobs:
 
   release-agent:
     needs: detect-component
-    if: needs.detect-component.outputs.component == 'agent'
+    if: needs.detect-component.outputs.component == 'wirety-agent'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +70,7 @@ jobs:
 
   release-server:
     needs: detect-component
-    if: needs.detect-component.outputs.component == 'server'
+    if: needs.detect-component.outputs.component == 'wirety-server'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
 
   release-frontend:
     needs: detect-component
-    if: needs.detect-component.outputs.component == 'front'
+    if: needs.detect-component.outputs.component == 'wirety-front'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -119,7 +119,7 @@ jobs:
 
   release-doc:
     needs: detect-component
-    if: needs.detect-component.outputs.component == 'doc'
+    if: needs.detect-component.outputs.component == 'wirety-doc'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -148,7 +148,7 @@ jobs:
 
   release-helm:
     needs: detect-component
-    if: needs.detect-component.outputs.component == 'helm'
+    if: needs.detect-component.outputs.component == 'wirety-helm'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
