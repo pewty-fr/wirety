@@ -87,7 +87,7 @@ jobs:
       
       - name: Build and push
         run: |
-          echo "$SCW_SECRET_KEY" | ko login rg.fr-par.scw.cloud -u nologin --password-stdin
+          echo "${{ secrets.SCW_SECRET_KEY }}" | ko login rg.fr-par.scw.cloud -u nologin --password-stdin
           cd server
           # Push to Scaleway
           KO_DOCKER_REPO=rg.fr-par.scw.cloud/wirety/server ko publish ./cmd --bare --tags ${{ needs.detect-component.outputs.version }},latest --platform=all
@@ -164,7 +164,7 @@ jobs:
       
       - name: Package Helm chart
         run: |
-          echo "$SCW_SECRET_KEY" | helm registry login rg.fr-par.scw.cloud -u nologin --password-stdin
+          echo "${{ secrets.SCW_SECRET_KEY }}" | helm registry login rg.fr-par.scw.cloud -u nologin --password-stdin
           helm package ./helm --version ${{ needs.detect-component.outputs.version }}
           helm push wirety-${{ needs.detect-component.outputs.version }}.tgz oci://rg.fr-par.scw.cloud/wirety/chart
 
