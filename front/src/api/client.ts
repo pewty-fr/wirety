@@ -5,9 +5,14 @@ import type { Network, Peer, IPAMAllocation, SecurityIncident, User, PaginatedRe
 class ApiClient {
   private client: AxiosInstance;
 
-  constructor(baseURL: string = 'http://localhost:8080/api/v1') {
+  constructor(baseURL?: string) {
+    const apiBaseUrl =
+      baseURL ||
+      process.env.REACT_APP_API_URL ||
+      (typeof window !== 'undefined' && (window as any).REACT_APP_API_URL) ||
+      'http://localhost:8080/api/v1';
     this.client = axios.create({
-      baseURL,
+      baseURL: apiBaseUrl,
       headers: {
         'Content-Type': 'application/json',
       },
