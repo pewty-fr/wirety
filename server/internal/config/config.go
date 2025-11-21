@@ -35,7 +35,7 @@ func LoadConfig() *Config {
 		Database: DBConfig{
 			Enabled:    getEnv("DB_ENABLED", "false") == "true",
 			DSN:        getEnv("DB_DSN", "postgres://wirety:wirety@localhost:5432/wirety?sslmode=disable"),
-			Migrations: getEnv("DB_MIGRATIONS_DIR", "internal/adapters/db/postgres/migrations"),
+			Migrations: fmt.Sprintf("%s/migrations", getEnv("KO_DATA_PATH", "kodata")),
 		},
 	}
 }
