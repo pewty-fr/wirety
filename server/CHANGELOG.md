@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/pewty-fr/wirety/compare/wirety-server/v1.1.1...wirety-server/v1.1.2) (2025-11-21)
+
+
+### Bug Fixes
+
+* **config:** missing import ([ddd93f0](https://github.com/pewty-fr/wirety/commit/ddd93f08eeca337ead5b7be97c112ef12d1a78f8))
+
 ## [1.1.1](https://github.com/pewty-fr/wirety/compare/wirety-server/v1.1.0...wirety-server/v1.1.1) (2025-11-21)
 
 
