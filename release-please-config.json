@@ -1,6 +1,5 @@
 {
   "include-component-in-tag": true,
-  "release-type": "simple",
   "separate-pull-requests": true,
   "tag-separator": "/",
   "packages": {
