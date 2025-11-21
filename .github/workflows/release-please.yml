@@ -30,4 +30,3 @@ jobs:
         id: release-please
         with:
           token: '${{ steps.get_token.outputs.token }}'
-          release-type: simple
