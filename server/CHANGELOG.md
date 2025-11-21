@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/pewty-fr/wirety/compare/wirety-server/v1.1.0...wirety-server/v1.1.1) (2025-11-21)
+
+
+### Bug Fixes
+
+* **server:** migration ([5ec555f](https://github.com/pewty-fr/wirety/commit/5ec555fb484a4f554c7674fc9c503accfb45c493))
+
 ## [1.1.0](https://github.com/pewty-fr/wirety/compare/wirety-server/v1.0.0...wirety-server/v1.1.0) (2025-11-21)
 
 
