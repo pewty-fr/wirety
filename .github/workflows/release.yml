@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - 'agent/v*'
-      - 'server/v*'
-      - 'front/v*'
-      - 'doc/v*'
-      - 'helm/v*'
+      - 'wirety-agent/v*'
+      - 'wirety-server/v*'
+      - 'wirety-front/v*'
+      - 'wirety-doc/v*'
+      - 'wirety-helm/v*'
 
 permissions:
   contents: write
