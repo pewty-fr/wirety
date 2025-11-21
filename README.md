@@ -55,29 +55,38 @@ Wirety is a **next-generation WireGuard orchestration platform** that brings dyn
 
 ## 🏗️ Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Wirety Platform                         │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────┐      ┌──────────────┐     ┌────────────┐ │
-│  │   Frontend  │─────▶│    Server    │────▶│  Database  │ │
-│  │  (React UI) │      │ (Go/Gin API) │     │ (Optional) │ │
-│  └─────────────┘      └──────┬───────┘     └────────────┘ │
-│                              │                             │
-│                              │ WebSocket                   │
-│                              ▼                             │
-│                    ┌──────────────────┐                    │
-│                    │   Agent Network  │                    │
-│                    └──────────────────┘                    │
-└─────────────────────────────────────────────────────────────┘
-                             │
-            ┌────────────────┼────────────────┐
-            ▼                ▼                ▼
-      ┌──────────┐     ┌──────────┐    ┌──────────┐
-      │  Agent 1 │     │  Agent 2 │    │  Agent N │
-      │ WireGuard│────▶│ WireGuard│───▶│ WireGuard│
-      └──────────┘     └──────────┘    └──────────┘
+```mermaid
+graph TB
+    subgraph "Wirety Control Plane (Kubernetes)"
+        Frontend["React Frontend<br/>Dashboard"]
+        Server["Go Server API<br/>(Gin + Storage)"]
+        IPAM["IPAM<br/>Service"]
+        Incidents["Incidents &<br/>ACL Management"]
+        AgentNet["Agent Network<br/>WebSocket/REST"]
+        
+        Frontend -->|REST/WebSocket| Server
+        Server --> IPAM
+        Server --> Incidents
+        Server --> AgentNet
+    end
+    
+    Agent1["Agent 1<br/>WireGuard"]
+    Agent2["Agent 2<br/>WireGuard"]
+    AgentN["Agent N<br/>WireGuard"]
+    
+    AgentNet --> Agent1
+    AgentNet --> Agent2
+    AgentNet --> AgentN
+    
+    Agent1 -.->|Mesh| Agent2
+    Agent2 -.->|Mesh| AgentN
+    Agent1 -.->|Mesh| AgentN
+    
+    style Frontend fill:#61dafb,stroke:#333,stroke-width:2px,color:#000
+    style Server fill:#00add8,stroke:#333,stroke-width:2px,color:#fff
+    style Agent1 fill:#88171a,stroke:#333,stroke-width:2px,color:#fff
+    style Agent2 fill:#88171a,stroke:#333,stroke-width:2px,color:#fff
+    style AgentN fill:#88171a,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 ## 📦 Container Registries
@@ -258,13 +267,18 @@ ingress:
 
 ## 📚 Documentation
 
-- 📖 **[User Guide](https://github.com/pewty/wirety/blob/main/doc/docs/intro.md)** - Getting started with Wirety
-- 🏗️ **[Architecture](https://github.com/pewty/wirety/blob/main/doc/docs/architecture.md)** - System design and components
-- 🔐 **[Security Guide](https://github.com/pewty/wirety/blob/main/doc/docs/incidents.md)** - Security features and incident response
-- 🌐 **[Network Management](https://github.com/pewty/wirety/blob/main/doc/docs/network.md)** - Network configuration
-- 👥 **[Peer Management](https://github.com/pewty/wirety/blob/main/doc/docs/peers.md)** - Managing peers and agents
-- 📡 **[IPAM](https://github.com/pewty/wirety/blob/main/doc/docs/ipam.md)** - IP address management
-- 🔑 **[OIDC Setup](https://github.com/pewty/wirety/blob/main/doc/docs/guides/oidc.md)** - Configuring authentication
+Full documentation is available at [https://doc.wirety.fr](https://doc.wirety.fr)
+
+- 📖 **[Getting Started](https://doc.wirety.fr/docs/intro)** - Quick start guide
+- 🚀 **[Deployment Guide](https://doc.wirety.fr/docs/deployment)** - Production deployment options
+- 🏗️ **[Server Configuration](https://doc.wirety.fr/docs/server)** - Server setup and environment
+- 🤖 **[Agent Setup](https://doc.wirety.fr/docs/agent)** - Agent installation and configuration
+- 🌐 **[Network Management](https://doc.wirety.fr/docs/network)** - Network configuration
+- 👥 **[Peer Management](https://doc.wirety.fr/docs/peers)** - Managing peers and access
+- 📡 **[IPAM](https://doc.wirety.fr/docs/ipam)** - IP address management
+- 🔐 **[Incidents & Security](https://doc.wirety.fr/docs/incidents)** - Security incident response
+- 🔑 **[OIDC Authentication](https://doc.wirety.fr/docs/guides/oidc)** - Configure authentication
+- 🔧 **[Troubleshooting](https://doc.wirety.fr/docs/troubleshooting)** - Common issues and solutions
 
 ## 🛠️ Development
 
@@ -332,10 +346,11 @@ furnished to do so, subject to the following conditions:
 ## 🔗 Links
 
 - 🌐 **Website**: [https://pewty.fr](https://pewty.fr)
+- 📖 **Documentation**: [https://doc.wirety.fr](https://doc.wirety.fr)
 - 📦 **GitHub**: [https://github.com/pewty/wirety](https://github.com/pewty/wirety)
 - 🐳 **Container Registry**: [rg.fr-par.scw.cloud/wirety](https://console.scaleway.com/registry/)
 - 💬 **Issues**: [GitHub Issues](https://github.com/pewty/wirety/issues)
-- 📖 **Documentation**: [docs](https://github.com/pewty/wirety/tree/main/doc)
+- 🤝 **Contributing**: [Contributing Guide](CONTRIBUTING.md)
 
 ---
 

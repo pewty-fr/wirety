@@ -24,12 +24,18 @@ Wirety orchestrates a WireGuard overlay by distinguishing Jump Peers (traffic hu
 | curl + bash | For agent install | Required on dynamic hosts |
 
 ## Install (Helm)
-> NOTE: Helm chart will be published later. Below is a preview of expected commands.
 ```bash
-helm repo add wirety https://charts.wirety.example
-helm install wirety wirety/wirety --values values.yaml
+# Install Wirety using OCI registry
+helm install wirety oci://rg.fr-par.scw.cloud/wirety/chart/wirety \
+  --version <version> \
+  --namespace wirety \
+  --create-namespace \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0].host=wirety.example.com \
+  --set ingress.hosts[0].paths[0].path=/ \
+  --set ingress.hosts[0].paths[0].pathType=Prefix
 ```
-Environment variables (see Server section) configure OIDC, storage, etc.
+For detailed deployment options, see the [Deployment Guide](./deployment).
 
 ## Create a Jump Peer
 1. Log into Wirety Frontend.

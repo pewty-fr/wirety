@@ -6,33 +6,33 @@ import Layout from '@theme/Layout';
 import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import Heading from '@theme/Heading';
 
-import styles from './index.module.css';
+import styles from '@site/src/pages/index.module.css';
 
 function HomepageHeader() {
   const {siteConfig} = useDocusaurusContext();
   return (
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
       <div className="container">
-        <img 
-          src="/img/logo.svg" 
-          alt="Wirety Logo" 
+        <img
+          src="/img/logo.svg"
+          alt="Logo Wirety"
           style={{width: '200px', marginBottom: '2rem'}}
         />
         <Heading as="h1" className="hero__title">
           {siteConfig.title}
         </Heading>
-        <p className="hero__subtitle">{siteConfig.tagline}</p>
+        <p className="hero__subtitle">Maillage WireGuard moderne, sécurité dynamique & architecture Zero‑Trust.</p>
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
             to="/docs/intro">
-            Get Started 🚀
+            Commencer 🚀
           </Link>
           <Link
             className="button button--outline button--secondary button--lg"
             to="https://github.com/pewty/wirety"
             style={{marginLeft: '1rem'}}>
-            View on GitHub
+            Voir sur GitHub
           </Link>
         </div>
       </div>
@@ -44,8 +44,8 @@ export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title={`${siteConfig.title} - WireGuard Mesh Network`}
-      description="Modern WireGuard Mesh Network with Dynamic Security & Zero-Trust Architecture">
+      title={`${siteConfig.title} - Maillage WireGuard`}
+      description="Wirety : réseau mesh WireGuard moderne avec sécurité dynamique et Zero‑Trust">
       <HomepageHeader />
       <main>
         <HomepageFeatures />
