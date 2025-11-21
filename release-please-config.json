@@ -1,28 +1,39 @@
 {
-  "include-component-in-tag": true,
-  "separate-pull-requests": true,
-  "release-type": "node",
-  "tag-separator": "/",
   "packages": {
     "agent": {
       "release-type": "go",
-      "package-name": "wirety-agent"
+      "package-name": "wirety-agent",
+      "include-component-in-tag": true,
+      "separate-pull-requests": true,
+      "tag-separator": "/"
     },
     "server": {
       "release-type": "go",
-      "package-name": "wirety-server"
+      "package-name": "wirety-server",
+      "include-component-in-tag": true,
+      "separate-pull-requests": true,
+      "tag-separator": "/"
     },
     "front": {
       "release-type": "node",
-      "package-name": "wirety-front"
+      "package-name": "wirety-front",
+      "include-component-in-tag": true,
+      "separate-pull-requests": true,
+      "tag-separator": "/"
     },
     "doc": {
       "release-type": "node",
-      "package-name": "wirety-doc"
+      "package-name": "wirety-doc",
+      "include-component-in-tag": true,
+      "separate-pull-requests": true,
+      "tag-separator": "/"
     },
     "helm": {
       "release-type": "helm",
-      "package-name": "wirety-helm"
+      "package-name": "wirety-helm",
+      "include-component-in-tag": true,
+      "separate-pull-requests": true,
+      "tag-separator": "/"
     }
   }
 }
