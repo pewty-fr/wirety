@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.0](https://github.com/pewty-fr/wirety/compare/v1.0.0...v1.1.0) (2025-11-21)
+
+
+### Features
+
+* doc ([fef1362](https://github.com/pewty-fr/wirety/commit/fef1362c71668fc3fc9f180c408999bb91853560))
+* doc ([94fd683](https://github.com/pewty-fr/wirety/commit/94fd683f07edbb8201af6a7cb1d542d93e077e95))
+* doc ([ba048ef](https://github.com/pewty-fr/wirety/commit/ba048ef1f2ad67f9bfdd17860dafd8a94252e701))
+* doc ([#5](https://github.com/pewty-fr/wirety/issues/5)) ([fa62e9a](https://github.com/pewty-fr/wirety/commit/fa62e9a4ceaccdc6c9c3c016affe906caa2f08a1))
+
 ## 1.0.0 (2025-11-21)
 
 
