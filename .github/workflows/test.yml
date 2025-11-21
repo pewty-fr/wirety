@@ -88,6 +88,9 @@ jobs:
       
       - name: Install dependencies
         run: npm ci
+      
+      - name: Run lint
+        run: npm run lint
 
   test-doc:
     name: Test Documentation

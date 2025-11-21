@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary-50: #fff7ed;
+  --color-primary-100: #ffedd5;
+  --color-primary-200: #fed7aa;
+  --color-primary-300: #fdba74;
+  --color-primary-400: #fb923c;
+  --color-primary-500: #FF7F2A;
+  --color-primary-600: #ea580c;
+  --color-primary-700: #c2410c;
+  --color-primary-800: #9a3412;
+  --color-primary-900: #7c2d12;
+  --color-accent-blue: #1A237E;
+  --color-accent-yellow: #FFD600;
+  --color-accent-green: #43A047;
+  --color-accent-amber: #FFB300;
+  --color-accent-red: #E53935;
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+  --color-white: #fff;
+  --color-dark: #181A20;
+  --gradient-orange: linear-gradient(90deg, #FF7F2A 0%, #fb923c 100%);
+  --gradient-blue: linear-gradient(90deg, #1A237E 0%, #43A047 100%);
+  --gradient-dark: linear-gradient(90deg, #181A20 0%, #374151 100%);
+}
+
+@variant dark (&:is(.dark *));
+
+.dark {
+  --color-primary-500: #fb923c;
+  --color-gray-900: #181A20;
+  --gradient-orange: linear-gradient(90deg, #ea580c 0%, #c2410c 100%);
+  --gradient-blue: linear-gradient(90deg, #1A237E 0%, #374151 100%);
+  --gradient-dark: linear-gradient(90deg, #181A20 0%, #374151 100%);
+}
+
+/* Custom gradient utilities */
+.bg-brand-gradient {
+  background: linear-gradient(90deg, #FF7F2A 0%, #fb923c 100%);
+}
+
+.dark .bg-brand-gradient {
+  background: linear-gradient(90deg, #ea580c 0%, #c2410c 100%);
+}
+
+.bg-brand-gradient-subtle {
+  background: linear-gradient(135deg, rgba(255, 127, 42, 0.1) 0%, rgba(26, 35, 126, 0.1) 100%);
+}
+
+.dark .bg-brand-gradient-subtle {
+  background: linear-gradient(135deg, rgba(234, 88, 12, 0.15) 0%, rgba(55, 65, 81, 0.15) 100%);
+}
+
+.text-brand-gradient {
+  background: linear-gradient(90deg, #FF7F2A 0%, #FFB300 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.dark .text-brand-gradient {
+  background: linear-gradient(90deg, #fb923c 0%, #FFD600 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Button gradients */
+.btn-brand {
+  background: linear-gradient(90deg, #FF7F2A 0%, #fb923c 100%);
+  color: white;
+  transition: all 0.3s ease;
+}
+
+.btn-brand:hover {
+  background: linear-gradient(90deg, #ea580c 0%, #c2410c 100%);
+  box-shadow: 0 4px 12px rgba(255, 127, 42, 0.4);
+}
+
+.dark .btn-brand {
+  background: linear-gradient(90deg, #ea580c 0%, #c2410c 100%);
+}
+
+.dark .btn-brand:hover {
+  background: linear-gradient(90deg, #c2410c 0%, #9a3412 100%);
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.4);
+}
+
+/* Animated gradient for footer banner */
+@keyframes gradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-gradient {
+  animation: gradient 8s ease infinite;
+}
+

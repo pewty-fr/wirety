@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  dex:
+    build: .
+    container_name: dex
+    ports:
+      - "5556:5556"
+      - "5558:5558"
+    volumes:
+      - dex-data:/data
+    environment:
+      - DEX_LOG_LEVEL=debug
+    restart: unless-stopped
+volumes:
+  dex-data:
