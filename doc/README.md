@@ -61,4 +61,3 @@ Some placeholders (Helm repo URLs, Swagger path) will be updated once charts and
 
 ---
 Copyright © Wirety
-
