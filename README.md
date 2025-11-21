@@ -1,6 +1,7 @@
 <div align="center">
 
-# 🔐 Wirety
+
+# Wirety
 
 **Modern WireGuard Mesh Network with Dynamic Security & Zero-Trust Architecture**
 
