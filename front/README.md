@@ -1,75 +1,83 @@
-# Wirety Front-End
+# Wirety Web Administration Console
 
-React Native mobile application for managing WireGuard networks using the Wirety server API.
+A modern web administration interface for Wirety WireGuard network management, inspired by Scaleway's console design.
 
-## Features
+## ✨ Features
 
-- **Network Management**: List, add, update, and view WireGuard networks with CIDR helper
-- **Peer Management**: Add/update regular and jump server peers with full configuration
-- **IPAM**: View IP allocation across all networks with filtering
-- **Real-time Config**: Generate and view WireGuard configs and enrollment tokens
+- 🌐 **Networks Management** - View all WireGuard networks with stats
+- 💻 **Peers Management** - Monitor peers across all networks  
+- 📊 **IPAM** - IP address allocation tracking
+- 🔒 **Security** - Security incident monitoring and resolution
+- 👥 **Users** - User management and permissions
 
-## Setup
+## 🚀 Quick Start
 
 ```bash
 # Install dependencies
 npm install
 
-# Start the development server
-npm start
+# Start development server
+npm run dev
 
-# Run on specific platform
-npm run ios
-npm run android
-npm run web
+# Build for production
+npm run build
 ```
 
-## Configuration
+The app will be available at **http://localhost:5173**
 
-Update the API base URL in `src/services/api.ts`:
+## 🎨 Design
 
+Clean, modern interface inspired by Scaleway's console:
+- Sidebar navigation
+- Card-based layouts
+- Professional color scheme  
+- Responsive tables
+- Search and pagination
+
+## 🔌 API Configuration
+
+Default API URL: `http://localhost:8080/api/v1`
+
+To change it, edit `src/api/client.ts`:
 ```typescript
-const client = new ApiClient('http://your-server:8080/api/v1');
+constructor(baseURL: string = 'YOUR_API_URL') {
 ```
 
-## Architecture
+## 📁 Project Structure
 
-- **Services**: API client layer
-- **Screens**: Feature-organized UI components
-- **Components**: Reusable UI elements
-- **Types**: TypeScript API type definitions
-- **Utils**: Validation and helper functions
+```
+src/
+├── api/client.ts              # API client
+├── types/index.ts             # TypeScript types
+├── components/
+│   ├── Layout.tsx             # Main layout with sidebar
+│   └── PageHeader.tsx         # Page header component
+├── pages/
+│   ├── networks/NetworksPage.tsx
+│   ├── peers/PeersPage.tsx
+│   ├── ipam/IPAMPage.tsx
+│   ├── security/SecurityPage.tsx
+│   └── users/UsersPage.tsx
+└── App.tsx                    # Main app with routing
+```
 
-## Navigation
+## 🛠️ Tech Stack
 
-The app uses React Navigation with bottom tabs:
-- **Networks**: Network and peer management
-- **IPAM**: IP allocation overview
+- React 19 + TypeScript
+- Vite (Rolldown)
+- Tailwind CSS v4
+- React Router v7
+- Axios
 
-## Screens
+## 📸 Screenshots
 
-### Networks
-- List networks with search and pagination
-- Add network with CIDR helper
-- View/update network details
-- Access peer list from network
+Navigate between sections using the sidebar:
+- Networks: Grid view with search
+- Peers: Table view with type indicators
+- IPAM: IP allocation tracking with stats
+- Security: Incident cards with resolution
+- Users: User list with roles
 
-### Peers
-- List peers with filters (jump/regular, isolated, etc.)
-- Add regular peer or jump server
-- View peer details with config/token access
-- Update peer configuration
+##License
 
-### IPAM
-- List all IP allocations across networks
-- Filter by network, IP, or peer
-- View allocation status
-
-## Development
-
-The app uses:
-- Expo for React Native development
-- React Navigation for routing
-- React Native Paper for UI components
-- Axios for API communication
-- TypeScript for type safety
+See main project license.

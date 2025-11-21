@@ -31,7 +31,13 @@ Adjust redirect URIs to what your Wirety frontend/server expects for login compl
 ```
 email: test@example.com
 username: test
-password: test123 (bcrypt hash stored in config)
+password: password (bcrypt hash stored in config)
+```
+
+```
+email: test2@example.com
+username: test2
+password: password (bcrypt hash stored in config)
 ```
 
 ## Running Dex
@@ -69,7 +75,7 @@ go run ./server/cmd
 ## Testing Login Flow
 1. Navigate your frontend to the login route that triggers OIDC (e.g., clicking "Login").
 2. You should be redirected to Dex's login screen.
-3. Use credentials: `test@example.com` / `test123`.
+3. Use credentials: `test@example.com` / `password`.
 4. After successful auth, Dex redirects back to Wirety; Wirety validates ID token signature via JWKS.
 
 ## Regenerating Password Hash

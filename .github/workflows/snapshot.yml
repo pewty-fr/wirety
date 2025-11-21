@@ -53,7 +53,7 @@ jobs:
       - name: Package Helm Chart
         id: package_helm
         run: |
-          echo "$SCW_SECRET_KEY" | helm registry login rg.fr-par.scw.cloud/wirety/chart -u nologin --password-stdin
+          echo "$SCW_SECRET_KEY" | helm registry login rg.fr-par.scw.cloud -u nologin --password-stdin
           helm package ./helm --version v0.0.0-${{ steps.vars.outputs.date }}
           helm push wirety-v0.0.0-${{ steps.vars.outputs.date }}.tgz oci://rg.fr-par.scw.cloud/wirety/chart
       - name: Update comment

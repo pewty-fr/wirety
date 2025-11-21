@@ -90,10 +90,7 @@ jobs:
         run: npm ci
       
       - name: Run lint
-        run: npm run lint --if-present || true
-      
-      - name: Build
-        run: npm run build
+        run: npm run lint
 
   test-doc:
     name: Test Documentation

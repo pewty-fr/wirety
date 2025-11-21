@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 
 /**
- * Debounce hook - delays updating the value until after the specified delay
- * @param value The value to debounce
- * @param delay Delay in milliseconds (default: 500ms)
+ * Hook that debounces a value
+ * @param value - The value to debounce
+ * @param delay - The delay in milliseconds (default: 500ms)
  * @returns The debounced value
  */
 export function useDebounce<T>(value: T, delay: number = 500): T {
@@ -15,7 +15,7 @@ export function useDebounce<T>(value: T, delay: number = 500): T {
       setDebouncedValue(value);
     }, delay);
 
-    // Clean up the timeout if value changes before delay expires
+    // Clean up the timeout if value changes before delay
     return () => {
       clearTimeout(handler);
     };

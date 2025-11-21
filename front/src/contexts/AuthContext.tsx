@@ -1,125 +1,235 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, AuthConfig } from '../types/auth';
-import api from '../services/api';
+import { createContext, useContext, useState, useEffect } from 'react';
+import type { ReactNode } from 'react';
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  authorized_networks: string[];
+}
+
+export interface AuthConfig {
+  enabled: boolean;
+  issuer_url: string;
+  client_id: string;
+}
 
 interface AuthContextType {
   user: User | null;
   authConfig: AuthConfig | null;
   isLoading: boolean;
-  isAuthenticated: boolean;
-  login: (accessToken: string) => Promise<void>;
+  login: () => void;
   logout: () => void;
-  refreshUser: () => Promise<void>;
+  isAuthenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
-
-interface AuthProviderProps {
-  children: ReactNode;
-}
-
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadAuthConfig = async () => {
+  // Fetch auth config on mount
+  useEffect(() => {
+    fetchAuthConfig();
+  }, []);
+
+  // Check for token and fetch user on mount
+  useEffect(() => {
+    if (authConfig === null) {
+      // Still loading config
+      return;
+    }
+
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      fetchCurrentUser(token);
+    } else if (!authConfig.enabled) {
+      // No-auth mode: create default admin user immediately
+      setUser({
+        id: 'default-admin',
+        email: 'admin@localhost',
+        name: 'Administrator',
+        role: 'administrator',
+        authorized_networks: [],
+      });
+      setIsLoading(false);
+    } else {
+      // Auth enabled but no token - show login page
+      setIsLoading(false);
+    }
+  }, [authConfig]);
+
+  // Handle OAuth callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    
+    if (code && authConfig && authConfig.enabled) {
+      handleOAuthCallback(code);
+    }
+  }, [authConfig]);
+
+  const fetchAuthConfig = async () => {
     try {
-      const config = await api.getAuthConfig();
+      const response = await fetch('http://localhost:8080/api/v1/auth/config');
+      if (!response.ok) {
+        throw new Error(`Failed to fetch auth config: ${response.status}`);
+      }
+      const config = await response.json();
+      console.log('Auth config loaded:', config);
       setAuthConfig(config);
-      return config;
     } catch (error) {
-      console.error('Failed to load auth config:', error);
+      console.error('Failed to fetch auth config:', error);
       // Default to no-auth mode if config fetch fails
+      console.log('Defaulting to no-auth mode');
       setAuthConfig({ enabled: false, issuer_url: '', client_id: '' });
-      return { enabled: false, issuer_url: '', client_id: '' };
     }
   };
 
-  const loadUser = async () => {
+  const fetchCurrentUser = async (token: string) => {
+    setIsLoading(true);
     try {
-      const userData = await api.getCurrentUser();
-      setUser(userData);
+      const response = await fetch('http://localhost:8080/api/v1/users/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData);
+        setIsLoading(false);
+      } else {
+        console.warn('Failed to fetch user, status:', response.status);
+        // Token invalid, remove it
+        localStorage.removeItem('access_token');
+        setUser(null);
+        setIsLoading(false);
+      }
     } catch (error) {
-      console.error('Failed to load user:', error);
+      console.error('Failed to fetch current user:', error);
+      localStorage.removeItem('access_token');
       setUser(null);
+      setIsLoading(false);
     }
   };
 
-  const login = async (accessToken: string) => {
-    api.setAccessToken(accessToken);
-    localStorage.setItem('access_token', accessToken);
-    await loadUser();
+  const handleOAuthCallback = async (code: string) => {
+    try {
+      const redirectUri = `${window.location.origin}/`;
+      
+      const response = await fetch('http://localhost:8080/api/v1/auth/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          code,
+          redirect_uri: redirectUri,
+        }),
+      });
+
+      if (response.ok) {
+        const tokenData = await response.json();
+        console.log('Token exchange successful');
+        localStorage.setItem('access_token', tokenData.access_token);
+        
+        // Remove code from URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
+        // Fetch user data
+        console.log('Fetching user data...');
+        await fetchCurrentUser(tokenData.access_token);
+      } else {
+        const errorText = await response.text();
+        console.error('Token exchange failed:', response.status, errorText);
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('OAuth callback error:', error);
+      setIsLoading(false);
+    }
   };
 
-  const logout = () => {
-    api.setAccessToken(null);
+  const login = async () => {
+    if (!authConfig || !authConfig.enabled) {
+      return;
+    }
+
+    try {
+      // Discover OIDC endpoints
+      const discoveryUrl = `${authConfig.issuer_url}/.well-known/openid-configuration`;
+      const discoveryResponse = await fetch(discoveryUrl);
+      
+      if (!discoveryResponse.ok) {
+        throw new Error('Failed to fetch OIDC discovery document');
+      }
+
+      const discovery = await discoveryResponse.json();
+      const authorizationEndpoint = discovery.authorization_endpoint;
+
+      if (!authorizationEndpoint) {
+        throw new Error('Authorization endpoint not found in discovery document');
+      }
+
+      const redirectUri = `${window.location.origin}/`;
+      const authUrl = `${authorizationEndpoint}?` +
+        `client_id=${authConfig.client_id}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+        `response_type=code&` +
+        `scope=openid profile email`;
+
+      window.location.href = authUrl;
+    } catch (error) {
+      console.error('Failed to initiate login:', error);
+    }
+  };
+
+  const logout = async () => {
     localStorage.removeItem('access_token');
     setUser(null);
-  };
 
-  const refreshUser = async () => {
-    await loadUser();
-  };
+    if (authConfig && authConfig.enabled) {
+      try {
+        // Discover OIDC endpoints
+        const discoveryUrl = `${authConfig.issuer_url}/.well-known/openid-configuration`;
+        const discoveryResponse = await fetch(discoveryUrl);
+        
+        if (discoveryResponse.ok) {
+          const discovery = await discoveryResponse.json();
+          const endSessionEndpoint = discovery.end_session_endpoint;
 
-  useEffect(() => {
-    const initialize = async () => {
-      setIsLoading(true);
-      
-      const config = await loadAuthConfig();
-      
-      if (!config.enabled) {
-        // No-auth mode: user is automatically authenticated as admin
-        setUser({
-          id: 'local-admin',
-          email: 'admin@local',
-          name: 'Administrator',
-          role: 'administrator',
-          authorized_networks: [],
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          last_login_at: new Date().toISOString(),
-        });
-        setIsLoading(false);
-        return;
+          if (endSessionEndpoint) {
+            // Redirect to OIDC logout endpoint
+            const redirectUri = `${window.location.origin}/`;
+            const logoutUrl = `${endSessionEndpoint}?` +
+              `post_logout_redirect_uri=${encodeURIComponent(redirectUri)}`;
+            window.location.href = logoutUrl;
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to discover logout endpoint:', error);
       }
-
-      // OIDC mode: check for existing token
-      const storedToken = localStorage.getItem('access_token');
-      if (storedToken) {
-        api.setAccessToken(storedToken);
-        await loadUser();
-      }
-      
-      setIsLoading(false);
-    };
-
-    initialize();
-  }, []);
+    }
+  };
 
   const isAuthenticated = user !== null;
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        authConfig,
-        isLoading,
-        isAuthenticated,
-        login,
-        logout,
-        refreshUser,
-      }}
-    >
+    <AuthContext.Provider value={{ user, authConfig, isLoading, login, logout, isAuthenticated }}>
       {children}
     </AuthContext.Provider>
   );
-};
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}

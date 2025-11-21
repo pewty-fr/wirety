@@ -1,61 +1,92 @@
-export const validateCIDR = (cidr: string): boolean => {
-  const cidrRegex = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
-  if (!cidrRegex.test(cidr)) return false;
+/**
+ * Validates if a string is a valid CIDR notation (e.g., 192.168.1.0/24 or 2001:db8::/32)
+ * @param cidr - The CIDR string to validate
+ * @returns true if valid, false otherwise
+ */
+export function isValidCIDR(cidr: string): boolean {
+  if (!cidr || typeof cidr !== 'string') {
+    return false;
+  }
 
-  const [ip, prefix] = cidr.split('/');
+  const parts = cidr.trim().split('/');
+  if (parts.length !== 2) {
+    return false;
+  }
+
+  const [ip, prefix] = parts;
   const prefixNum = parseInt(prefix, 10);
-  if (prefixNum < 0 || prefixNum > 32) return false;
 
-  const octets = ip.split('.').map(Number);
-  return octets.every(octet => octet >= 0 && octet <= 255);
-};
+  // Check if prefix is a valid number
+  if (isNaN(prefixNum)) {
+    return false;
+  }
 
-export const validateIPv4 = (ip: string): boolean => {
-  const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-  if (!ipRegex.test(ip)) return false;
+  // Check for IPv4
+  const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (ipv4Regex.test(ip)) {
+    // Validate each octet is 0-255
+    const octets = ip.split('.').map(Number);
+    const validOctets = octets.every(octet => octet >= 0 && octet <= 255);
+    
+    // Validate prefix is 0-32 for IPv4
+    return validOctets && prefixNum >= 0 && prefixNum <= 32;
+  }
 
-  const octets = ip.split('.').map(Number);
-  return octets.every(octet => octet >= 0 && octet <= 255);
-};
+  // Check for IPv6
+  const ipv6Regex = /^([\da-f]{0,4}:){2,7}[\da-f]{0,4}$/i;
+  if (ipv6Regex.test(ip) || ip === '::') {
+    // Validate prefix is 0-128 for IPv6
+    return prefixNum >= 0 && prefixNum <= 128;
+  }
 
-export const validatePort = (port: number): boolean => {
-  return port > 0 && port <= 65535;
-};
+  return false;
+}
 
-export const validateEndpoint = (endpoint: string): boolean => {
-  const parts = endpoint.split(':');
-  if (parts.length !== 2) return false;
+/**
+ * Get error message for invalid CIDR
+ * @param cidr - The CIDR string
+ * @returns Error message or null if valid
+ */
+export function getCIDRError(cidr: string): string | null {
+  if (!cidr) {
+    return null; // Empty is handled by required field
+  }
 
-  const [ip, portStr] = parts;
-  const port = parseInt(portStr, 10);
-  return validateIPv4(ip) && validatePort(port);
-};
+  if (!cidr.includes('/')) {
+    return 'CIDR must include a prefix (e.g., 192.168.1.0/24)';
+  }
 
-export const validateDomain = (domain: string): boolean => {
-  const domainRegex = /^[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,}$/i;
-  return domainRegex.test(domain);
-};
+  const parts = cidr.split('/');
+  if (parts.length !== 2) {
+    return 'Invalid CIDR format. Use IP/prefix (e.g., 10.0.0.0/8)';
+  }
 
-export const suggestCIDRs = (): string[] => {
-  return [
-    '10.0.0.0/8',
-    '10.0.0.0/16',
-    '10.0.0.0/24',
-    '172.16.0.0/12',
-    '172.16.0.0/16',
-    '172.16.0.0/24',
-    '192.168.0.0/16',
-    '192.168.0.0/24',
-    '192.168.1.0/24',
-  ];
-};
+  const [ip, prefix] = parts;
+  const prefixNum = parseInt(prefix, 10);
 
-export const formatDate = (dateString: string): string => {
-  const date = new Date(dateString);
-  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-};
+  if (isNaN(prefixNum)) {
+    return 'Prefix must be a number';
+  }
 
-export const truncate = (str: string, maxLen: number = 20): string => {
-  if (str.length <= maxLen) return str;
-  return str.substring(0, maxLen - 3) + '...';
-};
+  const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (ipv4Regex.test(ip)) {
+    const octets = ip.split('.').map(Number);
+    if (!octets.every(octet => octet >= 0 && octet <= 255)) {
+      return 'Invalid IPv4 address (octets must be 0-255)';
+    }
+    if (prefixNum < 0 || prefixNum > 32) {
+      return 'IPv4 prefix must be between 0 and 32';
+    }
+    return null;
+  }
+
+  const ipv6Regex = /^([\da-f]{0,4}:){2,7}[\da-f]{0,4}$/i;
+  if (ipv6Regex.test(ip) || ip === '::') {
+    if (prefixNum < 0 || prefixNum > 128) {
+      return 'IPv6 prefix must be between 0 and 128';
+    }
+    return null;
+  }
+
+  return 'Invalid IP address format';
+}

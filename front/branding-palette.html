@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wirety Branding Palette</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f9fafb;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      background: linear-gradient(90deg, #FF7F2A 0%, #FFB300 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 10px;
+    }
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #1f2937;
+      margin: 40px 0 20px;
+    }
+    .subtitle {
+      color: #6b7280;
+      font-size: 1rem;
+      margin-bottom: 40px;
+    }
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+    .color-card {
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .color-swatch {
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 0.875rem;
+    }
+    .color-info {
+      padding: 15px;
+    }
+    .color-name {
+      font-weight: 600;
+      color: #1f2937;
+      margin-bottom: 5px;
+    }
+    .color-hex {
+      font-family: 'Courier New', monospace;
+      color: #6b7280;
+      font-size: 0.875rem;
+    }
+    .gradient-showcase {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+    .gradient-card {
+      border-radius: 12px;
+      height: 150px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      color: white;
+      font-size: 1.25rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .dark-mode {
+      background: #181A20;
+      padding: 40px;
+      border-radius: 12px;
+      margin-top: 40px;
+    }
+    .dark-mode h2 {
+      color: white;
+    }
+    .dark-mode .color-card {
+      background: #374151;
+    }
+    .dark-mode .color-name {
+      color: white;
+    }
+    .dark-mode .color-hex {
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Wirety Branding Palette</h1>
+    <p class="subtitle">Complete color system with gradients and dark mode support</p>
+
+    <h2>Primary Colors</h2>
+    <div class="color-grid">
+      <div class="color-card">
+        <div class="color-swatch" style="background: #FF7F2A; color: white;">Primary 500</div>
+        <div class="color-info">
+          <div class="color-name">Primary Orange</div>
+          <div class="color-hex">#FF7F2A</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: #fb923c; color: white;">Primary 400</div>
+        <div class="color-info">
+          <div class="color-name">Light Orange</div>
+          <div class="color-hex">#fb923c</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: #ea580c; color: white;">Primary 600</div>
+        <div class="color-info">
+          <div class="color-name">Dark Orange</div>
+          <div class="color-hex">#ea580c</div>
+        </div>
+      </div>
+    </div>
+
+    <h2>Accent Colors</h2>
+    <div class="color-grid">
+      <div class="color-card">
+        <div class="color-swatch" style="background: #1A237E; color: white;">Deep Blue</div>
+        <div class="color-info">
+          <div class="color-name">Deep Blue</div>
+          <div class="color-hex">#1A237E</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: #FFD600; color: #1f2937;">Yellow</div>
+        <div class="color-info">
+          <div class="color-name">Yellow</div>
+          <div class="color-hex">#FFD600</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: #43A047; color: white;">Green</div>
+        <div class="color-info">
+          <div class="color-name">Green</div>
+          <div class="color-hex">#43A047</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: #FFB300; color: #1f2937;">Amber</div>
+        <div class="color-info">
+          <div class="color-name">Amber</div>
+          <div class="color-hex">#FFB300</div>
+        </div>
+      </div>
+      <div class="color-card">
+        <div class="color-swatch" style="background: #E53935; color: white;">Red</div>
+        <div class="color-info">
+          <div class="color-name">Red</div>
+          <div class="color-hex">#E53935</div>
+        </div>
+      </div>
+    </div>
+
+    <h2>Gradients (Light Mode)</h2>
+    <div class="gradient-showcase">
+      <div class="gradient-card" style="background: linear-gradient(90deg, #FF7F2A 0%, #fb923c 100%);">
+        Primary Gradient
+      </div>
+      <div class="gradient-card" style="background: linear-gradient(90deg, #FF7F2A 0%, #FFB300 100%);">
+        Orange to Amber
+      </div>
+      <div class="gradient-card" style="background: linear-gradient(90deg, #1A237E 0%, #43A047 100%);">
+        Blue to Green
+      </div>
+    </div>
+
+    <div class="dark-mode">
+      <h2>Dark Mode</h2>
+      <div class="color-grid">
+        <div class="color-card">
+          <div class="color-swatch" style="background: #181A20; color: white;">Dark Base</div>
+          <div class="color-info">
+            <div class="color-name">Dark</div>
+            <div class="color-hex">#181A20</div>
+          </div>
+        </div>
+        <div class="color-card">
+          <div class="color-swatch" style="background: #374151; color: white;">Gray 700</div>
+          <div class="color-info">
+            <div class="color-name">Gray</div>
+            <div class="color-hex">#374151</div>
+          </div>
+        </div>
+        <div class="color-card">
+          <div class="color-swatch" style="background: linear-gradient(90deg, #ea580c 0%, #c2410c 100%); color: white;">Dark Gradient</div>
+          <div class="color-info">
+            <div class="color-name">Dark Primary Gradient</div>
+            <div class="color-hex">ea580c → c2410c</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
