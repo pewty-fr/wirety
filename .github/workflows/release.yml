@@ -1,13 +1,9 @@
 name: Release
 
-on:
-  push:
-    tags:
-      - 'wirety-agent/v*'
-      - 'wirety-server/v*'
-      - 'wirety-front/v*'
-      - 'wirety-doc/v*'
-      - 'wirety-helm/v*'
+on:  # yamllint disable-line rule:truthy
+  release:
+    types:
+      - published
 
 permissions:
   contents: write
@@ -22,7 +18,7 @@ jobs:
     steps:
       - id: detect
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="${{ github.event.release.tag_name }}"
           COMPONENT=$(echo $TAG | cut -d'/' -f1)
           VERSION=$(echo $TAG | cut -d'/' -f2)
           echo "component=$COMPONENT" >> $GITHUB_OUTPUT
