@@ -222,7 +222,7 @@ jobs:
       - name: Build and Push Documentation
         id: build_doc
         run: |
-          docker build -t rg.fr-par.scw.cloud/wirety/doc:${{ steps.vars.outputs.date }}-SNAPSHOT ./doc/website
+          docker build -t rg.fr-par.scw.cloud/wirety/doc:${{ steps.vars.outputs.date }}-SNAPSHOT ./doc
           docker push rg.fr-par.scw.cloud/wirety/doc:${{ steps.vars.outputs.date }}-SNAPSHOT
       - name: Update comment
         if: always()
