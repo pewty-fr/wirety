@@ -62,7 +62,7 @@ export default function DashboardPage() {
 
       const peers = peersRes?.peers || [];
       const securityData = securityRes?.data || [];
-      const usersData = usersRes?.data || [];
+      const usersData = usersRes || [];
       const networks = networksRes?.data || [];
 
       // Calculate total capacity and used slots across all networks
@@ -108,9 +108,9 @@ export default function DashboardPage() {
           recentIncidents: securityData.slice(0, 5),
         },
         users: {
-          total: usersRes?.total || 0,
-          administrators: usersData.filter(u => u.role === 'administrator').length,
-          regularUsers: usersData.filter(u => u.role === 'user').length,
+          total: usersData.length,
+          administrators: usersData.filter((u: any) => u.role === 'administrator').length,
+          regularUsers: usersData.filter((u: any) => u.role === 'user').length,
         },
       };
 

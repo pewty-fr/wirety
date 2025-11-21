@@ -25,9 +25,8 @@ export default function UsersPage() {
     try {
       const response = await api.getUsers(page, pageSize);
       // Backend returns array directly, not paginated response
-      const usersArray = Array.isArray(response) ? response : (response.data || []);
-      setUsers(usersArray);
-      setTotal(usersArray.length);
+      setUsers(response);
+      setTotal(response.length);
     } catch (error) {
       console.error('Failed to load users:', error);
       setUsers([]);
