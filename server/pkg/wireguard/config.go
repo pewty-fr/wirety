@@ -22,7 +22,8 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 	}
 
 	// Add DNS if domain is configured
-	if network.Domain != "" {
+	domain := network.GetDomain()
+	if domain != "" {
 		sb.WriteString(fmt.Sprintf("DNS = %s\n", extractDNSServer(network.CIDR)))
 	}
 

@@ -5,6 +5,8 @@ import pol "wirety/agent/internal/domain/policy"
 // ConfigWriterPort defines capability to write and apply WireGuard config.
 type ConfigWriterPort interface {
 	WriteAndApply(cfg string) error
+	UpdateInterface(newInterface string) error
+	GetInterface() string
 }
 
 // DNSStarterPort defines capability to start DNS server with given domain and peers.

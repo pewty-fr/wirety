@@ -9,6 +9,7 @@ import (
 	"wirety/internal/application/network"
 	"wirety/internal/domain/auth"
 	domain "wirety/internal/domain/network"
+	"wirety/internal/infrastructure/validation"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files
@@ -205,6 +206,15 @@ func (h *Handler) GetAvailableCIDRs(c *gin.Context) {
 	})
 }
 
+// isValidationError checks if an error is a validation error and returns appropriate status code
+func isValidationError(err error) bool {
+	return err == validation.ErrInvalidDNSName ||
+		err == validation.ErrNameTooLong ||
+		err == validation.ErrNameEmpty ||
+		err == validation.ErrNameStartsWithHyphen ||
+		err == validation.ErrNameEndsWithHyphen
+}
+
 // CreateNetwork godoc
 //
 //	@Summary		Create a new network
@@ -228,7 +238,12 @@ func (h *Handler) CreateNetwork(c *gin.Context) {
 
 	net, err := h.service.CreateNetwork(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// Check if it's a validation error
+		if isValidationError(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
@@ -346,7 +361,12 @@ func (h *Handler) UpdateNetwork(c *gin.Context) {
 
 	net, err := h.service.UpdateNetwork(c.Request.Context(), networkID, &req)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// Check if it's a validation error
+		if isValidationError(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
@@ -363,12 +383,7 @@ func (h *Handler) UpdateNetwork(c *gin.Context) {
 //	@Failure		404	{object}	map[string]string
 //	@Router			/networks/{networkId} [delete]
 //	@Summary		Delete a network
-//	@Description	Delete a network by ID
-//	@Tags			networks
-//	@Param			networkId	path	string	true	"Network ID"
-//	@Success		204
-//	@Failure		404	{object}	map[string]string
-//	@Router			/networks/{networkId} [delete]
+//	@Description	Delete a network by ID/networks/{networkId} [delete]
 //
 // @Security     BearerAuth
 func (h *Handler) DeleteNetwork(c *gin.Context) {
@@ -414,7 +429,12 @@ func (h *Handler) CreatePeer(c *gin.Context) {
 
 	peer, err := h.service.AddPeer(c.Request.Context(), networkID, &req, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// Check if it's a validation error
+		if isValidationError(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
@@ -553,7 +573,12 @@ func (h *Handler) UpdatePeer(c *gin.Context) {
 
 	peer, err = h.service.UpdatePeer(c.Request.Context(), networkID, peerID, &req)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// Check if it's a validation error
+		if isValidationError(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
@@ -732,6 +757,7 @@ func (h *Handler) ResolveAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"network_id": networkID,
 		"peer_id":    peer.ID,
+		"peer_name":  peer.Name,
 		"config":     cfg,
 	})
 }

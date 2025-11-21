@@ -5,6 +5,7 @@ import Modal from './Modal';
 import NetworkModal from './NetworkModal';
 import api from '../api/client';
 import type { Network } from '../types';
+import { getNetworkDomain } from '../types';
 import { computeCapacityFromCIDR } from '../utils/networkCapacity';
 
 interface NetworkDetailModalProps {
@@ -80,7 +81,7 @@ export default function NetworkDetailModal({ isOpen, onClose, network, onUpdate 
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Domain</label>
-              <p className="text-lg text-gray-900 dark:text-white">{network.domain}</p>
+              <p className="text-lg text-gray-900 dark:text-white">{getNetworkDomain(network)}</p>
             </div>
           </div>
 

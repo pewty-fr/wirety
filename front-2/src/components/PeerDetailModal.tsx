@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faServer, faLaptop, faRocket } from '@fortawesome/free-solid-svg-icons';
+import { faServer, faLaptop, faRocket, faCopy } from '@fortawesome/free-solid-svg-icons';
 import Modal from './Modal';
 import JumpPeerModal from './JumpPeerModal';
 import RegularPeerModal from './RegularPeerModal';
 import NetworkTopology from './NetworkTopology';
-import { usePeer, useNetworkPeers } from '../hooks/useQueries';
+import { usePeer, useNetworkPeers, useNetwork } from '../hooks/useQueries';
 import api from '../api/client';
 import type { Peer } from '../types';
 
@@ -23,6 +23,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
   const [configText, setConfigText] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [configCopied, setConfigCopied] = useState(false);
+  const [tokenCopied, setTokenCopied] = useState(false);
 
   // Use React Query to fetch peer details and network peers
   const { data: currentPeer, refetch: refetchPeer } = usePeer(
@@ -37,12 +38,18 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
     isOpen // poll topology while open
   );
 
+  const { data: network } = useNetwork(
+    peer?.network_id || '',
+    isOpen && !!peer?.network_id
+  );
+
   const handleClose = () => {
     // Reset state before closing
     setIsEditModalOpen(false);
     setConfigText(null);
     setConfigError(null);
     setConfigCopied(false);
+    setTokenCopied(false);
     onClose();
   };
 
@@ -106,14 +113,26 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
 
           {/* Connection Info */}
           {displayPeer.is_jump ? (
-            <div>
-              <label className="block text-sm font-medium text-gray-500 mb-1">IP Address</label>
-              <p className="text-lg font-mono text-gray-900 dark:text-white">{displayPeer.address}</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-500 mb-1">IP Address</label>
+                <p className="text-lg font-mono text-gray-900 dark:text-white">{displayPeer.address}</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-500 mb-1">Domain</label>
+                <p className="text-lg font-mono text-gray-900 dark:text-white">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
+              </div>
             </div>
           ) : (
-            <div>
-              <label className="block text-sm font-medium text-gray-500 mb-1">IP Address</label>
-              <p className="text-lg font-mono text-gray-900 dark:text-white">{displayPeer.address}</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-500 mb-1">IP Address</label>
+                <p className="text-lg font-mono text-gray-900 dark:text-white">{displayPeer.address}</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-500 mb-1">Domain</label>
+                <p className="text-lg font-mono text-gray-900 dark:text-white">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
+              </div>
             </div>
           )}
 
@@ -317,10 +336,29 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
           {/* Agent Token (if uses agent) */}
           {displayPeer.use_agent && displayPeer.token && (
             <div>
-              <label className="block text-sm font-medium text-gray-500 mb-1">Agent Token</label>
-              <p className="text-sm font-mono text-gray-900 bg-yellow-50 p-3 rounded break-all border border-yellow-200">
-                {displayPeer.token}
-              </p>
+              <div className="flex items-center justify-between">
+                <label className="block text-sm font-medium text-gray-500">Agent Token</label>
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(displayPeer.token!);
+                      setTokenCopied(true);
+                      setTimeout(() => setTokenCopied(false), 3000);
+                    } catch (error) {
+                      console.error('Failed to copy token:', error);
+                    }
+                  }}
+                  className={`px-2 py-1 text-xs font-medium rounded flex items-center gap-1 transition-colors ${
+                    tokenCopied 
+                      ? 'bg-green-600 text-white' 
+                      : 'bg-primary-600 text-white hover:bg-primary-700'
+                  }`}
+                  title="Copy token to clipboard"
+                >
+                  <FontAwesomeIcon icon={faCopy} className="w-3 h-3" />
+                  {tokenCopied ? 'Copied ✓' : 'Copy Token'}
+                </button>
+              </div>
             </div>
           )}
 

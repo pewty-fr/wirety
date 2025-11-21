@@ -23,6 +23,7 @@ type IPAMRepository struct {
 // NewIPAMRepository creates a repository and loads existing state.
 func NewIPAMRepository(ctx context.Context, db *sql.DB) (*IPAMRepository, error) {
 	r := &IPAMRepository{db: db, engine: goipam.New(ctx)}
+
 	// Load prefixes first
 	rows, err := db.QueryContext(ctx, `SELECT cidr FROM ipam_prefixes ORDER BY cidr`)
 	if err == nil {
@@ -35,7 +36,8 @@ func NewIPAMRepository(ctx context.Context, db *sql.DB) (*IPAMRepository, error)
 			_, _ = r.engine.NewPrefix(ctx, cidr)
 		}
 	}
-	// Load allocated IPs
+
+	// Load allocated IPs and mark them as used in the engine
 	ipRows, err := db.QueryContext(ctx, `SELECT prefix_cidr, ip FROM ipam_allocated_ips`)
 	if err == nil {
 		defer ipRows.Close()
@@ -49,8 +51,10 @@ func NewIPAMRepository(ctx context.Context, db *sql.DB) (*IPAMRepository, error)
 				// create prefix if missing to keep engine consistent
 				_, _ = r.engine.NewPrefix(ctx, prefix)
 			}
-			// Mark IP as used inside engine by acquiring it (engine will allocate first free; can't force specific ip easily)
-			// For correctness we skip re-allocation (engine state rebuild best-effort). A full deterministic restore would require upstream support.
+			// Try to acquire the specific IP to mark it as used
+			// Note: go-ipam doesn't have a direct "mark as used" API, so we use AcquireSpecificIP
+			// If it fails (already allocated in engine), that's fine - it means the IP is already tracked
+			_, _ = r.engine.AcquireSpecificIP(ctx, prefix, ip)
 		}
 	}
 	return r, nil
@@ -170,10 +174,32 @@ func (r *IPAMRepository) AcquireIP(ctx context.Context, cidr string) (string, er
 	if err != nil {
 		return "", err
 	}
-	if _, err = r.db.ExecContext(ctx, `INSERT INTO ipam_allocated_ips (prefix_cidr, ip, allocated_at) VALUES ($1,$2,NOW())`, cidr, ipObj.IP.String()); err != nil {
+	// Use INSERT ... ON CONFLICT to handle potential duplicates gracefully
+	_, err = r.db.ExecContext(ctx, `INSERT INTO ipam_allocated_ips (prefix_cidr, ip, allocated_at) VALUES ($1,$2,NOW()) ON CONFLICT (ip) DO NOTHING`, cidr, ipObj.IP.String())
+	if err != nil {
 		return "", fmt.Errorf("persist allocated ip: %w", err)
 	}
 	return ipObj.IP.String(), nil
+}
+
+// AcquireSpecificIP tries to allocate a specific IP address
+func (r *IPAMRepository) AcquireSpecificIP(ctx context.Context, cidr string, ip string) error {
+	// ensure prefix exists
+	if _, err := r.engine.PrefixFrom(ctx, cidr); err != nil {
+		if _, err = r.engine.NewPrefix(ctx, cidr); err != nil {
+			return err
+		}
+	}
+	_, err := r.engine.AcquireSpecificIP(ctx, cidr, ip)
+	if err != nil {
+		return err
+	}
+	// Use INSERT ... ON CONFLICT to handle potential duplicates gracefully
+	_, err = r.db.ExecContext(ctx, `INSERT INTO ipam_allocated_ips (prefix_cidr, ip, allocated_at) VALUES ($1,$2,NOW()) ON CONFLICT (ip) DO NOTHING`, cidr, ip)
+	if err != nil {
+		return fmt.Errorf("persist specific allocated ip: %w", err)
+	}
+	return nil
 }
 
 func (r *IPAMRepository) ReleaseIP(ctx context.Context, cidr string, ip string) error {

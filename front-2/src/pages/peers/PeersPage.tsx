@@ -5,6 +5,7 @@ import PageHeader from '../../components/PageHeader';
 import JumpPeerModal from '../../components/JumpPeerModal';
 import RegularPeerModal from '../../components/RegularPeerModal';
 import PeerDetailModal from '../../components/PeerDetailModal';
+import SearchableSelect from '../../components/SearchableSelect';
 import { useNetworks, usePeers, useACLs, useSecurityIncidents } from '../../hooks/useQueries';
 import type { Peer } from '../../types';
 
@@ -86,6 +87,14 @@ export default function PeersPage() {
     refetchPeers();
   };
 
+  // Create options for SearchableSelect components
+  const networkOptions = useMemo(() => 
+    networks.map(network => ({
+      value: network.id,
+      label: network.name
+    })), [networks]
+  );
+
   // Apply filters to peers
   const filteredPeers = peers.filter(peer => {
     // Network filter
@@ -150,16 +159,12 @@ export default function PeersPage() {
             {/* Network Filter */}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Network</label>
-              <select
+              <SearchableSelect
+                options={networkOptions}
                 value={filterNetwork}
-                onChange={(e) => setFilterNetwork(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              >
-                <option value="">All Networks</option>
-                {networks.map(network => (
-                  <option key={network.id} value={network.id}>{network.name}</option>
-                ))}
-              </select>
+                onChange={setFilterNetwork}
+                placeholder="All Networks"
+              />
             </div>
 
             {/* Type Filter */}
@@ -283,9 +288,7 @@ export default function PeersPage() {
                             <FontAwesomeIcon icon={peer.use_agent ? faServer : faLaptop} className="text-gray-600 dark:text-gray-400" />
                           </span>
                           <div>
-                            <div className={`text-sm font-medium ${hasIncident ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white'}`}>{peer.name}</div>
-                            <div className={`text-xs ${hasIncident ? 'text-primary-500 dark:text-primary-300' : 'text-gray-500 dark:text-gray-400'}`}>{peer.endpoint || 'No endpoint'}</div>
-                          </div>
+                            <div className={`text-sm font-medium ${hasIncident ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white'}`}>{peer.name}</div>                          </div>
                         </div>
                       </td>
                       <td className={`px-6 py-4 whitespace-nowrap text-sm ${hasIncident ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white'}`}>

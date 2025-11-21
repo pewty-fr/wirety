@@ -36,12 +36,12 @@ class ApiClient {
     return response.data;
   }
 
-  async createNetwork(data: { name: string; cidr: string; domain: string; dns?: string[] }): Promise<Network> {
+  async createNetwork(data: { name: string; cidr: string; dns?: string[] }): Promise<Network> {
     const response = await this.client.post('/networks', data);
     return response.data;
   }
 
-  async updateNetwork(id: string, data: { name?: string; cidr?: string; domain?: string }): Promise<Network> {
+  async updateNetwork(id: string, data: { name?: string; cidr?: string }): Promise<Network> {
     const response = await this.client.put(`/networks/${id}`, data);
     return response.data;
   }

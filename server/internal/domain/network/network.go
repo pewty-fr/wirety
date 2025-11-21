@@ -7,7 +7,6 @@ type Network struct {
 	ID        string           `json:"id"`
 	Name      string           `json:"name"`
 	CIDR      string           `json:"cidr"`       // Network CIDR (e.g., "10.0.0.0/16")
-	Domain    string           `json:"domain"`     // DNS domain for the network
 	Peers     map[string]*Peer `json:"-"`          // Peer ID -> Peer
 	PeerCount int              `json:"peer_count"` // Computed number of peers for lightweight listing
 	ACL       *ACL             `json:"acl"`
@@ -17,17 +16,15 @@ type Network struct {
 
 // NetworkCreateRequest represents the data needed to create a new network
 type NetworkCreateRequest struct {
-	Name   string   `json:"name" binding:"required"`
-	CIDR   string   `json:"cidr" binding:"required"`
-	Domain string   `json:"domain" binding:"required"`
-	DNS    []string `json:"dns,omitempty"`
+	Name string   `json:"name" binding:"required"`
+	CIDR string   `json:"cidr" binding:"required"`
+	DNS  []string `json:"dns,omitempty"`
 }
 
 // NetworkUpdateRequest represents the data that can be updated for a network
 type NetworkUpdateRequest struct {
-	Name   string `json:"name,omitempty"`
-	Domain string `json:"domain,omitempty"`
-	CIDR   string `json:"cidr,omitempty"`
+	Name string `json:"name,omitempty"`
+	CIDR string `json:"cidr,omitempty"`
 }
 
 // AddPeer adds a peer to the network
@@ -118,4 +115,9 @@ func (n *Network) GetJumpServers() []*Peer {
 		}
 	}
 	return jumps
+}
+
+// GetDomain computes the DNS domain for this network
+func (n *Network) GetDomain() string {
+	return n.Name + ".local"
 }

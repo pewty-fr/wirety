@@ -24,6 +24,7 @@ type Repository interface {
 	// Peer operations
 	CreatePeer(ctx context.Context, networkID string, peer *Peer) error
 	GetPeer(ctx context.Context, networkID, peerID string) (*Peer, error)
+	GetPeerByToken(ctx context.Context, token string) (networkID string, peer *Peer, err error)
 	UpdatePeer(ctx context.Context, networkID string, peer *Peer) error
 	DeletePeer(ctx context.Context, networkID, peerID string) error
 	ListPeers(ctx context.Context, networkID string) ([]*Peer, error)

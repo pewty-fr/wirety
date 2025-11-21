@@ -15,7 +15,6 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
   const [formData, setFormData] = useState({
     name: '',
     cidr: '',
-    domain: '',
     dns: [] as string[],
   });
   const [dnsInput, setDnsInput] = useState('');
@@ -34,14 +33,12 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
       setFormData({
         name: network.name,
         cidr: network.cidr,
-        domain: network.domain,
         dns: [],
       });
     } else {
       setFormData({
         name: '',
         cidr: '',
-        domain: '',
         dns: [],
       });
     }
@@ -83,13 +80,11 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
         await api.updateNetwork(network.id, {
           name: formData.name,
           cidr: formData.cidr,
-          domain: formData.domain,
         });
       } else {
         await api.createNetwork({
           name: formData.name,
           cidr: formData.cidr,
-          domain: formData.domain,
           dns: formData.dns.length > 0 ? formData.dns : undefined,
         });
       }
@@ -222,22 +217,6 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
             <p className="mt-1 text-sm text-red-600">{cidrError}</p>
           )}
           <p className="mt-1 text-sm text-gray-500">Network address range in CIDR notation</p>
-        </div>
-
-        {/* Domain */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Domain <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            required
-            value={formData.domain}
-            onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-            placeholder="e.g., prod.wireguard.local"
-          />
-          <p className="mt-1 text-sm text-gray-500">DNS domain for this network</p>
         </div>
 
         {/* DNS Servers (only for create) */}

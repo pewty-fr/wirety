@@ -55,11 +55,26 @@ go build -o wirety-server ./cmd/server
 ### Running the Server
 
 ```bash
-# Run with default port (8080)
+# Run with default settings (in-memory database, no authentication)
 ./wirety-server
 
 # Run with custom port
 HTTP_PORT=9000 ./wirety-server
+
+# Run with PostgreSQL database
+DB_ENABLED=true DB_DSN="postgres://wirety:wirety@localhost:5432/wirety?sslmode=disable" ./wirety-server
+
+# Run with OIDC authentication enabled
+AUTH_ENABLED=true AUTH_ISSUER_URL=https://keycloak.example.com/realms/wirety AUTH_CLIENT_ID=wirety-server ./wirety-server
+
+# Run with both PostgreSQL and OIDC authentication
+DB_ENABLED=true DB_DSN="postgres://wirety:wirety@localhost:5432/wirety?sslmode=disable" AUTH_ENABLED=true AUTH_ISSUER_URL=https://keycloak.example.com/realms/wirety AUTH_CLIENT_ID=wirety-server ./wirety-server
+
+# Alternative: using go run directly
+go run cmd/main.go
+
+# With PostgreSQL and OIDC using go run
+DB_ENABLED=true AUTH_ENABLED=true go run cmd/main.go
 ```
 
 ### API Endpoints
@@ -128,7 +143,47 @@ curl http://localhost:8080/api/v1/networks/<network-id>/peers/<peer-id>/config
 
 ### Environment Variables
 
+#### Server Configuration
 - `HTTP_PORT` - HTTP server port (default: 8080)
+
+#### Database Configuration
+- `DB_ENABLED` - Enable PostgreSQL database (default: false, uses in-memory storage)
+- `DB_DSN` - PostgreSQL connection string (default: "postgres://wirety:wirety@localhost:5432/wirety?sslmode=disable")
+- `DB_MIGRATIONS_DIR` - Directory containing database migrations (default: "internal/adapters/db/postgres/migrations")
+
+#### Authentication Configuration
+- `AUTH_ENABLED` - Enable OIDC authentication (default: false, runs in open mode with admin permissions)
+- `AUTH_ISSUER_URL` - OIDC provider URL (e.g., "https://keycloak.example.com/realms/wirety")
+- `AUTH_CLIENT_ID` - OIDC client identifier
+- `AUTH_CLIENT_SECRET` - OIDC client secret (optional)
+- `AUTH_JWKS_CACHE_TTL` - JWKS cache duration in seconds (default: 3600)
+
+### Example Configurations
+
+#### Development (In-memory, No Auth)
+```bash
+# Default configuration
+./wirety-server
+```
+
+#### Development with PostgreSQL
+```bash
+# Set up PostgreSQL first
+docker run --name wirety-postgres -e POSTGRES_DB=wirety -e POSTGRES_USER=wirety -e POSTGRES_PASSWORD=wirety -p 5432:5432 -d postgres:15
+
+# Run server with PostgreSQL
+DB_ENABLED=true ./wirety-server
+```
+
+#### Production with PostgreSQL and OIDC
+```bash
+DB_ENABLED=true \
+DB_DSN="postgres://wirety:secure_password@postgres.example.com:5432/wirety?sslmode=require" \
+AUTH_ENABLED=true \
+AUTH_ISSUER_URL=https://keycloak.example.com/realms/wirety \
+AUTH_CLIENT_ID=wirety-server \
+./wirety-server
+```
 
 ## Development
 
@@ -150,13 +205,42 @@ curl http://localhost:8080/api/v1/networks/<network-id>/peers/<peer-id>/config
 - **Infrastructure** (`pkg/wireguard/`): Shared utilities
   - `config.go` - WireGuard configuration generation
 
-### Adding a Database
+### Using PostgreSQL Database
 
-To replace the in-memory repository with a real database:
+The server includes a PostgreSQL adapter for persistent storage. To use it:
 
-1. Create a new adapter in `internal/adapters/db/` (e.g., `postgres/`)
-2. Implement the `network.Repository` interface
-3. Update `cmd/server/main.go` to use the new repository
+1. **Set up PostgreSQL database:**
+```bash
+# Using Docker
+docker run --name wirety-postgres \
+  -e POSTGRES_DB=wirety \
+  -e POSTGRES_USER=wirety \
+  -e POSTGRES_PASSWORD=wirety \
+  -p 5432:5432 \
+  -d postgres:15
+
+# Or use an existing PostgreSQL instance
+```
+
+2. **Run server with PostgreSQL:**
+```bash
+DB_ENABLED=true \
+DB_DSN="postgres://wirety:wirety@localhost:5432/wirety?sslmode=disable" \
+./wirety-server
+```
+
+The server will automatically run database migrations on startup.
+
+### Adding Other Databases
+
+To add support for other databases (e.g., MySQL, SQLite):
+
+1. Create a new adapter in `internal/adapters/db/` (e.g., `mysql/`)
+2. Implement the repository interfaces:
+   - `network.Repository`
+   - `ipam.Repository` 
+   - `auth.Repository`
+3. Update `cmd/main.go` to use the new repository
 
 ### Running Tests
 
@@ -174,6 +258,32 @@ go install github.com/swaggo/swag/cmd/swag@latest
 swag init -g cmd/server/main.go -o docs/swagger
 ```
 
+## Authentication
+
+The server supports two authentication modes:
+
+### Open Mode (No Authentication)
+```bash
+# Default mode - all users have admin permissions
+AUTH_ENABLED=false ./wirety-server
+# or simply
+./wirety-server
+```
+
+### OIDC Authentication Mode
+```bash
+# Requires OIDC provider (e.g., Keycloak, Auth0, Google)
+AUTH_ENABLED=true \
+AUTH_ISSUER_URL=https://keycloak.example.com/realms/wirety \
+AUTH_CLIENT_ID=wirety-server \
+./wirety-server
+```
+
+In OIDC mode:
+- Users must provide valid JWT tokens in the `Authorization: Bearer <token>` header
+- Admin permissions are determined by OIDC claims
+- Agent endpoints use separate token-based authentication (not OIDC)
+
 ## Network Isolation Rules
 
 - **Isolated peers** (user devices) cannot communicate directly with each other
@@ -183,13 +293,14 @@ swag init -g cmd/server/main.go -o docs/swagger
 
 ## Roadmap
 
-- [ ] PostgreSQL adapter for persistent storage
-- [ ] JWT authentication
+- [x] PostgreSQL adapter for persistent storage
+- [x] OIDC authentication support  
 - [ ] Multi-tenancy support
 - [ ] Metrics and monitoring
 - [ ] Automated key generation
 - [ ] Network topology visualization
 - [ ] Peer health checks
+- [ ] Additional database adapters (MySQL, SQLite)
 
 ## License
 

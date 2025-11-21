@@ -47,6 +47,9 @@ func (c *CombinedRepository) CreatePeer(ctx context.Context, networkID string, p
 func (c *CombinedRepository) GetPeer(ctx context.Context, networkID, peerID string) (*network.Peer, error) {
 	return c.netRepo.GetPeer(ctx, networkID, peerID)
 }
+func (c *CombinedRepository) GetPeerByToken(ctx context.Context, token string) (string, *network.Peer, error) {
+	return c.netRepo.GetPeerByToken(ctx, token)
+}
 func (c *CombinedRepository) UpdatePeer(ctx context.Context, networkID string, p *network.Peer) error {
 	return c.netRepo.UpdatePeer(ctx, networkID, p)
 }

@@ -198,20 +198,32 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 				log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to generate config for update")
 				return
 			}
+
+			// Get peer information for metadata
+			peer, err := m.service.GetPeer(ctx, networkID, peerID)
+			if err != nil {
+				log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to get peer info for update")
+				return
+			}
+
 			msg := struct {
-				Config string      `json:"config"`
-				DNS    interface{} `json:"dns,omitempty"`
-				Policy interface{} `json:"policy,omitempty"`
+				Config   string      `json:"config"`
+				DNS      interface{} `json:"dns,omitempty"`
+				Policy   interface{} `json:"policy,omitempty"`
+				PeerID   string      `json:"peer_id"`
+				PeerName string      `json:"peer_name"`
 			}{
-				Config: cfg,
-				DNS:    dnsCfg,
-				Policy: policy,
+				Config:   cfg,
+				DNS:      dnsCfg,
+				Policy:   policy,
+				PeerID:   peer.ID,
+				PeerName: peer.Name,
 			}
 			data, _ := json.Marshal(msg)
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 				log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to send config update")
 			} else {
-				log.Info().Str("network_id", networkID).Str("peer_id", peerID).Msg("Config update sent")
+				log.Info().Str("network_id", networkID).Str("peer_id", peerID).Str("peer_name", peer.Name).Msg("Config update sent")
 			}
 		}
 	}

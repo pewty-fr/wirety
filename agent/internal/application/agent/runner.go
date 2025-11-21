@@ -3,6 +3,8 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 	dom "wirety/agent/internal/domain/dns"
 	pol "wirety/agent/internal/domain/policy"
@@ -17,9 +19,11 @@ import (
 // Policy optional; only for jump peer
 
 type WSMessage struct {
-	Config string          `json:"config"`
-	DNS    *dom.DNSConfig  `json:"dns,omitempty"`
-	Policy *pol.JumpPolicy `json:"policy,omitempty"`
+	Config   string          `json:"config"`
+	DNS      *dom.DNSConfig  `json:"dns,omitempty"`
+	Policy   *pol.JumpPolicy `json:"policy,omitempty"`
+	PeerID   string          `json:"peer_id,omitempty"`
+	PeerName string          `json:"peer_name,omitempty"`
 }
 
 type Runner struct {
@@ -29,6 +33,7 @@ type Runner struct {
 	fwAdapter         ports.FirewallPort
 	wsURL             string
 	wgInterface       string
+	currentPeerName   string // Track current peer name to detect changes
 	backoffBase       time.Duration
 	backoffMax        time.Duration
 	heartbeatInterval time.Duration
@@ -42,6 +47,7 @@ func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort
 		fwAdapter:         fwAdapter,
 		wsURL:             wsURL,
 		wgInterface:       wgInterface,
+		currentPeerName:   "", // Will be set when first message is received
 		backoffBase:       time.Second,
 		backoffMax:        30 * time.Second,
 		heartbeatInterval: 30 * time.Second, // Send heartbeat every 30 seconds
@@ -109,6 +115,15 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				log.Error().Err(err).Msg("invalid websocket message")
 				continue
 			}
+
+			// Handle peer name changes
+			if payload.PeerName != "" {
+				if err := r.handlePeerNameChange(payload.PeerName); err != nil {
+					log.Error().Err(err).Str("new_name", payload.PeerName).Msg("failed to handle peer name change")
+					continue
+				}
+			}
+
 			if err := r.cfgWriter.WriteAndApply(payload.Config); err != nil {
 				log.Error().Err(err).Msg("failed applying config")
 			} else {
@@ -166,4 +181,76 @@ func (r *Runner) sendHeartbeat() {
 			Interface("peer_endpoints", sysInfo.PeerEndpoints).
 			Msg("heartbeat sent")
 	}
+}
+
+// sanitizeInterfaceName converts a peer name to a valid WireGuard interface name
+// Interface names must be alphanumeric, underscore, or dash, max 15 chars
+func (r *Runner) sanitizeInterfaceName(peerName string) string {
+	// Replace invalid characters with underscores
+	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	sanitized := re.ReplaceAllString(peerName, "_")
+
+	// Convert to lowercase for consistency
+	sanitized = strings.ToLower(sanitized)
+
+	// Truncate to max 15 characters (Linux interface name limit)
+	if len(sanitized) > 15 {
+		sanitized = sanitized[:15]
+	}
+
+	// If empty after sanitization, use default
+	if sanitized == "" {
+		sanitized = "wg0"
+	}
+
+	return sanitized
+}
+
+// SetCurrentPeerName sets the current peer name (used for initialization)
+func (r *Runner) SetCurrentPeerName(peerName string) {
+	r.currentPeerName = peerName
+}
+
+// handlePeerNameChange detects if the peer name has changed and handles interface transition
+func (r *Runner) handlePeerNameChange(newPeerName string) error {
+	// Skip if no name provided or same as current
+	if newPeerName == "" || newPeerName == r.currentPeerName {
+		return nil
+	}
+
+	// Calculate new interface name
+	newInterface := r.sanitizeInterfaceName(newPeerName)
+	currentInterface := r.cfgWriter.GetInterface()
+
+	// Check if interface name actually changes
+	if newInterface == currentInterface {
+		r.currentPeerName = newPeerName
+		return nil
+	}
+
+	log.Info().
+		Str("old_peer_name", r.currentPeerName).
+		Str("new_peer_name", newPeerName).
+		Str("old_interface", currentInterface).
+		Str("new_interface", newInterface).
+		Msg("peer name changed, transitioning interface")
+
+	// Update the config writer to use the new interface
+	// This will handle cleanup of the old interface and config file
+	if err := r.cfgWriter.UpdateInterface(newInterface); err != nil {
+		return fmt.Errorf("failed to update interface: %w", err)
+	}
+
+	// Update our tracking variables
+	r.currentPeerName = newPeerName
+	r.wgInterface = newInterface
+
+	// Update the firewall adapter to use the new interface
+	if r.fwAdapter != nil {
+		// Note: This assumes the firewall adapter can handle interface changes
+		// The firewall rules will be updated when the policy is next applied
+		log.Debug().Str("new_interface", newInterface).Msg("firewall will be updated with new interface")
+	}
+
+	return nil
 }

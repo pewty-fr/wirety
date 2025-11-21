@@ -72,7 +72,8 @@ func (s *Service) SuggestCIDRs(ctx context.Context, baseCIDR string, maxPeers, c
 		}
 		err = s.repo.DeletePrefix(ctx, child.CIDR)
 		if err != nil {
-			return 0, nil, fmt.Errorf("failed deleting temporary prefix: %w", err)
+			i--
+			continue
 		}
 		cidrs = append(cidrs, child.CIDR)
 	}

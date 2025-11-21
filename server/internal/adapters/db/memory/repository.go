@@ -136,6 +136,22 @@ func (r *Repository) GetPeer(ctx context.Context, networkID, peerID string) (*ne
 	return peer, nil
 }
 
+// GetPeerByToken finds a peer by its enrollment token
+func (r *Repository) GetPeerByToken(ctx context.Context, token string) (string, *network.Peer, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for networkID, net := range r.networks {
+		for _, peer := range net.Peers {
+			if peer.Token == token {
+				return networkID, peer, nil
+			}
+		}
+	}
+
+	return "", nil, fmt.Errorf("token not found")
+}
+
 // UpdatePeer updates a peer
 func (r *Repository) UpdatePeer(ctx context.Context, networkID string, peer *network.Peer) error {
 	r.mu.Lock()

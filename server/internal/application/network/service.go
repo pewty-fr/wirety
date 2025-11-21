@@ -9,6 +9,7 @@ import (
 
 	"wirety/internal/domain/ipam"
 	"wirety/internal/domain/network"
+	"wirety/internal/infrastructure/validation"
 	"wirety/pkg/wireguard"
 
 	"github.com/google/uuid"
@@ -33,18 +34,7 @@ func (s *Service) SetWebSocketNotifier(notifier WebSocketNotifier) {
 
 // ResolveAgentToken returns networkID, peer for a given enrollment token.
 func (s *Service) ResolveAgentToken(ctx context.Context, token string) (string, *network.Peer, error) {
-	networks, err := s.repo.ListNetworks(ctx)
-	if err != nil {
-		return "", nil, fmt.Errorf("list networks: %w", err)
-	}
-	for _, n := range networks {
-		for _, p := range n.Peers {
-			if p.Token == token {
-				return n.ID, p, nil
-			}
-		}
-	}
-	return "", nil, fmt.Errorf("token not found")
+	return s.repo.GetPeerByToken(ctx, token)
 }
 
 // NewService creates a new network service
@@ -56,13 +46,17 @@ func NewService(networkRepo network.Repository, ipamRepo ipam.Repository) *Servi
 
 // CreateNetwork creates a new WireGuard network
 func (s *Service) CreateNetwork(ctx context.Context, req *network.NetworkCreateRequest) (*network.Network, error) {
+	// Validate network name follows DNS naming convention
+	if err := validation.ValidateDNSName(req.Name); err != nil {
+		return nil, fmt.Errorf("invalid network name: %w", err)
+	}
+
 	now := time.Now()
 
 	net := &network.Network{
 		ID:        uuid.New().String(),
 		Name:      req.Name,
 		CIDR:      req.CIDR,
-		Domain:    req.Domain,
 		Peers:     make(map[string]*network.Peer),
 		ACL:       &network.ACL{Enabled: false, BlockedPeers: make(map[string]bool)},
 		CreatedAt: now,
@@ -93,6 +87,13 @@ func (s *Service) ListNetworks(ctx context.Context) ([]*network.Network, error) 
 
 // UpdateNetwork updates a network's configuration
 func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *network.NetworkUpdateRequest) (*network.Network, error) {
+	// Validate network name if provided
+	if req.Name != "" {
+		if err := validation.ValidateDNSName(req.Name); err != nil {
+			return nil, fmt.Errorf("invalid network name: %w", err)
+		}
+	}
+
 	net, err := s.repo.GetNetwork(ctx, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
@@ -103,9 +104,6 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 
 	if req.Name != "" {
 		net.Name = req.Name
-	}
-	if req.Domain != "" {
-		net.Domain = req.Domain
 	}
 	if req.CIDR != "" && req.CIDR != oldCIDR {
 		net.CIDR = req.CIDR
@@ -165,6 +163,11 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 
 // AddPeer adds a new peer to the network
 func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.PeerCreateRequest, ownerID string) (*network.Peer, error) {
+	// Validate peer name follows DNS naming convention
+	if err := validation.ValidateDNSName(req.Name); err != nil {
+		return nil, fmt.Errorf("invalid peer name: %w", err)
+	}
+
 	net, err := s.repo.GetNetwork(ctx, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
@@ -182,6 +185,12 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 		return nil, fmt.Errorf("failed to generate key pair: %w", err)
 	}
 
+	// Ensure AdditionalAllowedIPs is never nil
+	additionalIPs := req.AdditionalAllowedIPs
+	if additionalIPs == nil {
+		additionalIPs = []string{}
+	}
+
 	now := time.Now()
 	peer := &network.Peer{
 		ID:                   uuid.New().String(),
@@ -194,9 +203,9 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 		IsJump:               req.IsJump,
 		IsIsolated:           req.IsIsolated,
 		FullEncapsulation:    req.FullEncapsulation,
-		UseAgent:             req.UseAgent,             // Track if peer uses agent or static config
-		AdditionalAllowedIPs: req.AdditionalAllowedIPs, // default full network access (used for jump peers)
-		OwnerID:              ownerID,                  // Set the owner of the peer
+		UseAgent:             req.UseAgent,  // Track if peer uses agent or static config
+		AdditionalAllowedIPs: additionalIPs, // Ensure never nil to avoid DB constraint violation
+		OwnerID:              ownerID,       // Set the owner of the peer
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
@@ -265,6 +274,13 @@ func (s *Service) ListPeers(ctx context.Context, networkID string) ([]*network.P
 
 // UpdatePeer updates a peer's configuration
 func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req *network.PeerUpdateRequest) (*network.Peer, error) {
+	// Validate peer name if provided
+	if req.Name != "" {
+		if err := validation.ValidateDNSName(req.Name); err != nil {
+			return nil, fmt.Errorf("invalid peer name: %w", err)
+		}
+	}
+
 	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
 	if err != nil {
 		return nil, fmt.Errorf("peer not found: %w", err)
@@ -283,6 +299,10 @@ func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req 
 	peer.FullEncapsulation = req.FullEncapsulation
 	if req.AdditionalAllowedIPs != nil {
 		peer.AdditionalAllowedIPs = req.AdditionalAllowedIPs
+	}
+	// Ensure AdditionalAllowedIPs is never nil
+	if peer.AdditionalAllowedIPs == nil {
+		peer.AdditionalAllowedIPs = []string{}
 	}
 	peer.UpdatedAt = time.Now()
 	// Preserve token (do not allow overwrite via update)
@@ -455,7 +475,7 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 				Isolated bool   `json:"isolated"`
 			}{ID: p.ID, IP: p.Address, Isolated: p.IsIsolated})
 		}
-		dnsConfig = &PeerDNSConfig{IP: peer.Address, Domain: net.Domain, Peers: peerList}
+		dnsConfig = &PeerDNSConfig{IP: peer.Address, Domain: net.GetDomain(), Peers: peerList}
 		if net.ACL != nil && net.ACL.Enabled {
 			for blockedID := range net.ACL.BlockedPeers {
 				policy.ACLBlocked = append(policy.ACLBlocked, blockedID)
@@ -488,8 +508,8 @@ func (s *Service) DeleteNetwork(ctx context.Context, networkID string) error {
 func (s *Service) blockPeerInACL(ctx context.Context, networkID, peerID string, reason string) error {
 	// Get current ACL
 	acl, err := s.repo.GetACL(ctx, networkID)
-	if err != nil {
-		// Create new ACL if it doesn't exist
+	if err != nil || acl == nil {
+		// Create new ACL if it doesn't exist or if there's an error
 		acl = &network.ACL{
 			ID:           uuid.New().String(),
 			Name:         "Default ACL",
@@ -655,16 +675,19 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 		if currentSess.ReportedEndpoint == endpoint {
 			continue
 		}
-		change := &network.EndpointChange{
-			PeerID:      currentSess.PeerID,
-			OldEndpoint: currentSess.ReportedEndpoint,
-			NewEndpoint: endpoint,
-			ChangedAt:   now,
-			Source:      "agent",
-		}
-		if err := s.repo.RecordEndpointChange(ctx, networkID, change); err != nil {
-			// Log but don't fail on endpoint change recording error
-			fmt.Printf("failed to record endpoint change: %v\n", err)
+		changes, err := s.repo.GetEndpointChanges(ctx, networkID, currentSess.PeerID, now.Add(-24*time.Hour))
+		if err == nil && len(changes) > 0 && changes[0].NewEndpoint != endpoint {
+			change := &network.EndpointChange{
+				PeerID:      currentSess.PeerID,
+				OldEndpoint: currentSess.ReportedEndpoint,
+				NewEndpoint: endpoint,
+				ChangedAt:   now,
+				Source:      "agent",
+			}
+			if err := s.repo.RecordEndpointChange(ctx, networkID, change); err != nil {
+				// Log but don't fail on endpoint change recording error
+				fmt.Printf("failed to record endpoint change: %v\n", err)
+			}
 		}
 	}
 
@@ -790,7 +813,7 @@ func (s *Service) ResolveSecurityIncident(ctx context.Context, incidentID, resol
 	var unblocked []string
 	for _, net := range networks {
 		acl, err := s.repo.GetACL(ctx, net.ID)
-		if err != nil {
+		if err != nil || acl == nil {
 			// If ACL doesn't exist for this network, skip
 			continue
 		}
@@ -833,6 +856,9 @@ func (s *Service) ReconnectPeer(ctx context.Context, networkID, peerID string) e
 	acl, err := s.repo.GetACL(ctx, networkID)
 	if err != nil {
 		return fmt.Errorf("failed to get ACL: %w", err)
+	}
+	if acl == nil {
+		return fmt.Errorf("no ACL found for network")
 	}
 
 	// Check if peer is blocked

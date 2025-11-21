@@ -5,6 +5,7 @@ import type { Network, ACL, SecurityIncident } from '../types';
 // Query Keys
 export const queryKeys = {
   networks: ['networks'] as const,
+  network: (networkId: string) => ['network', networkId] as const,
   peers: (page: number, pageSize: number) => ['peers', page, pageSize] as const,
   peer: (networkId: string, peerId: string) => ['peer', networkId, peerId] as const,
   peerSession: (networkId: string, peerId: string) => ['peerSession', networkId, peerId] as const,
@@ -22,6 +23,16 @@ export function useNetworks() {
       const response = await api.getNetworks(1, 100);
       return response.data || [];
     },
+  });
+}
+
+// Single Network Query
+export function useNetwork(networkId: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: queryKeys.network(networkId),
+    queryFn: () => api.getNetwork(networkId),
+    enabled: enabled && !!networkId,
+    staleTime: 30000, // 30 seconds
   });
 }
 

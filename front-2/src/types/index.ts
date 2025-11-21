@@ -2,11 +2,15 @@ export interface Network {
   id: string;
   name: string;
   cidr: string;
-  domain: string;
   created_at: string;
   updated_at: string;
   peer_count?: number;
 }
+
+// Helper function to compute domain for a network
+export const getNetworkDomain = (network: Network): string => {
+  return `${network.name}.local`;
+};
 
 export interface Peer {
   id: string;

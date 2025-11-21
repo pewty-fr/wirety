@@ -7,6 +7,7 @@ import NetworkDetailModal from '../../components/NetworkDetailModal';
 import api from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
 import type { Network } from '../../types';
+import { getNetworkDomain } from '../../types';
 import { computeCapacityFromCIDR } from '../../utils/networkCapacity';
 import { useDebounce } from '../../hooks/useDebounce';
 
@@ -139,7 +140,7 @@ export default function NetworksPage() {
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-500 dark:text-gray-400">Domain</span>
-                      <span className="text-gray-900 dark:text-white font-medium">{network.domain}</span>
+                      <span className="text-gray-900 dark:text-white font-medium">{getNetworkDomain(network)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-500 dark:text-gray-400">Peers</span>
