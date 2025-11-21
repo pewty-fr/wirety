@@ -6,25 +6,36 @@
 
 /* You can override the default Infima variables here. */
 :root {
-  --ifm-color-primary: #2e8555;
-  --ifm-color-primary-dark: #29784c;
-  --ifm-color-primary-darker: #277148;
-  --ifm-color-primary-darkest: #205d3b;
-  --ifm-color-primary-light: #33925d;
-  --ifm-color-primary-lighter: #359962;
-  --ifm-color-primary-lightest: #3cad6e;
+  /* Wirety brand colors - Orange theme */
+  --ifm-color-primary: #f97316;
+  --ifm-color-primary-dark: #f85a00;
+  --ifm-color-primary-darker: #e85500;
+  --ifm-color-primary-darkest: #c04600;
+  --ifm-color-primary-light: #fa8c3c;
+  --ifm-color-primary-lighter: #fb9a50;
+  --ifm-color-primary-lightest: #fcb778;
   --ifm-code-font-size: 95%;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+  /* Extended Wirety brand palette */
+  --brand-orange-500: #FF7F2A;
+  --brand-orange-400: #fb923c;
+  --brand-orange-600: #ea580c;
+  --brand-amber: #FFB300;
+  --brand-blue: #1A237E;
+  --brand-green: #43A047;
+  --brand-red: #E53935;
 }
 
 /* For readability concerns, you should choose a lighter palette in dark mode. */
 [data-theme='dark'] {
-  --ifm-color-primary: #25c2a0;
-  --ifm-color-primary-dark: #21af90;
-  --ifm-color-primary-darker: #1fa588;
-  --ifm-color-primary-darkest: #1a8870;
-  --ifm-color-primary-light: #29d5b0;
-  --ifm-color-primary-lighter: #32d8b4;
-  --ifm-color-primary-lightest: #4fddbf;
+  --ifm-color-primary: #fb923c;
+  --ifm-color-primary-dark: #fa8124;
+  --ifm-color-primary-darker: #f97316;
+  --ifm-color-primary-darkest: #e85500;
+  --ifm-color-primary-light: #fba354;
+  --ifm-color-primary-lighter: #fcae62;
+  --ifm-color-primary-lightest: #fcc988;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
 }
+
+/* Navbar reverted to default theme styling (no animated gradient). */

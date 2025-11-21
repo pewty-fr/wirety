@@ -1,0 +1,12 @@
+{
+  "feature.secureMesh.title": {"message": "Maillage WireGuard sécurisé"},
+  "feature.secureMesh.desc": {"message": "Construisez et exploitez des réseaux superposés chiffrés en quelques minutes. Wirety automatise la provision des pairs, les clés, les ACL et l’isolement pour que vous puissiez vous concentrer sur votre infrastructure — pas sur la gestion manuelle des tunnels."},
+  "feature.topology.title": {"message": "Topologie & visibilité en temps réel"},
+  "feature.topology.desc": {"message": "Voyez en permanence comment les pairs se connectent. La topologie interactive met en évidence les jump servers, chemins directs, liens bloqués et incidents de sécurité pour une observabilité exploitable entre environnements."},
+  "feature.lifecycle.title": {"message": "Cycle de vie des pairs sans friction"},
+  "feature.lifecycle.desc": {"message": "Agents ou configurations statiques — à vous de choisir. Émettez des jetons, faites tourner les identifiants, appliquez des politiques tunnel complet ou d’isolement et ajustez les réseaux autorisés de manière centrale sans reconfiguration manuelle sur les hôtes."},
+  "feature.security.title": {"message": "Réponse sécurité intégrée"},
+  "feature.security.desc": {"message": "Détectez les sessions conflictuelles, la volatilité des endpoints et l’activité suspecte. Wirety génère des incidents et peut bloquer automatiquement les pairs affectés, réduisant le temps d’exposition et le rayon d’impact."},
+  "feature.capacity.title": {"message": "Capacité & gouvernance"},
+  "feature.capacity.desc": {"message": "Suivez le nombre de pairs, la capacité CIDR et les emplacements restants par réseau. Les contrôles d’accès basés sur les rôles et les modèles d’autorisation par défaut rendent la croissance prévisible et conforme."}
+}

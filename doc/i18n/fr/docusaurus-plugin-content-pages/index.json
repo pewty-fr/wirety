@@ -1,0 +1,18 @@
+{
+  "homepage.hero.title": {
+    "message": "Wirety",
+    "description": "Title on homepage hero section"
+  },
+  "homepage.hero.tagline": {
+    "message": "Maillage WireGuard sécurisé et dynamique avec agents et réponse aux incidents basée sur ACL",
+    "description": "Tagline on homepage hero section"
+  },
+  "homepage.hero.getStarted": {
+    "message": "Démarrer 🚀",
+    "description": "Get started button on homepage"
+  },
+  "homepage.hero.viewOnGitHub": {
+    "message": "Voir sur GitHub",
+    "description": "View on GitHub button on homepage"
+  }
+}

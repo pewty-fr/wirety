@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="400"
+     viewBox="0 0 800 400"
+     xmlns="http://www.w3.org/2000/svg"
+     style="font-family:Arial,Helvetica,sans-serif;background:#fafafa">
+
+  <!-- Central controller -->
+  <g id="controller">
+    <circle cx="400" cy="200" r="60" fill="#2c3e50"/>
+  <text x="40" y="205" text-anchor="middle" fill="#fff" font-size="14">Controller</text>
+    <path d="M380 180 L420 180 L420 220 L380 220 Z" fill="#ecf0f1"/>
+  <text x="400" y="210" text-anchor="middle" fill="#2c3e50" font-size="10">Token Engine</text>
+  </g>
+
+  <!-- Agents (left side) -->
+  <g id="agents-left" transform="translate(-150,0)">
+    <circle cx="200" cy="120" r="30" fill="#3498db"/>
+    <text x="20" y="125" text-anchor="middle" fill="#fff" font-size="12">Agent A</text>
+
+    <circle cx="200" cy="280" r="30" fill="#3498db"/>
+    <text x="200" y="285" text-anchor="middle" fill="#fff" font-size="12">Agent B</text>
+  </g>
+
+  <!-- Agents (right side) -->
+  <g id="agents-right" transform="translate(150,0)">
+    <circle cx="600" cy="120" r="30" fill="#e67e22"/>
+    <text x="60" y="125" text-anchor="middle" fill="#fff" font-size="12">Agent C</text>
+
+    <circle cx="600" cy="280" r="30" fill="#e67e22"/>
+    <text x="600" y="285" text-anchor="middle" fill="#fff" font-size="12">Agent D</text>
+  </g>
+
+  <!-- Token flow arrows -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7"
+       refX="0" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2c3e50"/>
+    </marker>
+  </defs>
+
+  <!-- Left agents → controller (issue token) -->
+  <path d="M230 120 C300 80 500 80 400 200"
+        stroke="#2c3e50" stroke-width="2" fill="none"
+        marker-end="url(#arrowhead)"/>
+
+  <!-- Right agents ← controller (rotate token) -->
+  <path d="M570 120 C500 80 300 80 400 200"
+        stroke="#2c3e50" stroke-width="2" fill="none"
+        marker-end="url(#arrowhead)"/>
+
+  <!-- Full‑tunnel policy (curved arrow around agents) -->
+  <path d="M170 70 Q400 0 630 70"
+        stroke="#27ae60" stroke-width="3" fill="none"
+        marker-end="url(#arrowhead)"/>
+  <text x="400" y="45" text-anchor="middle" fill="#27ae60" font-size="12">Full‑Tunnel</text>
+
+  <!-- Isolation policy (vertical split) -->
+  <line x1="400" y1="250" x2="400" y2="350"
+        stroke="#c0392b" stroke-width="4"/>
+  <text x="410" y="300" fill="#c0392b" font-size="12">Isolation</text>
+
+  <!-- Network zones -->
+  <circle cx="400" cy="200" r="150" fill="none" stroke="#95a5a6" stroke-dasharray="5,5"/>
+  <text x="400" y="360" text-anchor="middle" fill="#7f8c8d" font-size="13">Adjust Allowed Networks Centrally</text>
+</svg>

@@ -21,3 +21,55 @@
   align-items: center;
   justify-content: center;
 }
+
+/* Animated Wirety gradient for homepage hero header */
+@keyframes wiretyHeroGradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.heroBanner {
+  background: linear-gradient(120deg,
+    var(--brand-orange-500) 0%,
+    var(--brand-amber) 35%,
+    var(--brand-blue) 65%,
+    var(--brand-green) 100%
+  );
+  background-size: 250% 250%;
+  animation: wiretyHeroGradient 18s ease-in-out infinite;
+  color: #fff;
+}
+
+.heroBanner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255,255,255,0.28), transparent 60%),
+    radial-gradient(circle at 70% 70%, rgba(255,255,255,0.20), transparent 55%);
+  mix-blend-mode: overlay;
+}
+
+/* Dark theme variant */
+:global([data-theme='dark']) .heroBanner {
+  background: linear-gradient(120deg,
+    var(--brand-blue) 0%,
+    var(--brand-orange-600) 40%,
+    var(--brand-red) 70%,
+    var(--brand-green) 100%
+  );
+  background-size: 250% 250%;
+}
+
+:global([data-theme='dark']) .heroBanner::before {
+  background:
+    radial-gradient(circle at 25% 35%, rgba(255,255,255,0.16), transparent 65%),
+    radial-gradient(circle at 70% 65%, rgba(255,255,255,0.10), transparent 60%);
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .heroBanner { animation: none; background-size: 100% 100%; }
+}
