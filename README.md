@@ -1,5 +1,6 @@
 <div align="center">
 
+<img src="front/public/logo.svg" alt="Wirety Logo" width="200"/>
 
 # Wirety
 
