@@ -2,7 +2,7 @@ apiVersion: v2
 name: wirety
 description: Secure, dynamic WireGuard mesh with agents and ACL-based incident response
 type: application
-version: 0.1.0
+version: 1.0.0
 appVersion: "0.1.0"
 keywords:
   - wireguard
