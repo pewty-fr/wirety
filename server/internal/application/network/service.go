@@ -113,7 +113,11 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 	if req.DNS != nil {
 		if len(req.DNS) != len(net.DNS) {
 			dnsChanged = true
+<<<<<<< HEAD
 		} else {
+=======
+		}else{
+>>>>>>> 47c4a70 (fix: network update notify)
 			for _, dns := range req.DNS {
 				match := 0
 				for _, existing := range net.DNS {
@@ -180,7 +184,7 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 		return nil, fmt.Errorf("failed to update network: %w", err)
 	}
 
-	if cidrChanged || dnsChanged {
+	if cidrChanged || dnsChanged{
 		if s.wsNotifier != nil {
 			s.wsNotifier.NotifyNetworkPeers(networkID)
 		}
