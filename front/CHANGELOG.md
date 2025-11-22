@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/pewty-fr/wirety/compare/wirety-front/v1.1.1...wirety-front/v1.1.2) (2025-11-22)
+
+
+### Bug Fixes
+
+* **api:** env var ([9cba0f2](https://github.com/pewty-fr/wirety/commit/9cba0f2e469d118f726e770ec66f65a2206821f1))
+
 ## [1.1.1](https://github.com/pewty-fr/wirety/compare/wirety-front/v1.1.0...wirety-front/v1.1.1) (2025-11-22)
 
 
