@@ -33,7 +33,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
       setFormData({
         name: network.name,
         cidr: network.cidr,
-        dns: [],
+        dns: network.dns,
       });
     } else {
       setFormData({
@@ -80,6 +80,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
         await api.updateNetwork(network.id, {
           name: formData.name,
           cidr: formData.cidr,
+          dns: formData.dns,
         });
       } else {
         await api.createNetwork({
