@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -94,7 +95,14 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	data.Set("client_secret", cfg.Auth.ClientSecret)
 
 	// Make request to token endpoint from discovery
-	resp, err := http.Post(discovery.TokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	tr := &http.Transport{}
+	if cfg.SkipTLSVerify {
+		tr = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+	client := &http.Client{Transport: tr}
+	resp, err := client.Post(discovery.TokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to exchange token: %v", err)})
 		return

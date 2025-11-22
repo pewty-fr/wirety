@@ -2,16 +2,14 @@ package oidc
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/rs/zerolog/log"
+	"wirety/internal/config"
 )
 
 // Discovery represents the OIDC discovery document fields we need.
@@ -47,19 +45,21 @@ func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 	}
 	cacheMu.RUnlock()
 	discoveryURL := issuerURL + "/.well-known/openid-configuration"
-	ips, err := net.LookupIP(strings.Split(strings.TrimPrefix(strings.Split(issuerURL, "://")[1], ""), "/")[0])
-	if err != nil {
-		log.Error().Err(err).Msg("Could not get IPs")
-		os.Exit(1)
+
+	cfg := config.LoadConfig()
+	tr := &http.Transport{}
+	if cfg.SkipTLSVerify {
+		tr = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
 	}
-	for _, ip := range ips {
-		log.Info().Msgf("%s. IN A %s\n", strings.TrimPrefix(strings.Split(issuerURL, "://")[1], ""), ip.String())
-	}
-	req, err := http.NewRequest(http.MethodGet, discoveryURL, nil)
+	client := &http.Client{Transport: tr}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch discovery document: %w", err)
 	}
