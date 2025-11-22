@@ -47,7 +47,7 @@ func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 	}
 	cacheMu.RUnlock()
 	discoveryURL := issuerURL + "/.well-known/openid-configuration"
-	ips, err := net.LookupIP(strings.TrimPrefix(strings.Split(issuerURL, "://")[1], ""))
+	ips, err := net.LookupIP(strings.Split(strings.TrimPrefix(strings.Split(issuerURL, "://")[1], ""), "/")[0])
 	if err != nil {
 		log.Error().Err(err).Msg("Could not get IPs")
 		os.Exit(1)
