@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Discovery represents the OIDC discovery document fields we need.
@@ -47,11 +49,11 @@ func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 	discoveryURL := issuerURL + "/.well-known/openid-configuration"
 	ips, err := net.LookupIP(strings.TrimPrefix(strings.Split(issuerURL, "://")[1], ""))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get IPs: %v\n", err)
+		log.Error().Err(err).Msg("Could not get IPs")
 		os.Exit(1)
 	}
 	for _, ip := range ips {
-		fmt.Printf("%s. IN A %s\n", strings.TrimPrefix(strings.Split(issuerURL, "://")[1], ""), ip.String())
+		log.Info().Msgf("%s. IN A %s\n", strings.TrimPrefix(strings.Split(issuerURL, "://")[1], ""), ip.String())
 	}
 	req, err := http.NewRequest(http.MethodGet, discoveryURL, nil)
 	if err != nil {
