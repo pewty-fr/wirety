@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.4](https://github.com/pewty-fr/wirety/compare/wirety-front/v1.1.3...wirety-front/v1.1.4) (2025-11-22)
+
+
+### Bug Fixes
+
+* apiclient ([f034b32](https://github.com/pewty-fr/wirety/commit/f034b3261701a06b830877c74ed90ea7c096938a))
+
 ## [1.1.3](https://github.com/pewty-fr/wirety/compare/wirety-front/v1.1.2...wirety-front/v1.1.3) (2025-11-22)
 
 
