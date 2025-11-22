@@ -156,3 +156,68 @@ func (r *UserRepository) SetDefaultPermissions(perms *auth.DefaultNetworkPermiss
 	}
 	return nil
 }
+
+// Session management methods
+
+func (r *UserRepository) CreateSession(session *auth.Session) error {
+	now := time.Now()
+	session.CreatedAt = now
+	session.LastUsedAt = now
+	_, err := r.db.Exec(`INSERT INTO user_sessions (session_hash, user_id, access_token, refresh_token, access_token_expires_at, refresh_token_expires_at, created_at, last_used_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		session.SessionHash, session.UserID, session.AccessToken, session.RefreshToken, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt, session.CreatedAt, session.LastUsedAt)
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+	return nil
+}
+
+func (r *UserRepository) GetSession(sessionHash string) (*auth.Session, error) {
+	var s auth.Session
+	err := r.db.QueryRow(`SELECT session_hash, user_id, access_token, refresh_token, access_token_expires_at, refresh_token_expires_at, created_at, last_used_at FROM user_sessions WHERE session_hash=$1`, sessionHash).
+		Scan(&s.SessionHash, &s.UserID, &s.AccessToken, &s.RefreshToken, &s.AccessTokenExpiresAt, &s.RefreshTokenExpiresAt, &s.CreatedAt, &s.LastUsedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("session not found")
+		}
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+	return &s, nil
+}
+
+func (r *UserRepository) UpdateSession(session *auth.Session) error {
+	session.LastUsedAt = time.Now()
+	_, err := r.db.Exec(`UPDATE user_sessions SET access_token=$2, refresh_token=$3, access_token_expires_at=$4, refresh_token_expires_at=$5, last_used_at=$6 WHERE session_hash=$1`,
+		session.SessionHash, session.AccessToken, session.RefreshToken, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt, session.LastUsedAt)
+	if err != nil {
+		return fmt.Errorf("update session: %w", err)
+	}
+	return nil
+}
+
+func (r *UserRepository) DeleteSession(sessionHash string) error {
+	res, err := r.db.Exec(`DELETE FROM user_sessions WHERE session_hash=$1`, sessionHash)
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("session not found")
+	}
+	return nil
+}
+
+func (r *UserRepository) DeleteUserSessions(userID string) error {
+	_, err := r.db.Exec(`DELETE FROM user_sessions WHERE user_id=$1`, userID)
+	if err != nil {
+		return fmt.Errorf("delete user sessions: %w", err)
+	}
+	return nil
+}
+
+func (r *UserRepository) CleanupExpiredSessions() error {
+	_, err := r.db.Exec(`DELETE FROM user_sessions WHERE refresh_token_expires_at < NOW()`)
+	if err != nil {
+		return fmt.Errorf("cleanup expired sessions: %w", err)
+	}
+	return nil
+}

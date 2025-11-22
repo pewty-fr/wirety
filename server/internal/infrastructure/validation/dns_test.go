@@ -1,5 +1,4 @@
 package validation
-package validation
 
 import (
 	"testing"
@@ -20,7 +19,7 @@ func TestValidateDNSName(t *testing.T) {
 		{"single character", "a", false, nil},
 		{"starts with number", "1host", false, nil},
 		{"ends with number", "host1", false, nil},
-		
+
 		// Invalid names
 		{"empty name", "", true, ErrNameEmpty},
 		{"starts with hyphen", "-hostname", true, ErrNameStartsWithHyphen},
@@ -38,7 +37,7 @@ func TestValidateDNSName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateDNSName(tt.input)
-			
+
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("ValidateDNSName() expected error but got none")
@@ -88,7 +87,7 @@ func TestSanitizeDNSName(t *testing.T) {
 func TestValidateDNSNameCaseSensitivity(t *testing.T) {
 	// Test that validation handles case conversion properly
 	testCases := []string{"MyHost", "MYHOST", "myHOST", "MyHoSt"}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc, func(t *testing.T) {
 			err := ValidateDNSName(tc)

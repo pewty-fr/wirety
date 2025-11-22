@@ -36,16 +36,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fetchAuthConfig();
   }, []);
 
-  // Check for token and fetch user on mount
+  // Check for session and fetch user on mount
   useEffect(() => {
     if (authConfig === null) {
       // Still loading config
       return;
     }
 
-    const token = localStorage.getItem('access_token');
-    if (token) {
-      fetchCurrentUser(token);
+    const sessionHash = localStorage.getItem('session_hash');
+    if (sessionHash) {
+      fetchCurrentUser(sessionHash);
     } else if (!authConfig.enabled) {
       // No-auth mode: create default admin user immediately
       setUser({
@@ -57,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       setIsLoading(false);
     } else {
-      // Auth enabled but no token - show login page
+      // Auth enabled but no session - show login page
       setIsLoading(false);
     }
   }, [authConfig]);
@@ -90,12 +90,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const fetchCurrentUser = async (token: string) => {
+  const fetchCurrentUser = async (sessionHash: string) => {
     setIsLoading(true);
     try {
       const response = await fetch(`${API_BASE}/users/me`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Session ${sessionHash}`,
         },
       });
 
@@ -105,14 +105,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
       } else {
         console.warn('Failed to fetch user, status:', response.status);
-        // Token invalid, remove it
-        localStorage.removeItem('access_token');
+        // Session invalid, remove it
+        localStorage.removeItem('session_hash');
         setUser(null);
         setIsLoading(false);
       }
     } catch (error) {
       console.error('Failed to fetch current user:', error);
-      localStorage.removeItem('access_token');
+      localStorage.removeItem('session_hash');
       setUser(null);
       setIsLoading(false);
     }
@@ -134,19 +134,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (response.ok) {
-        const tokenData = await response.json();
-        console.log('Token exchange successful');
-        localStorage.setItem('access_token', tokenData.access_token);
+        const sessionData = await response.json();
+        console.log('Session created successfully');
+        localStorage.setItem('session_hash', sessionData.session_hash);
         
         // Remove code from URL
         window.history.replaceState({}, document.title, window.location.pathname);
         
         // Fetch user data
         console.log('Fetching user data...');
-        await fetchCurrentUser(tokenData.access_token);
+        await fetchCurrentUser(sessionData.session_hash);
       } else {
         const errorText = await response.text();
-        console.error('Token exchange failed:', response.status, errorText);
+        console.error('Session creation failed:', response.status, errorText);
         setIsLoading(false);
       }
     } catch (error) {
@@ -181,7 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         `client_id=${authConfig.client_id}&` +
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `response_type=code&` +
-        `scope=openid profile email`;
+        `scope=openid profile email offline_access`;
 
       window.location.href = authUrl;
     } catch (error) {
@@ -190,7 +190,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-    localStorage.removeItem('access_token');
+    const sessionHash = localStorage.getItem('session_hash');
+    
+    // Invalidate server-side session
+    if (sessionHash) {
+      try {
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            session_hash: sessionHash,
+          }),
+        });
+      } catch (error) {
+        console.error('Failed to invalidate session:', error);
+      }
+    }
+
+    localStorage.removeItem('session_hash');
     setUser(null);
 
     if (authConfig && authConfig.enabled) {

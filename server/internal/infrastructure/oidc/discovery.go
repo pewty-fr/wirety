@@ -42,8 +42,8 @@ func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 		return val, nil
 	}
 	cacheMu.RUnlock()
-
 	discoveryURL := issuerURL + "/.well-known/openid-configuration"
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery request: %w", err)

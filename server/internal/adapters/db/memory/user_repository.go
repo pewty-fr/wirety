@@ -12,6 +12,7 @@ type UserRepository struct {
 	mu           sync.RWMutex
 	users        map[string]*auth.User // userID -> User
 	usersByEmail map[string]*auth.User // email -> User
+	sessions     map[string]*auth.Session // sessionHash -> Session
 	defaultPerms *auth.DefaultNetworkPermissions
 }
 
@@ -144,5 +145,108 @@ func (r *UserRepository) SetDefaultPermissions(perms *auth.DefaultNetworkPermiss
 	defer r.mu.Unlock()
 
 	r.defaultPerms = perms
+	return nil
+}
+
+// Session management methods
+
+// CreateSession creates a new session
+func (r *UserRepository) CreateSession(session *auth.Session) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.sessions == nil {
+		r.sessions = make(map[string]*auth.Session)
+	}
+
+	if _, exists := r.sessions[session.SessionHash]; exists {
+		return fmt.Errorf("session already exists")
+	}
+
+	r.sessions[session.SessionHash] = session
+	return nil
+}
+
+// GetSession retrieves a session by hash
+func (r *UserRepository) GetSession(sessionHash string) (*auth.Session, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.sessions == nil {
+		return nil, fmt.Errorf("session not found")
+	}
+
+	session, exists := r.sessions[sessionHash]
+	if !exists {
+		return nil, fmt.Errorf("session not found")
+	}
+	return session, nil
+}
+
+// UpdateSession updates an existing session
+func (r *UserRepository) UpdateSession(session *auth.Session) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.sessions == nil {
+		return fmt.Errorf("session not found")
+	}
+
+	if _, exists := r.sessions[session.SessionHash]; !exists {
+		return fmt.Errorf("session not found")
+	}
+
+	r.sessions[session.SessionHash] = session
+	return nil
+}
+
+// DeleteSession deletes a session
+func (r *UserRepository) DeleteSession(sessionHash string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.sessions == nil {
+		return fmt.Errorf("session not found")
+	}
+
+	if _, exists := r.sessions[sessionHash]; !exists {
+		return fmt.Errorf("session not found")
+	}
+
+	delete(r.sessions, sessionHash)
+	return nil
+}
+
+// DeleteUserSessions deletes all sessions for a user
+func (r *UserRepository) DeleteUserSessions(userID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.sessions == nil {
+		return nil
+	}
+
+	for hash, session := range r.sessions {
+		if session.UserID == userID {
+			delete(r.sessions, hash)
+		}
+	}
+	return nil
+}
+
+// CleanupExpiredSessions removes sessions with expired refresh tokens
+func (r *UserRepository) CleanupExpiredSessions() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.sessions == nil {
+		return nil
+	}
+
+	for hash, session := range r.sessions {
+		if session.IsRefreshTokenExpired() {
+			delete(r.sessions, hash)
+		}
+	}
 	return nil
 }

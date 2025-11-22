@@ -29,8 +29,8 @@ func (r *NetworkRepository) CreateNetwork(ctx context.Context, n *network.Networ
 	now := time.Now()
 	n.CreatedAt = now
 	n.UpdatedAt = now
-	_, err := r.db.ExecContext(ctx, `INSERT INTO networks (id,name,cidr,created_at,updated_at) VALUES ($1,$2,$3,$4,$5)`,
-		n.ID, n.Name, n.CIDR, n.CreatedAt, n.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `INSERT INTO networks (id,name,cidr,dns,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+		n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.CreatedAt, n.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create network: %w", err)
 	}
@@ -45,8 +45,8 @@ func (r *NetworkRepository) CreateNetwork(ctx context.Context, n *network.Networ
 
 func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*network.Network, error) {
 	var n network.Network
-	err := r.db.QueryRowContext(ctx, `SELECT id,name,cidr,created_at,updated_at FROM networks WHERE id=$1`, networkID).
-		Scan(&n.ID, &n.Name, &n.CIDR, &n.CreatedAt, &n.UpdatedAt)
+	err := r.db.QueryRowContext(ctx, `SELECT id,name,cidr,dns,created_at,updated_at FROM networks WHERE id=$1`, networkID).
+		Scan(&n.ID, &n.Name, &n.CIDR, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("network not found")
@@ -80,7 +80,7 @@ func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*
 
 func (r *NetworkRepository) UpdateNetwork(ctx context.Context, n *network.Network) error {
 	n.UpdatedAt = time.Now()
-	_, err := r.db.ExecContext(ctx, `UPDATE networks SET name=$2,cidr=$3,updated_at=$4 WHERE id=$1`, n.ID, n.Name, n.CIDR, n.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `UPDATE networks SET name=$2,cidr=$3,dns=$4,updated_at=$5 WHERE id=$1`, n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update network: %w", err)
 	}
@@ -101,7 +101,7 @@ func (r *NetworkRepository) DeleteNetwork(ctx context.Context, networkID string)
 }
 
 func (r *NetworkRepository) ListNetworks(ctx context.Context) ([]*network.Network, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT n.id,n.name,n.cidr,n.created_at,n.updated_at, COALESCE(p.peer_count,0) AS peer_count FROM networks n LEFT JOIN (SELECT network_id, COUNT(*) AS peer_count FROM peers GROUP BY network_id) p ON p.network_id = n.id ORDER BY n.created_at ASC`)
+	rows, err := r.db.QueryContext(ctx, `SELECT n.id,n.name,n.cidr,n.dns,n.created_at,n.updated_at, COALESCE(p.peer_count,0) AS peer_count FROM networks n LEFT JOIN (SELECT network_id, COUNT(*) AS peer_count FROM peers GROUP BY network_id) p ON p.network_id = n.id ORDER BY n.created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
@@ -109,7 +109,7 @@ func (r *NetworkRepository) ListNetworks(ctx context.Context) ([]*network.Networ
 	out := make([]*network.Network, 0)
 	for rows.Next() {
 		var n network.Network
-		err = rows.Scan(&n.ID, &n.Name, &n.CIDR, &n.CreatedAt, &n.UpdatedAt, &n.PeerCount)
+		err = rows.Scan(&n.ID, &n.Name, &n.CIDR, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt, &n.PeerCount)
 		if err != nil {
 			return nil, err
 		}

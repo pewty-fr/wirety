@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"wirety/internal/adapters/api/middleware"
+	appauth "wirety/internal/application/auth"
 	"wirety/internal/application/ipam"
 	"wirety/internal/application/network"
 	"wirety/internal/domain/auth"
@@ -22,6 +23,7 @@ import (
 type Handler struct {
 	service     *network.Service
 	ipamService *ipam.Service
+	authService *appauth.Service
 	wsManager   *WebSocketManager
 	userRepo    auth.Repository
 }
@@ -43,7 +45,7 @@ type PaginatedPeers struct {
 }
 
 // NewHandler creates a new API handler
-func NewHandler(service *network.Service, ipamService *ipam.Service, userRepo auth.Repository) *Handler {
+func NewHandler(service *network.Service, ipamService *ipam.Service, authService *appauth.Service, userRepo auth.Repository) *Handler {
 	wsManager := NewWebSocketManager(service)
 
 	// Set the WebSocket notifier on the service so it can trigger config updates
@@ -52,6 +54,7 @@ func NewHandler(service *network.Service, ipamService *ipam.Service, userRepo au
 	return &Handler{
 		service:     service,
 		ipamService: ipamService,
+		authService: authService,
 		wsManager:   wsManager,
 		userRepo:    userRepo,
 	}
@@ -66,6 +69,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 		api.GET("/health", h.Health)
 		api.GET("/auth/config", h.GetAuthConfig)
 		api.POST("/auth/token", h.ExchangeToken)
+		api.POST("/auth/logout", h.Logout)
 		// Agent endpoints (token-based authentication, not OIDC)
 		api.GET("/agent/resolve", h.ResolveAgent)
 		api.GET("/ws", h.HandleWebSocketToken)               // token-based WebSocket

@@ -28,4 +28,23 @@ type Repository interface {
 
 	// SetDefaultPermissions sets default permissions for new users
 	SetDefaultPermissions(perms *DefaultNetworkPermissions) error
+
+	// Session management
+	// CreateSession creates a new session
+	CreateSession(session *Session) error
+
+	// GetSession retrieves a session by hash
+	GetSession(sessionHash string) (*Session, error)
+
+	// UpdateSession updates an existing session
+	UpdateSession(session *Session) error
+
+	// DeleteSession deletes a session
+	DeleteSession(sessionHash string) error
+
+	// DeleteUserSessions deletes all sessions for a user
+	DeleteUserSessions(userID string) error
+
+	// CleanupExpiredSessions removes sessions with expired refresh tokens
+	CleanupExpiredSessions() error
 }

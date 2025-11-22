@@ -109,7 +109,7 @@ func main() {
 	}
 
 	// Initialize API handler
-	handler := api.NewHandler(networkService, ipamService, userRepo)
+	handler := api.NewHandler(networkService, ipamService, authService, userRepo)
 
 	// Setup Gin router
 	gin.SetMode(gin.ReleaseMode)
@@ -125,7 +125,7 @@ func main() {
 	}))
 
 	// Setup authentication middleware
-	authMiddleware := middleware.AuthMiddleware(authService, &cfg.Auth)
+	authMiddleware := middleware.AuthMiddleware(authService, userRepo, &cfg.Auth)
 	requireAdmin := middleware.RequireAdmin()
 	requireNetworkAccess := middleware.RequireNetworkAccess()
 

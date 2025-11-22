@@ -33,7 +33,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
       setFormData({
         name: network.name,
         cidr: network.cidr,
-        dns: [],
+        dns: network.dns,
       });
     } else {
       setFormData({
@@ -80,6 +80,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
         await api.updateNetwork(network.id, {
           name: formData.name,
           cidr: formData.cidr,
+          dns: formData.dns,
         });
       } else {
         await api.createNetwork({
@@ -219,47 +220,45 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
           <p className="mt-1 text-sm text-gray-500">Network address range in CIDR notation</p>
         </div>
 
-        {/* DNS Servers (only for create) */}
-        {!isEditMode && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              DNS Servers (optional)
-            </label>
-            <div className="flex gap-2 mb-2">
-              <input
-                type="text"
-                value={dnsInput}
-                onChange={(e) => setDnsInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addDns())}
-                className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                placeholder="e.g., 8.8.8.8"
-              />
-              <button
-                type="button"
-                onClick={addDns}
-                className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
-              >
-                Add
-              </button>
-            </div>
-            {formData.dns.length > 0 && (
-              <div className="space-y-1">
-                {formData.dns.map((dns, index) => (
-                  <div key={index} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded">
-                    <span className="text-sm text-gray-700">{dns}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeDns(index)}
-                      className="text-red-600 hover:text-red-800"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+        {/* DNS Servers */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            DNS Servers (optional)
+          </label>
+          <div className="flex gap-2 mb-2">
+            <input
+              type="text"
+              value={dnsInput}
+              onChange={(e) => setDnsInput(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addDns())}
+              className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              placeholder="e.g., 8.8.8.8"
+            />
+            <button
+              type="button"
+              onClick={addDns}
+              className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+            >
+              Add
+            </button>
           </div>
-        )}
+          {formData.dns.length > 0 && (
+            <div className="space-y-1">
+              {formData.dns.map((dns, index) => (
+                <div key={index} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded">
+                  <span className="text-left px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white transition-colors">{dns}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeDns(index)}
+                    className="text-red-600 hover:text-red-800"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Actions */}
         <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
