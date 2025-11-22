@@ -72,9 +72,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [authConfig]);
 
+  const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_REACT_APP_API_URL) || (typeof window !== 'undefined' && (window as any).REACT_APP_API_URL) || 'http://localhost:8080/api/v1';
   const fetchAuthConfig = async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/v1/auth/config');
+      const response = await fetch(`${API_BASE}/auth/config`);
       if (!response.ok) {
         throw new Error(`Failed to fetch auth config: ${response.status}`);
       }
@@ -92,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchCurrentUser = async (token: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/v1/users/me', {
+      const response = await fetch(`${API_BASE}/users/me`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -121,7 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const redirectUri = `${window.location.origin}/`;
       
-      const response = await fetch('http://localhost:8080/api/v1/auth/token', {
+      const response = await fetch(`${API_BASE}/auth/token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

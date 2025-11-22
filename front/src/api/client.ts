@@ -8,7 +8,7 @@ class ApiClient {
   constructor(baseURL?: string) {
     const apiBaseUrl =
       baseURL ||
-      process.env.REACT_APP_API_URL ||
+      (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_REACT_APP_API_URL) ||
       (typeof window !== 'undefined' && (window as any).REACT_APP_API_URL) ||
       'http://localhost:8080/api/v1';
     this.client = axios.create({
