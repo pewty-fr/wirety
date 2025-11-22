@@ -2,14 +2,12 @@ package oidc
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
-	"wirety/internal/config"
 )
 
 // Discovery represents the OIDC discovery document fields we need.
@@ -46,20 +44,11 @@ func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 	cacheMu.RUnlock()
 	discoveryURL := issuerURL + "/.well-known/openid-configuration"
 
-	cfg := config.LoadConfig()
-	tr := &http.Transport{}
-	if cfg.SkipTLSVerify {
-		tr = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-	}
-	client := &http.Client{Transport: tr}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery request: %w", err)
 	}
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch discovery document: %w", err)
 	}
