@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.4](https://github.com/pewty-fr/wirety/compare/wirety-server/v1.1.3...wirety-server/v1.1.4) (2025-11-22)
+
+
+### Bug Fixes
+
+* cors allowed origin ([3f9be09](https://github.com/pewty-fr/wirety/commit/3f9be09afb2226cf666be80c0fd3b2a7c35d05c3))
+
 ## [1.1.3](https://github.com/pewty-fr/wirety/compare/wirety-server/v1.1.2...wirety-server/v1.1.3) (2025-11-21)
 
 
