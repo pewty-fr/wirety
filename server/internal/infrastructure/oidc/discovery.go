@@ -45,6 +45,7 @@ func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 
 	discoveryURL := issuerURL + "/.well-known/openid-configuration"
 	req, err := http.NewRequest(http.MethodGet, discoveryURL, nil)
+	req.Header.Set("Host", "https://keycloak.pewty.fr")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery request: %w", err)
 	}
