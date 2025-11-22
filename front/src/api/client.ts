@@ -5,7 +5,7 @@ import type { Network, Peer, IPAMAllocation, SecurityIncident, User, PaginatedRe
 class ApiClient {
   private client: AxiosInstance;
 
-  constructor(baseURL?: string) {
+  constructor() {
     const apiBaseUrl = '/api/v1';
     this.client = axios.create({
       baseURL: apiBaseUrl,
