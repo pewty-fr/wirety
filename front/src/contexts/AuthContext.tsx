@@ -72,7 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [authConfig]);
 
-  const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_REACT_APP_API_URL) || (typeof window !== 'undefined' && (window as any).REACT_APP_API_URL) || 'http://localhost:8080/api/v1';
+  const API_BASE = '/api/v1';
   const fetchAuthConfig = async () => {
     try {
       const response = await fetch(`${API_BASE}/auth/config`);
