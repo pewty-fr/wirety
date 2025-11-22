@@ -246,7 +246,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
             <div className="space-y-1">
               {formData.dns.map((dns, index) => (
                 <div key={index} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded">
-                  <span className="text-sm text-gray-700">{dns}</span>
+                  <span className="text-left px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white transition-colors">{dns}</span>
                   <button
                     type="button"
                     onClick={() => removeDns(index)}
