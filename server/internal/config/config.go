@@ -8,9 +8,10 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	HTTPPort string     `json:"http_port"`
-	Auth     AuthConfig `json:"auth"`
-	Database DBConfig   `json:"database"`
+	HTTPPort      string     `json:"http_port"`
+	AllowedOrigin string     `json:"allowed_origin"`
+	Auth          AuthConfig `json:"auth"`
+	Database      DBConfig   `json:"database"`
 }
 
 // AuthConfig holds authentication-related configuration
@@ -25,7 +26,8 @@ type AuthConfig struct {
 // LoadConfig loads configuration from environment variables
 func LoadConfig() *Config {
 	return &Config{
-		HTTPPort: getEnv("HTTP_PORT", "8080"),
+		HTTPPort:      getEnv("HTTP_PORT", "8080"),
+		AllowedOrigin: getEnv("ALLOWED_ORIGIN", "*"),
 		Auth: AuthConfig{
 			Enabled:      getEnv("AUTH_ENABLED", "false") == "true",
 			IssuerURL:    getEnv("AUTH_ISSUER_URL", ""),
