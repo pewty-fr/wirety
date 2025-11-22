@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -257,4 +259,57 @@ func getInt64Claim(claims jwt.MapClaims, key string) int64 {
 		return int64(val)
 	}
 	return 0
+}
+
+// RefreshAccessToken refreshes an access token using a refresh token
+func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (string, int, error) {
+	if !s.config.Enabled {
+		return "", 0, fmt.Errorf("authentication is not enabled")
+	}
+
+	// Discover OIDC endpoints
+	discovery, err := oidc.Discover(ctx, s.config.IssuerURL)
+	if err != nil {
+		return "", 0, fmt.Errorf("oidc discovery failed: %w", err)
+	}
+
+	// Prepare refresh token request
+	data := make(map[string]string)
+	data["grant_type"] = "refresh_token"
+	data["refresh_token"] = refreshToken
+	data["client_id"] = s.config.ClientID
+	data["client_secret"] = s.config.ClientSecret
+
+	// Make request to token endpoint
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, discovery.TokenEndpoint, strings.NewReader(string(jsonData)))
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to refresh token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", 0, fmt.Errorf("token refresh failed: %s", string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", 0, fmt.Errorf("failed to parse token response: %w", err)
+	}
+
+	return tokenResp.AccessToken, tokenResp.ExpiresIn, nil
 }

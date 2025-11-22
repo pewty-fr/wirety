@@ -14,11 +14,11 @@ class ApiClient {
       },
     });
 
-    // Add request interceptor to include auth token
+    // Add request interceptor to include session hash
     this.client.interceptors.request.use((config) => {
-      const token = localStorage.getItem('access_token');
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+      const sessionHash = localStorage.getItem('session_hash');
+      if (sessionHash) {
+        config.headers.Authorization = `Session ${sessionHash}`;
       }
       return config;
     });
