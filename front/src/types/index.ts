@@ -2,6 +2,7 @@ export interface Network {
   id: string;
   name: string;
   cidr: string;
+  dns: string[];
   created_at: string;
   updated_at: string;
   peer_count?: number;

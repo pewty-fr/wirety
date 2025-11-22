@@ -13,4 +13,5 @@ type OIDCClaims struct {
 	Audience          []string `json:"aud"`                // Token audience
 	ExpiresAt         int64    `json:"exp"`                // Expiration time
 	IssuedAt          int64    `json:"iat"`                // Issued at time
+	AuthorizedParty   string   `json:"azp"`                // Authorized party
 }

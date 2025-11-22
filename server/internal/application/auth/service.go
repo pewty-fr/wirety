@@ -92,6 +92,7 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*auth.
 		Issuer:            getStringClaim(claims, "iss"),
 		ExpiresAt:         getInt64Claim(claims, "exp"),
 		IssuedAt:          getInt64Claim(claims, "iat"),
+		AuthorizedParty:   getStringClaim(claims, "azp"),
 	}
 
 	// Verify issuer
@@ -99,11 +100,11 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*auth.
 		return nil, fmt.Errorf("invalid issuer: expected %s, got %s", s.config.IssuerURL, oidcClaims.Issuer)
 	}
 
-	// Verify audience if ClientID is set
+	// Verify azp if ClientID is set
 	if s.config.ClientID != "" {
-		if aud, ok := claims["aud"].([]interface{}); ok {
+		if azp, ok := claims["azp"].([]interface{}); ok {
 			found := false
-			for _, a := range aud {
+			for _, a := range azp {
 				if a.(string) == s.config.ClientID {
 					found = true
 					break
@@ -112,8 +113,8 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*auth.
 			if !found {
 				return nil, fmt.Errorf("invalid audience")
 			}
-		} else if aud, ok := claims["aud"].(string); ok {
-			if aud != s.config.ClientID {
+		} else if azp, ok := claims["azp"].(string); ok {
+			if azp != s.config.ClientID {
 				return nil, fmt.Errorf("invalid audience")
 			}
 		}

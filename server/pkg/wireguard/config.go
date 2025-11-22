@@ -23,9 +23,12 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 
 	// Add DNS if domain is configured
 	domain := network.GetDomain()
+	dns := network.DNS
 	if domain != "" {
-		sb.WriteString(fmt.Sprintf("DNS = %s\n", extractDNSServer(network.CIDR)))
+		dns = append([]string{extractDNSServer(network.CIDR)}, dns...)
 	}
+	sb.WriteString(fmt.Sprintf("DNS = %s\n", strings.Join(dns, ", ")))
+
 
 	// Jump server packet filtering & forwarding now handled dynamically by agent firewall adapter.
 	// (No PostUp/PostDown iptables rules embedded in config.)
