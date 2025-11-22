@@ -109,6 +109,10 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 		net.CIDR = req.CIDR
 		cidrChanged = true
 	}
+	if req.DNS != nil {
+		net.DNS = req.DNS
+	}
+
 	net.UpdatedAt = time.Now()
 
 	// If CIDR changed, reallocate all peer IPs

@@ -1,0 +1,2 @@
+ALTER TABLE network
+ADD COLUMN dns TEXT[] NOT NULL DEFAULT '{}';

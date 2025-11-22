@@ -10,6 +10,7 @@ type Network struct {
 	Peers     map[string]*Peer `json:"-"`          // Peer ID -> Peer
 	PeerCount int              `json:"peer_count"` // Computed number of peers for lightweight listing
 	ACL       *ACL             `json:"acl"`
+	DNS 		 []string         `json:"dns"` // Additional DNS servers for peers
 	CreatedAt time.Time        `json:"created_at"`
 	UpdatedAt time.Time        `json:"updated_at"`
 }
@@ -25,6 +26,7 @@ type NetworkCreateRequest struct {
 type NetworkUpdateRequest struct {
 	Name string `json:"name,omitempty"`
 	CIDR string `json:"cidr,omitempty"`
+	DNS  []string `json:"dns,omitempty"`
 }
 
 // AddPeer adds a peer to the network
