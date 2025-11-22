@@ -1,9 +1,13 @@
 package api
 
 import (
+<<<<<<< HEAD
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+=======
+	"crypto/tls"
+>>>>>>> b24cf37 (test)
 	"encoding/json"
 	"fmt"
 	"io"

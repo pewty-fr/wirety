@@ -10,6 +10,7 @@ import (
 type Config struct {
 	HTTPPort      string     `json:"http_port"`
 	AllowedOrigin string     `json:"allowed_origin"`
+	SkipTLSVerify bool       `json:"skip_tls_verify"` // Because scaleway is shiity sometime, we need to disable TLS verification for OIDC
 	Auth          AuthConfig `json:"auth"`
 	Database      DBConfig   `json:"database"`
 }
@@ -28,6 +29,7 @@ func LoadConfig() *Config {
 	return &Config{
 		HTTPPort:      getEnv("HTTP_PORT", "8080"),
 		AllowedOrigin: getEnv("ALLOWED_ORIGIN", "*"),
+		SkipTLSVerify: getEnv("SKIP_TLS_VERIFY", "false") == "true",
 		Auth: AuthConfig{
 			Enabled:      getEnv("AUTH_ENABLED", "false") == "true",
 			IssuerURL:    getEnv("AUTH_ISSUER_URL", ""),

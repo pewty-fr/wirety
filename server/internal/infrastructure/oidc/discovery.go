@@ -2,12 +2,17 @@ package oidc
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+<<<<<<< HEAD
+=======
+	"wirety/internal/config"
+>>>>>>> b24cf37 (test)
 )
 
 // Discovery represents the OIDC discovery document fields we need.
@@ -48,7 +53,7 @@ func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch discovery document: %w", err)
 	}
