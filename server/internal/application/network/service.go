@@ -101,6 +101,7 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 
 	oldCIDR := net.CIDR
 	cidrChanged := false
+	dnsChanged := false
 
 	if req.Name != "" {
 		net.Name = req.Name
@@ -110,6 +111,23 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 		cidrChanged = true
 	}
 	if req.DNS != nil {
+		if len(req.DNS) != len(net.DNS) {
+			dnsChanged = true
+		}else{
+			for _, dns := range req.DNS {
+				match := 0
+				for _, existing := range net.DNS {
+					if dns == existing {
+						match++
+						break
+					}
+				}
+				if match != len(net.DNS) {
+					dnsChanged = true
+					break
+				}
+			}
+		}
 		net.DNS = req.DNS
 	}
 
@@ -160,6 +178,12 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 
 	if err := s.repo.UpdateNetwork(ctx, net); err != nil {
 		return nil, fmt.Errorf("failed to update network: %w", err)
+	}
+
+	if cidrChanged || dnsChanged{
+		if s.wsNotifier != nil {
+			s.wsNotifier.NotifyNetworkPeers(networkID)
+		}
 	}
 
 	return net, nil
