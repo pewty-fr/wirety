@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -42,10 +44,16 @@ func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 		return val, nil
 	}
 	cacheMu.RUnlock()
-
 	discoveryURL := issuerURL + "/.well-known/openid-configuration"
+	ips, err := net.LookupIP(strings.TrimPrefix(strings.Split(issuerURL, "://")[1], ""))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not get IPs: %v\n", err)
+		os.Exit(1)
+	}
+	for _, ip := range ips {
+		fmt.Printf("%s. IN A %s\n", strings.TrimPrefix(strings.Split(issuerURL, "://")[1], ""), ip.String())
+	}
 	req, err := http.NewRequest(http.MethodGet, discoveryURL, nil)
-	req.Header.Set("Host", "https://keycloak.pewty.fr")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery request: %w", err)
 	}
