@@ -691,6 +691,9 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 				if sess.LastSeen.After(activeSessionThreshold) {
 					currentSess = sess
 					break
+				}else if sess.Hostname == "" && sess.SystemUptime == -1 && sess.WireGuardUptime == -1 {
+					currentSess = sess
+					break
 				}
 			}
 		}else{
