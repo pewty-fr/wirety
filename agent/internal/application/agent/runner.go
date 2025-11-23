@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	dom "wirety/agent/internal/domain/dns"
 	pol "wirety/agent/internal/domain/policy"
@@ -79,10 +80,16 @@ func (r *Runner) Start(stop <-chan struct{}) {
 		backoff = r.backoffBase
 		log.Info().Str("url", r.wsURL).Msg("websocket connected")
 
-		// Start heartbeat goroutine
+		// Start heartbeat goroutine with endpoint change detection
 		heartbeatTicker := time.NewTicker(r.heartbeatInterval)
 		defer heartbeatTicker.Stop()
+		endpointCheckTicker := time.NewTicker(300 * time.Millisecond)
+		defer endpointCheckTicker.Stop()
 		heartbeatDone := make(chan struct{})
+
+		// Track last known peer endpoints
+		var lastPeerEndpoints map[string]string
+		var lastPeerEndpointsMu sync.RWMutex
 
 		go func() {
 			for {
@@ -90,7 +97,52 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				case <-heartbeatDone:
 					return
 				case <-heartbeatTicker.C:
+					// Regular heartbeat every 30 seconds
 					r.sendHeartbeat()
+
+					// Update last known endpoints after sending
+					sysInfo, err := CollectSystemInfo(r.wgInterface)
+					if err == nil {
+						lastPeerEndpointsMu.Lock()
+						lastPeerEndpoints = sysInfo.PeerEndpoints
+						lastPeerEndpointsMu.Unlock()
+					}
+				case <-endpointCheckTicker.C:
+					// Check for endpoint changes every 300ms
+					sysInfo, err := CollectSystemInfo(r.wgInterface)
+					if err != nil {
+						continue
+					}
+
+					// Compare with last known endpoints
+					lastPeerEndpointsMu.RLock()
+					changed := false
+					if lastPeerEndpoints == nil {
+						// First check, initialize
+						changed = false
+					} else if len(sysInfo.PeerEndpoints) != len(lastPeerEndpoints) {
+						// Number of peers changed
+						changed = true
+					} else {
+						// Check if any endpoint changed
+						for pubKey, endpoint := range sysInfo.PeerEndpoints {
+							if lastEndpoint, exists := lastPeerEndpoints[pubKey]; !exists || lastEndpoint != endpoint {
+								changed = true
+								break
+							}
+						}
+					}
+					lastPeerEndpointsMu.RUnlock()
+
+					if changed {
+						log.Info().Msg("peer endpoints changed, sending immediate heartbeat")
+						r.sendHeartbeat()
+
+						// Update last known endpoints
+						lastPeerEndpointsMu.Lock()
+						lastPeerEndpoints = sysInfo.PeerEndpoints
+						lastPeerEndpointsMu.Unlock()
+					}
 				}
 			}
 		}()
