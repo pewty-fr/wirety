@@ -113,7 +113,7 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 	if req.DNS != nil {
 		if len(req.DNS) != len(net.DNS) {
 			dnsChanged = true
-		}else{
+		} else {
 			for _, dns := range req.DNS {
 				match := 0
 				for _, existing := range net.DNS {
@@ -180,7 +180,7 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 		return nil, fmt.Errorf("failed to update network: %w", err)
 	}
 
-	if cidrChanged || dnsChanged{
+	if cidrChanged || dnsChanged {
 		if s.wsNotifier != nil {
 			s.wsNotifier.NotifyNetworkPeers(networkID)
 		}
@@ -691,12 +691,13 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 				if sess.LastSeen.After(activeSessionThreshold) {
 					currentSess = sess
 					break
-				}else if sess.Hostname == "" && sess.SystemUptime == -1 && sess.WireGuardUptime == -1 {
-					currentSess = sess
+				} else if sess.Hostname == "" && sess.SystemUptime == -1 && sess.WireGuardUptime == -1 {
+					sess.LastSeen = now
+					_ = s.repo.CreateOrUpdateSession(ctx, networkID, sess)
 					break
 				}
 			}
-		}else{
+		} else {
 			currentSess = &network.AgentSession{
 				PeerID:          id,
 				Hostname:        "",
