@@ -888,6 +888,44 @@ func (s *Service) ResolveSecurityIncident(ctx context.Context, incidentID, resol
 		fmt.Printf("SECURITY: Unblocked peer %s in ACLs for networks: %v\n", incident.PeerName, unblocked)
 	}
 
+	// Clean up endpoint changes for the peer
+	if incident.PeerID != "" && incident.NetworkID != "" {
+		// Delete all endpoint changes for this peer
+		if err := s.repo.DeleteEndpointChanges(ctx, incident.NetworkID, incident.PeerID); err != nil {
+			log.Warn().
+				Err(err).
+				Str("peer_id", incident.PeerID).
+				Str("network_id", incident.NetworkID).
+				Msg("failed to delete endpoint changes")
+		} else {
+			log.Info().
+				Str("peer_id", incident.PeerID).
+				Str("network_id", incident.NetworkID).
+				Msg("deleted endpoint changes for resolved incident")
+		}
+
+		// Reset the reported endpoint in agent sessions
+		sessions, err := s.repo.GetActiveSessionsForPeer(ctx, incident.NetworkID, incident.PeerID)
+		if err == nil {
+			for _, session := range sessions {
+				// Reset the reported endpoint to empty
+				session.ReportedEndpoint = ""
+				if err := s.repo.CreateOrUpdateSession(ctx, incident.NetworkID, session); err != nil {
+					log.Warn().
+						Err(err).
+						Str("peer_id", incident.PeerID).
+						Str("session_id", session.SessionID).
+						Msg("failed to reset reported endpoint for session")
+				} else {
+					log.Info().
+						Str("peer_id", incident.PeerID).
+						Str("session_id", session.SessionID).
+						Msg("reset reported endpoint for session")
+				}
+			}
+		}
+	}
+
 	return nil
 }
 

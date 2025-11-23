@@ -50,6 +50,7 @@ type Repository interface {
 	// Endpoint change tracking
 	RecordEndpointChange(ctx context.Context, networkID string, change *EndpointChange) error
 	GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*EndpointChange, error)
+	DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error
 
 	// Security incident operations
 	CreateSecurityIncident(ctx context.Context, incident *SecurityIncident) error

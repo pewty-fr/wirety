@@ -428,6 +428,26 @@ func (r *Repository) GetEndpointChanges(ctx context.Context, networkID, peerID s
 	return changes, nil
 }
 
+func (r *Repository) DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.endpointChanges[networkID] == nil {
+		return nil
+	}
+
+	// Filter out changes for this peer
+	filtered := make([]*network.EndpointChange, 0)
+	for _, change := range r.endpointChanges[networkID] {
+		if change.PeerID != peerID {
+			filtered = append(filtered, change)
+		}
+	}
+
+	r.endpointChanges[networkID] = filtered
+	return nil
+}
+
 // Security incident operations
 
 // CreateSecurityIncident creates a new security incident
