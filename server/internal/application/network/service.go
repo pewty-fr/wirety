@@ -722,7 +722,7 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 			continue
 		}
 		changes, err := s.repo.GetEndpointChanges(ctx, networkID, currentSess.PeerID, now.Add(-24*time.Hour))
-		if err == nil && len(changes) > 0 && changes[0].NewEndpoint != endpoint {
+		if err == nil && (len(changes) == 0 || (len(changes) > 0 && changes[0].NewEndpoint != endpoint)) {
 			change := &network.EndpointChange{
 				PeerID:      currentSess.PeerID,
 				OldEndpoint: currentSess.ReportedEndpoint,
