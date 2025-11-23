@@ -162,7 +162,7 @@ docker-compose logs -f
 
 1. **Download the binary**
 ```bash
-curl -fsSL https://github.com/pewty/wirety/releases/latest/download/wirety-server-linux-amd64 -o /usr/local/bin/wirety-server
+curl -fsSL https://github.com/pewty-fr/wirety/releases/latest/download/wirety-server-linux-amd64 -o /usr/local/bin/wirety-server
 chmod +x /usr/local/bin/wirety-server
 ```
 
@@ -225,7 +225,7 @@ server {
 
 ```bash
 # Download agent
-curl -fsSL https://github.com/pewty/wirety/releases/latest/download/wirety-agent-linux-amd64 -o /usr/local/bin/wirety-agent
+curl -fsSL https://github.com/pewty-fr/wirety/releases/latest/download/wirety-agent-linux-amd64 -o /usr/local/bin/wirety-agent
 chmod +x /usr/local/bin/wirety-agent
 
 # Create systemd service
@@ -273,7 +273,7 @@ systemctl start wirety-agent
         
     - name: Download Wirety agent
       get_url:
-        url: https://github.com/pewty/wirety/releases/latest/download/wirety-agent-linux-amd64
+        url: https://github.com/pewty-fr/wirety/releases/latest/download/wirety-agent-linux-amd64
         dest: /usr/local/bin/wirety-agent
         mode: '0755'
         

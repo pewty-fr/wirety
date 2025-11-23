@@ -47,7 +47,7 @@ For detailed deployment options, see the [Deployment Guide](./deployment).
 Retrieve the token from the peer view, then on the jump host:
 ```bash
 # Download the agent binary
-curl -fsSL https://github.com/pewty/wirety/releases/latest/download/wirety-agent-linux-amd64 -o /usr/local/bin/wirety-agent
+curl -fsSL https://github.com/pewty-fr/wirety/releases/latest/download/wirety-agent-linux-amd64 -o /usr/local/bin/wirety-agent
 chmod +x /usr/local/bin/wirety-agent
 
 # Run the agent with the enrollment token

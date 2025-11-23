@@ -16,7 +16,7 @@ Thank you for your interest in contributing to Wirety! This document provides gu
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/pewty/wirety.git
+git clone https://github.com/pewty-fr/wirety.git
 cd wirety
 ```
 

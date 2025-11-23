@@ -60,7 +60,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/pewty/wirety/tree/main/doc/',
+            'https://github.com/pewty-fr/wirety/tree/main/doc/',
         },
         blog: {
           showReadingTime: true,
@@ -70,7 +70,7 @@ const config: Config = {
           },
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/pewty/wirety/tree/main/doc/',
+            'https://github.com/pewty-fr/wirety/tree/main/doc/',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -108,7 +108,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://github.com/pewty/wirety',
+          href: 'https://github.com/pewty-fr/wirety',
           label: 'GitHub',
           position: 'right',
         },
@@ -152,7 +152,7 @@ const config: Config = {
             // },
             {
               label: 'GitHub',
-              href: 'https://github.com/pewty/wirety',
+              href: 'https://github.com/pewty-fr/wirety',
             },
           ],
         },

@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/pewty/wirety)](https://go.dev/)
-[![GitHub Release](https://img.shields.io/github/v/release/pewty/wirety)](https://github.com/pewty/wirety/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/pewty/wirety)](https://github.com/pewty-fr/wirety/releases)
 [![Docker Pulls](https://img.shields.io/badge/docker-pulls-blue)](https://rg.fr-par.scw.cloud/wirety)
 [![Helm Chart](https://img.shields.io/badge/helm-chart-0F1689)](https://rg.fr-par.scw.cloud/wirety/chart)
 
@@ -98,11 +98,11 @@ All Wirety components are available as container images:
 | **Server** | `rg.fr-par.scw.cloud/wirety/server` | `latest` |
 | **Frontend** | `rg.fr-par.scw.cloud/wirety/front` | `latest` |
 | **Documentation** | `rg.fr-par.scw.cloud/wirety/doc` | `latest` |
-| **Helm Chart** | `oci://rg.fr-par.scw.cloud/wirety/chart` | See [releases](https://github.com/pewty/wirety/releases) |
+| **Helm Chart** | `oci://rg.fr-par.scw.cloud/wirety/chart` | See [releases](https://github.com/pewty-fr/wirety/releases) |
 
 ### Agent Binary Releases
 
-Download pre-compiled binaries from [GitHub Releases](https://github.com/pewty/wirety/releases):
+Download pre-compiled binaries from [GitHub Releases](https://github.com/pewty-fr/wirety/releases):
 
 - Linux (amd64, arm64)
 - macOS (amd64, arm64)
@@ -132,12 +132,12 @@ helm install wirety oci://rg.fr-par.scw.cloud/wirety/chart/wirety \
 
 ```bash
 # Linux amd64
-wget https://github.com/pewty/wirety/releases/download/agent/v<version>/wirety-agent-linux-amd64
+wget https://github.com/pewty-fr/wirety/releases/download/agent/v<version>/wirety-agent-linux-amd64
 chmod +x wirety-agent-linux-amd64
 sudo mv wirety-agent-linux-amd64 /usr/local/bin/wirety-agent
 
 # Or use curl
-curl -L https://github.com/pewty/wirety/releases/download/agent/v<version>/wirety-agent-linux-amd64 -o wirety-agent
+curl -L https://github.com/pewty-fr/wirety/releases/download/agent/v<version>/wirety-agent-linux-amd64 -o wirety-agent
 chmod +x wirety-agent
 ```
 
@@ -293,7 +293,7 @@ Full documentation is available at [https://doc.wirety.fr](https://doc.wirety.fr
 
 ```bash
 # Clone the repository
-git clone https://github.com/pewty/wirety.git
+git clone https://github.com/pewty-fr/wirety.git
 cd wirety
 
 # Start the server
@@ -316,7 +316,7 @@ go build -o wirety-agent ./cmd/agent
 
 **Made with ❤️ by the Wirety community**
 
-<a href="https://github.com/pewty/wirety/graphs/contributors">
+<a href="https://github.com/pewty-fr/wirety/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=pewty/wirety" />
 </a>
 
@@ -347,9 +347,9 @@ furnished to do so, subject to the following conditions:
 
 - 🌐 **Website**: [https://pewty.fr](https://pewty.fr)
 - 📖 **Documentation**: [https://doc.wirety.fr](https://doc.wirety.fr)
-- 📦 **GitHub**: [https://github.com/pewty/wirety](https://github.com/pewty/wirety)
+- 📦 **GitHub**: [https://github.com/pewty-fr/wirety](https://github.com/pewty-fr/wirety)
 - 🐳 **Container Registry**: [rg.fr-par.scw.cloud/wirety](https://console.scaleway.com/registry/)
-- 💬 **Issues**: [GitHub Issues](https://github.com/pewty/wirety/issues)
+- 💬 **Issues**: [GitHub Issues](https://github.com/pewty-fr/wirety/issues)
 - 🤝 **Contributing**: [Contributing Guide](CONTRIBUTING.md)
 
 ---
