@@ -113,12 +113,10 @@ class ApiClient {
     const response = await this.client.get(`/networks/${networkId}/peers/${peerId}`);
     const peer = response.data;
     // Fetch session status for peers using agents
-    if (peer.use_agent) {
-      try {
-        peer.session_status = await this.getPeerSessionStatus(networkId, peerId);
-      } catch (error) {
-        console.warn(`Failed to fetch session status for peer ${peerId}:`, error);
-      }
+    try {
+      peer.session_status = await this.getPeerSessionStatus(networkId, peerId);
+    } catch (error) {
+      console.warn(`Failed to fetch session status for peer ${peerId}:`, error);
     }
     return peer;
   }
