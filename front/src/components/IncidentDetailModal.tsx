@@ -23,12 +23,6 @@ export default function IncidentDetailModal({ isOpen, onClose, incident, onUpdat
     suspicious_activity: 'Suspicious Activity',
   };
 
-  const incidentTypeColors = {
-    shared_config: 'bg-yellow-100 text-yellow-800',
-    session_conflict: 'bg-red-100 text-red-800',
-    suspicious_activity: 'bg-orange-100 text-orange-800',
-  };
-
   const handleResolve = async () => {
     if (!confirm('Mark this incident as resolved?')) {
       return;
