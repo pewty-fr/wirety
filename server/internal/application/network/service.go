@@ -1033,7 +1033,7 @@ func (s *Service) detectAndHandleSharedConfigs(ctx context.Context, networkID st
 			continue
 		}
 
-		if len(changes) < 2 {
+		if len(changes) < 1 {
 			// Need at least 2 changes to detect shared config
 			continue
 		}
