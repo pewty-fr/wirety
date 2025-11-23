@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faServer, faLaptop, faTriangleExclamation, faRocket, faPencil, faTrash } from '@fortawesome/free-solid-svg-icons';
+import { faServer, faLaptop, faRocket, faPencil, faTrash } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import JumpPeerModal from '../../components/JumpPeerModal';
 import RegularPeerModal from '../../components/RegularPeerModal';
@@ -251,7 +251,6 @@ export default function PeersPage() {
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Network</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Address</th>
@@ -263,7 +262,6 @@ export default function PeersPage() {
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {filteredPeers.map((peer) => {
                   const hasActiveAgent = peer.session_status?.has_active_agent;
-                  const isPeerUp = !!peer.session_status?.current_session?.reported_endpoint;
                   const isBlocked = blockedPeers.has(peer.id);
                   const hasIncident = incidentPeerIds.has(peer.id);
                   
@@ -275,15 +273,6 @@ export default function PeersPage() {
                         (hasIncident || isBlocked) ? 'bg-orange-100 dark:bg-yellow-900/20' : ''
                       }`}
                     >
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        {/* Status indicators: warning if blocked, otherwise WireGuard status */}
-                        <div className="flex items-center gap-1">
-                          {(hasIncident || isBlocked) && (
-                            <FontAwesomeIcon icon={faTriangleExclamation} className="text-primary-600 dark:text-primary-400" title="Security incident" />
-                          )}
-                          <span className={`w-3 h-3 rounded-full ${isPeerUp ? 'bg-green-500' : 'bg-red-500'}`} title={isPeerUp ? 'WireGuard Up' : 'WireGuard Down'}></span>
-                        </div>
-                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-blue mr-3">

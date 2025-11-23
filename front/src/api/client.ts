@@ -68,12 +68,10 @@ class ApiClient {
           peer.network_id = network.id;
           peer.network_name = network.name;
           // Fetch session status for peers using agents
-          if (peer.use_agent) {
-            try {
-              peer.session_status = await this.getPeerSessionStatus(network.id, peer.id);
-            } catch (error) {
-              console.warn(`Failed to fetch session status for peer ${peer.id}:`, error);
-            }
+          try {
+            peer.session_status = await this.getPeerSessionStatus(network.id, peer.id);
+          } catch (error) {
+            console.warn(`Failed to fetch session status for peer ${peer.id}:`, error);
           }
         }
         allPeers.push(...peers);
