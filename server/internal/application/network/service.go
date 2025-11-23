@@ -685,9 +685,9 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 		activeSessionThreshold := now.Add(-network.SessionConflictThreshold)
 
 		var currentSess *network.AgentSession
+		log.Info().Interface("sessions", existingSess).Str("id", id).Str("endpoint", endpoint).Send()
 		if len(existingSess) > 0 {
 			for _, sess := range existingSess {
-				log.Info().Interface("session", sess).Send()
 				// Consider sessions active if seen within threshold
 				if sess.LastSeen.After(activeSessionThreshold) {
 					currentSess = sess
