@@ -716,6 +716,17 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 		if currentSess.ReportedEndpoint == "" {
 			currentSess.ReportedEndpoint = endpoint
 			_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
+			change := &network.EndpointChange{
+				PeerID:      currentSess.PeerID,
+				OldEndpoint: "",
+				NewEndpoint: endpoint,
+				ChangedAt:   now,
+				Source:      "agent",
+			}
+			if err := s.repo.RecordEndpointChange(ctx, networkID, change); err != nil {
+				// Log but don't fail on endpoint change recording error
+				fmt.Printf("failed to record endpoint change: %v\n", err)
+			}
 			continue
 		}
 		if currentSess.ReportedEndpoint == endpoint {
@@ -723,6 +734,8 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 		}
 		changes, err := s.repo.GetEndpointChanges(ctx, networkID, currentSess.PeerID, now.Add(-24*time.Hour))
 		if err == nil && (len(changes) == 0 || (len(changes) > 0 && changes[0].NewEndpoint != endpoint)) {
+			currentSess.ReportedEndpoint = endpoint
+			_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
 			change := &network.EndpointChange{
 				PeerID:      currentSess.PeerID,
 				OldEndpoint: currentSess.ReportedEndpoint,
@@ -734,6 +747,7 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 				// Log but don't fail on endpoint change recording error
 				fmt.Printf("failed to record endpoint change: %v\n", err)
 			}
+
 		}
 	}
 
@@ -1071,7 +1085,7 @@ func (s *Service) detectAndHandleSharedConfigs(ctx context.Context, networkID st
 			continue
 		}
 
-		if len(changes) < 1 {
+		if len(changes) < 2 {
 			// Need at least 2 changes to detect shared config
 			continue
 		}
