@@ -2,6 +2,8 @@ import { useState } from 'react';
 import Modal from './Modal';
 import api from '../api/client';
 import type { SecurityIncident } from '../types';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faShieldHalved } from '@fortawesome/free-solid-svg-icons';
 
 interface IncidentDetailModalProps {
   isOpen: boolean;
@@ -55,16 +57,15 @@ export default function IncidentDetailModal({ isOpen, onClose, incident, onUpdat
         {/* Header Info */}
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-4">
-            <div className="text-5xl">🚨</div>
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
+              <FontAwesomeIcon icon={faShieldHalved} className="text-xl text-white" />
+            </div>
             <div>
-              <h3 className="text-2xl font-bold text-gray-900">
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">
                 {incidentTypeLabels[incident.incident_type]}
               </h3>
               <p className="text-sm text-gray-500 mt-1">ID: {incident.id}</p>
               <div className="flex gap-2 mt-2">
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${incidentTypeColors[incident.incident_type]}`}>
-                  {incidentTypeLabels[incident.incident_type]}
-                </span>
                 {incident.resolved ? (
                   <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                     Resolved
