@@ -58,4 +58,16 @@ type Repository interface {
 	ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*SecurityIncident, error)
 	ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*SecurityIncident, error)
 	ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error
+
+	// Captive portal whitelist operations
+	AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error
+	RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error
+	GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error)
+	ClearCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) error
+
+	// Captive portal token operations
+	CreateCaptivePortalToken(ctx context.Context, token *CaptivePortalToken) error
+	GetCaptivePortalToken(ctx context.Context, token string) (*CaptivePortalToken, error)
+	DeleteCaptivePortalToken(ctx context.Context, token string) error
+	CleanupExpiredCaptivePortalTokens(ctx context.Context) error
 }

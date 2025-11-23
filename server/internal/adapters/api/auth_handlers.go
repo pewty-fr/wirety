@@ -222,3 +222,34 @@ func (h *Handler) Logout(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
+
+// LogoutRequest contains the session hash to logout
+type LogoutRequest struct {
+	SessionHash string `json:"session_hash" binding:"required"`
+}
+
+// Logout godoc
+// @Summary      Logout and invalidate session
+// @Description  Logout user and delete server-side session
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request body LogoutRequest true "Logout request"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /auth/logout [post]
+func (h *Handler) Logout(c *gin.Context) {
+	var req LogoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.userRepo.DeleteSession(req.SessionHash); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to logout"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
+}

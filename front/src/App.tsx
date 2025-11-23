@@ -9,6 +9,7 @@ import IPAMPage from './pages/ipam/IPAMPage';
 import SecurityPage from './pages/security/SecurityPage';
 import UsersPage from './pages/users/UsersPage';
 import LoginPage from './pages/auth/LoginPage';
+import CaptivePortalPage from './pages/captive-portal/CaptivePortalPage';
 
 function ProtectedRoutes() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -45,7 +46,12 @@ function App() {
     <QueryProvider>
       <AuthProvider>
         <BrowserRouter>
-          <ProtectedRoutes />
+          <Routes>
+            {/* Captive portal route - accessible without authentication */}
+            <Route path="/captive-portal" element={<CaptivePortalPage />} />
+            {/* All other routes require authentication */}
+            <Route path="/*" element={<ProtectedRoutes />} />
+          </Routes>
         </BrowserRouter>
       </AuthProvider>
     </QueryProvider>

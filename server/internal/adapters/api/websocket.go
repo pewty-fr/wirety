@@ -141,14 +141,27 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 		log.Error().Err(err).Msg("Failed to generate initial config (token)")
 		return
 	}
+
+	// Get whitelist if this is a jump peer
+	var whitelist []string
+	if peer.IsJump {
+		whitelist, err = h.service.GetCaptivePortalWhitelist(c.Request.Context(), networkID, peer.ID)
+		if err != nil {
+			log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peer.ID).Msg("Failed to get whitelist")
+			whitelist = []string{}
+		}
+	}
+
 	msg := struct {
-		Config string      `json:"config"`
-		DNS    interface{} `json:"dns,omitempty"`
-		Policy interface{} `json:"policy,omitempty"`
+		Config    string      `json:"config"`
+		DNS       interface{} `json:"dns,omitempty"`
+		Policy    interface{} `json:"policy,omitempty"`
+		Whitelist []string    `json:"whitelist,omitempty"`
 	}{
-		Config: cfg,
-		DNS:    dnsCfg,
-		Policy: policy,
+		Config:    cfg,
+		DNS:       dnsCfg,
+		Policy:    policy,
+		Whitelist: whitelist,
 	}
 	data, _ := json.Marshal(msg)
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
@@ -206,18 +219,30 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 				return
 			}
 
+			// Get whitelist if this is a jump peer
+			var whitelist []string
+			if peer.IsJump {
+				whitelist, err = m.service.GetCaptivePortalWhitelist(ctx, networkID, peerID)
+				if err != nil {
+					log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to get whitelist")
+					whitelist = []string{}
+				}
+			}
+
 			msg := struct {
-				Config   string      `json:"config"`
-				DNS      interface{} `json:"dns,omitempty"`
-				Policy   interface{} `json:"policy,omitempty"`
-				PeerID   string      `json:"peer_id"`
-				PeerName string      `json:"peer_name"`
+				Config    string      `json:"config"`
+				DNS       interface{} `json:"dns,omitempty"`
+				Policy    interface{} `json:"policy,omitempty"`
+				PeerID    string      `json:"peer_id"`
+				PeerName  string      `json:"peer_name"`
+				Whitelist []string    `json:"whitelist,omitempty"`
 			}{
-				Config:   cfg,
-				DNS:      dnsCfg,
-				Policy:   policy,
-				PeerID:   peer.ID,
-				PeerName: peer.Name,
+				Config:    cfg,
+				DNS:       dnsCfg,
+				Policy:    policy,
+				PeerID:    peer.ID,
+				PeerName:  peer.Name,
+				Whitelist: whitelist,
 			}
 			data, _ := json.Marshal(msg)
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {

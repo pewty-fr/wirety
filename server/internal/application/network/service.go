@@ -467,8 +467,10 @@ type JumpPolicy struct {
 	IP    string `json:"ip"`
 	Peers []struct {
 		ID       string `json:"id"`
+		Name     string `json:"name"`
 		IP       string `json:"ip"`
 		Isolated bool   `json:"isolated"`
+		UseAgent bool   `json:"use_agent"`
 	} `json:"peers"`
 	ACLBlocked []string `json:"acl_blocked"`
 }
@@ -503,9 +505,17 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 			peerList = append(peerList, DNSPeer{Name: sanitizeDNSLabel(p.Name), IP: p.Address})
 			policy.Peers = append(policy.Peers, struct {
 				ID       string `json:"id"`
+				Name     string `json:"name"`
 				IP       string `json:"ip"`
 				Isolated bool   `json:"isolated"`
-			}{ID: p.ID, IP: p.Address, Isolated: p.IsIsolated})
+				UseAgent bool   `json:"use_agent"`
+			}{
+				ID:       p.ID,
+				Name:     p.Name,
+				IP:       p.Address,
+				Isolated: p.IsIsolated,
+				UseAgent: p.UseAgent,
+			})
 		}
 		dnsConfig = &PeerDNSConfig{IP: peer.Address, Domain: net.GetDomain(), Peers: peerList}
 		if net.ACL != nil && net.ACL.Enabled {
@@ -691,13 +701,6 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 		var currentSess *network.AgentSession
 		if len(existingSess) > 0 {
 			for _, sess := range existingSess {
-				// For non agent session
-				if sess.Hostname == "" && sess.SystemUptime == -1 && sess.WireGuardUptime == -1 {
-					currentSess = sess
-					currentSess.LastSeen = now
-					_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
-					break
-				}
 				// Consider sessions active if seen within threshold
 				if sess.LastSeen.After(activeSessionThreshold) {
 					currentSess = sess
@@ -752,6 +755,34 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 				fmt.Printf("failed to record endpoint change: %v\n", err)
 			}
 
+			// Remove peer from whitelist due to endpoint change
+			peer, err := s.repo.GetPeer(ctx, networkID, currentSess.PeerID)
+			if err == nil && !peer.UseAgent {
+				// This is a non-agent peer with endpoint change - remove from whitelist
+				if err := s.RemoveFromWhitelistOnEndpointChange(ctx, networkID, peer.Address); err != nil {
+					log.Error().Err(err).Str("peer_ip", peer.Address).Msg("failed to remove peer from whitelist on endpoint change")
+				}
+			}
+		}
+	}
+
+	// If this is a jump peer, cleanup whitelist for disconnected peers
+	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
+	if err == nil && peer.IsJump {
+		// Build map of active peer IPs from the heartbeat
+		activePeerIPs := make(map[string]bool)
+		for _, p := range peers {
+			if !p.UseAgent {
+				// Check if this peer has an active endpoint reported
+				if _, hasEndpoint := heartbeat.PeerEndpoints[p.PublicKey]; hasEndpoint {
+					activePeerIPs[p.Address] = true
+				}
+			}
+		}
+
+		// Cleanup whitelist for disconnected peers
+		if err := s.CleanupWhitelistForDisconnectedPeers(ctx, networkID, peerID, activePeerIPs); err != nil {
+			log.Error().Err(err).Msg("failed to cleanup whitelist for disconnected peers")
 		}
 	}
 
@@ -1407,3 +1438,163 @@ func (s *Service) detectAndHandleSuspicousActivity(ctx context.Context, networkI
 // Helper function to get used IPs in the network
 // (previous getUsedIPs helper removed; IPAM now tracks used IPs internally)
 // (No further helpers.)
+
+// AddCaptivePortalWhitelist adds a peer IP to the captive portal whitelist
+func (s *Service) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	if err := s.repo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP); err != nil {
+		return err
+	}
+
+	// Notify jump peer to update firewall rules
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+
+	return nil
+}
+
+// RemoveCaptivePortalWhitelist removes a peer IP from the captive portal whitelist
+func (s *Service) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	if err := s.repo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP); err != nil {
+		return err
+	}
+
+	// Notify jump peer to update firewall rules
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+
+	return nil
+}
+
+// GetCaptivePortalWhitelist retrieves the whitelist for a jump peer
+func (s *Service) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
+	return s.repo.GetCaptivePortalWhitelist(ctx, networkID, jumpPeerID)
+}
+
+// CleanupWhitelistForDisconnectedPeers removes peers from whitelist when their connection is down
+func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, networkID string, jumpPeerID string, activePeerIPs map[string]bool) error {
+	// Get current whitelist
+	whitelist, err := s.repo.GetCaptivePortalWhitelist(ctx, networkID, jumpPeerID)
+	if err != nil {
+		return fmt.Errorf("failed to get whitelist: %w", err)
+	}
+
+	// Remove peers that are no longer active
+	for _, ip := range whitelist {
+		if !activePeerIPs[ip] {
+			log.Info().
+				Str("network_id", networkID).
+				Str("jump_peer_id", jumpPeerID).
+				Str("peer_ip", ip).
+				Msg("removing disconnected peer from whitelist")
+
+			if err := s.repo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeerID, ip); err != nil {
+				log.Error().Err(err).Str("peer_ip", ip).Msg("failed to remove peer from whitelist")
+			}
+		}
+	}
+
+	// Notify jump peer to update firewall rules
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+
+	return nil
+}
+
+// RemoveFromWhitelistOnEndpointChange removes a peer from whitelist when endpoint changes
+func (s *Service) RemoveFromWhitelistOnEndpointChange(ctx context.Context, networkID string, peerIP string) error {
+	// Get all jump peers in the network
+	net, err := s.repo.GetNetwork(ctx, networkID)
+	if err != nil {
+		return fmt.Errorf("failed to get network: %w", err)
+	}
+
+	// Remove from whitelist for all jump peers
+	for _, jumpPeer := range net.GetJumpServers() {
+		whitelist, err := s.repo.GetCaptivePortalWhitelist(ctx, networkID, jumpPeer.ID)
+		if err != nil {
+			continue
+		}
+
+		// Check if this IP is in the whitelist
+		found := false
+		for _, ip := range whitelist {
+			if ip == peerIP {
+				found = true
+				break
+			}
+		}
+
+		if found {
+			log.Info().
+				Str("network_id", networkID).
+				Str("jump_peer_id", jumpPeer.ID).
+				Str("peer_ip", peerIP).
+				Msg("removing peer from whitelist due to endpoint change")
+
+			if err := s.repo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeer.ID, peerIP); err != nil {
+				log.Error().Err(err).Str("peer_ip", peerIP).Msg("failed to remove peer from whitelist")
+			}
+		}
+	}
+
+	// Notify jump peers to update firewall rules
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+
+	return nil
+}
+
+// GenerateCaptivePortalToken generates a temporary token for captive portal authentication
+func (s *Service) GenerateCaptivePortalToken(ctx context.Context, networkID, jumpPeerID string) (string, error) {
+	// Generate a secure random token
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", fmt.Errorf("failed to generate token: %w", err)
+	}
+	tokenStr := base64.URLEncoding.EncodeToString(tokenBytes)
+
+	// Create token with 5 minute expiration
+	token := &network.CaptivePortalToken{
+		Token:      tokenStr,
+		NetworkID:  networkID,
+		JumpPeerID: jumpPeerID,
+		CreatedAt:  time.Now(),
+		ExpiresAt:  time.Now().Add(5 * time.Minute),
+	}
+
+	if err := s.repo.CreateCaptivePortalToken(ctx, token); err != nil {
+		return "", fmt.Errorf("failed to store token: %w", err)
+	}
+
+	// Cleanup expired tokens periodically
+	go func() {
+		_ = s.repo.CleanupExpiredCaptivePortalTokens(context.Background())
+	}()
+
+	return tokenStr, nil
+}
+
+// ValidateCaptivePortalToken validates a captive portal token and returns network/jump peer info
+func (s *Service) ValidateCaptivePortalToken(ctx context.Context, tokenStr string) (networkID, jumpPeerID string, err error) {
+	token, err := s.repo.GetCaptivePortalToken(ctx, tokenStr)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid token: %w", err)
+	}
+
+	if token.IsExpired() {
+		// Delete expired token
+		_ = s.repo.DeleteCaptivePortalToken(ctx, tokenStr)
+		return "", "", fmt.Errorf("token expired")
+	}
+
+	return token.NetworkID, token.JumpPeerID, nil
+}
+
+// DeleteCaptivePortalToken deletes a captive portal token
+func (s *Service) DeleteCaptivePortalToken(ctx context.Context, tokenStr string) error {
+	return s.repo.DeleteCaptivePortalToken(ctx, tokenStr)
+}

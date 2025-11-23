@@ -513,3 +513,92 @@ func (r *NetworkRepository) ResolveSecurityIncident(ctx context.Context, inciden
 	}
 	return nil
 }
+
+// Captive portal whitelist operations
+
+func (r *NetworkRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, created_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (network_id, jump_peer_id, peer_ip) DO NOTHING
+	`, networkID, jumpPeerID, peerIP, time.Now())
+	return err
+}
+
+func (r *NetworkRepository) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_whitelist
+		WHERE network_id=$1 AND jump_peer_id=$2 AND peer_ip=$3
+	`, networkID, jumpPeerID, peerIP)
+	return err
+}
+
+func (r *NetworkRepository) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT peer_ip FROM captive_portal_whitelist
+		WHERE network_id=$1 AND jump_peer_id=$2
+		ORDER BY created_at ASC
+	`, networkID, jumpPeerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ips []string
+	for rows.Next() {
+		var ip string
+		if err := rows.Scan(&ip); err != nil {
+			return nil, err
+		}
+		ips = append(ips, ip)
+	}
+	return ips, rows.Err()
+}
+
+func (r *NetworkRepository) ClearCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_whitelist
+		WHERE network_id=$1 AND jump_peer_id=$2
+	`, networkID, jumpPeerID)
+	return err
+}
+
+// Captive portal token operations
+
+func (r *NetworkRepository) CreateCaptivePortalToken(ctx context.Context, token *network.CaptivePortalToken) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO captive_portal_tokens (token, network_id, jump_peer_id, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, token.Token, token.NetworkID, token.JumpPeerID, token.CreatedAt, token.ExpiresAt)
+	return err
+}
+
+func (r *NetworkRepository) GetCaptivePortalToken(ctx context.Context, tokenStr string) (*network.CaptivePortalToken, error) {
+	var token network.CaptivePortalToken
+	err := r.db.QueryRowContext(ctx, `
+		SELECT token, network_id, jump_peer_id, created_at, expires_at
+		FROM captive_portal_tokens
+		WHERE token=$1
+	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.CreatedAt, &token.ExpiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("token not found")
+		}
+		return nil, fmt.Errorf("get captive portal token: %w", err)
+	}
+	return &token, nil
+}
+
+func (r *NetworkRepository) DeleteCaptivePortalToken(ctx context.Context, tokenStr string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_tokens WHERE token=$1
+	`, tokenStr)
+	return err
+}
+
+func (r *NetworkRepository) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_tokens WHERE expires_at < NOW()
+	`)
+	return err
+}

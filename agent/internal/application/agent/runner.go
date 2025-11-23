@@ -18,13 +18,15 @@ import (
 // DNS optional; only for jump peer
 // Peers list contains name + ip
 // Policy optional; only for jump peer
+// Whitelist optional; list of authenticated peer IPs
 
 type WSMessage struct {
-	Config   string          `json:"config"`
-	DNS      *dom.DNSConfig  `json:"dns,omitempty"`
-	Policy   *pol.JumpPolicy `json:"policy,omitempty"`
-	PeerID   string          `json:"peer_id,omitempty"`
-	PeerName string          `json:"peer_name,omitempty"`
+	Config    string          `json:"config"`
+	DNS       *dom.DNSConfig  `json:"dns,omitempty"`
+	Policy    *pol.JumpPolicy `json:"policy,omitempty"`
+	PeerID    string          `json:"peer_id,omitempty"`
+	PeerName  string          `json:"peer_name,omitempty"`
+	Whitelist []string        `json:"whitelist,omitempty"` // IPs of authenticated non-agent peers
 }
 
 type Runner struct {
@@ -32,6 +34,7 @@ type Runner struct {
 	cfgWriter         ports.ConfigWriterPort
 	dnsFactory        func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort // factory to create DNS server instance
 	fwAdapter         ports.FirewallPort
+	captivePortal     ports.CaptivePortalPort
 	wsURL             string
 	wgInterface       string
 	currentPeerName   string // Track current peer name to detect changes
@@ -40,12 +43,13 @@ type Runner struct {
 	heartbeatInterval time.Duration
 }
 
-func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string) *Runner {
+func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, captivePortal ports.CaptivePortalPort, wsURL string, wgInterface string) *Runner {
 	return &Runner{
 		wsClient:          wsClient,
 		cfgWriter:         writer,
 		dnsFactory:        dnsFactory,
 		fwAdapter:         fwAdapter,
+		captivePortal:     captivePortal,
 		wsURL:             wsURL,
 		wgInterface:       wgInterface,
 		currentPeerName:   "", // Will be set when first message is received
@@ -190,9 +194,37 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					}
 				}()
 			}
+			// Handle whitelist updates
+			if payload.Whitelist != nil && r.captivePortal != nil {
+				log.Info().Int("count", len(payload.Whitelist)).Msg("updating whitelist")
+				// Clear existing whitelist and add new ones
+				r.captivePortal.ClearWhitelist()
+				for _, ip := range payload.Whitelist {
+					r.captivePortal.AddWhitelistedPeer(ip)
+				}
+			}
+
 			if payload.Policy != nil && r.fwAdapter != nil {
 				log.Info().Int("peer_count", len(payload.Policy.Peers)).Msg("applying firewall policy")
-				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP); err != nil {
+
+				// Update captive portal with non-agent peers
+				if r.captivePortal != nil {
+					nonAgentIPs := make([]string, 0)
+					for _, peer := range payload.Policy.Peers {
+						if !peer.UseAgent {
+							nonAgentIPs = append(nonAgentIPs, peer.IP)
+						}
+					}
+					r.captivePortal.UpdateNonAgentPeers(nonAgentIPs)
+				}
+
+				// Get whitelisted IPs for firewall rules
+				whitelistedIPs := payload.Whitelist
+				if whitelistedIPs == nil {
+					whitelistedIPs = []string{}
+				}
+
+				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, whitelistedIPs); err != nil {
 					log.Error().Err(err).Msg("failed applying firewall policy")
 				} else {
 					log.Debug().Msg("firewall policy applied")

@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	dnsadapter "wirety/agent/internal/adapters/dns"
 	"wirety/agent/internal/adapters/firewall"
+	"wirety/agent/internal/adapters/proxy"
 	"wirety/agent/internal/adapters/wg"
 	"wirety/agent/internal/adapters/ws"
 	app "wirety/agent/internal/application/agent"
@@ -31,12 +33,18 @@ func main() {
 	configPath := envOr("WG_CONFIG_PATH", "")
 	applyMethod := envOr("WG_APPLY_METHOD", "wg-quick")
 	natIface := envOr("NAT_INTERFACE", "eth0")
+	httpPort := envOr("HTTP_PROXY_PORT", "3128")
+	httpsPort := envOr("HTTPS_PROXY_PORT", "3129")
+	portalURL := envOr("CAPTIVE_PORTAL_URL", "https://portal.example.com")
 
 	flag.StringVar(&server, "server", server, "Server base URL (no trailing /)")
 	flag.StringVar(&token, "token", token, "Enrollment token")
 	flag.StringVar(&configPath, "config", configPath, "Path to wireguard config file")
 	flag.StringVar(&applyMethod, "apply", applyMethod, "Apply method: wg-quick|syncconf")
 	flag.StringVar(&natIface, "nat", natIface, "NAT interface (eth0, etc.)")
+	flag.StringVar(&httpPort, "http-port", httpPort, "HTTP proxy port for captive portal")
+	flag.StringVar(&httpsPort, "https-port", httpsPort, "HTTPS proxy port for captive portal")
+	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal URL")
 	flag.Parse()
 
 	if token == "" {
@@ -84,8 +92,37 @@ func main() {
 	dnsFactory := func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort {
 		return dnsadapter.NewServer(domain, peers)
 	}
+
+	// Parse proxy ports
+	httpPortInt := 3128
+	httpsPortInt := 3129
+	if p, err := strconv.Atoi(httpPort); err == nil {
+		httpPortInt = p
+	}
+	if p, err := strconv.Atoi(httpsPort); err == nil {
+		httpsPortInt = p
+	}
+
+	// Initialize firewall adapter with proxy ports
 	fwAdapter := firewall.NewAdapter(iface, natIface)
-	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, wsURL, iface)
+	fwAdapter.SetProxyPorts(httpPortInt, httpsPortInt)
+
+	// Initialize captive portal
+	// Use server URL as portal URL if not explicitly set
+	if portalURL == "https://portal.example.com" {
+		portalURL = server
+	}
+	captivePortal := proxy.NewCaptivePortal(httpPortInt, httpsPortInt, portalURL, server, token)
+	if err := captivePortal.Start(); err != nil {
+		log.Fatal().Err(err).Msg("failed to start captive portal")
+	}
+	log.Info().
+		Int("http_port", httpPortInt).
+		Int("https_port", httpsPortInt).
+		Str("portal_url", portalURL).
+		Msg("captive portal started")
+
+	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, captivePortal, wsURL, iface)
 
 	// Set the initial peer name in the runner
 	runner.SetCurrentPeerName(peerName)

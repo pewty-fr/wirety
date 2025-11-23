@@ -15,10 +15,23 @@ import (
 type Adapter struct {
 	iface        string
 	natInterface string
+	httpPort     int
+	httpsPort    int
 }
 
 func NewAdapter(wgIface, natIface string) *Adapter {
-	return &Adapter{iface: wgIface, natInterface: natIface}
+	return &Adapter{
+		iface:        wgIface,
+		natInterface: natIface,
+		httpPort:     3128, // Default HTTP proxy port
+		httpsPort:    3129, // Default HTTPS proxy port
+	}
+}
+
+// SetProxyPorts sets the HTTP and HTTPS proxy ports
+func (a *Adapter) SetProxyPorts(httpPort, httpsPort int) {
+	a.httpPort = httpPort
+	a.httpsPort = httpsPort
 }
 
 func (a *Adapter) run(args ...string) error {
@@ -31,7 +44,7 @@ func (a *Adapter) run(args ...string) error {
 }
 
 // Sync applies forwarding/NAT plus isolation & ACL blocks.
-func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string) error {
+func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string) error {
 	if p == nil {
 		return nil
 	}
@@ -107,13 +120,103 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string) error {
 		}
 	}
 
-	// Accept passes
+	// Build whitelist map for quick lookup (needed for blocking rules)
+	whitelisted := make(map[string]bool)
+	for _, ip := range whitelistedIPs {
+		whitelisted[ip] = true
+	}
+
+	// Block all traffic from unauthenticated non-agent peers (except to proxy ports)
+	// This ensures they can only access the captive portal
+	for _, peer := range p.Peers {
+		if !peer.UseAgent && !whitelisted[peer.IP] {
+			// Allow traffic to proxy ports (for captive portal redirect)
+			_ = a.run("-A", chain,
+				"-i", a.iface,
+				"-s", peer.IP,
+				"-p", "tcp",
+				"--dport", fmt.Sprintf("%d", a.httpPort),
+				"-j", "ACCEPT")
+
+			_ = a.run("-A", chain,
+				"-i", a.iface,
+				"-s", peer.IP,
+				"-p", "tcp",
+				"--dport", fmt.Sprintf("%d", a.httpsPort),
+				"-j", "ACCEPT")
+
+			// Allow DNS (port 53) for captive portal to work
+			_ = a.run("-A", chain,
+				"-i", a.iface,
+				"-s", peer.IP,
+				"-p", "udp",
+				"--dport", "53",
+				"-j", "ACCEPT")
+
+			// Block all other traffic from unauthenticated non-agent peers
+			_ = a.run("-A", chain,
+				"-i", a.iface,
+				"-s", peer.IP,
+				"-j", "DROP")
+
+			log.Debug().
+				Str("peer_ip", peer.IP).
+				Str("peer_name", peer.Name).
+				Msg("blocking all traffic from unauthenticated non-agent peer")
+		}
+	}
+
+	// Accept passes for authenticated peers and agent peers
 	_ = a.run("-A", chain, "-i", a.iface, "-j", "ACCEPT")
 	_ = a.run("-A", chain, "-o", a.iface, "-j", "ACCEPT")
 
 	// Attach chain to FORWARD (insert at top)
 	_ = a.run("-D", "FORWARD", "-j", chain) // remove if exists
 	_ = a.run("-I", "FORWARD", "1", "-j", chain)
+
+	// Captive portal redirection for non-agent peers
+	// Create a custom chain for captive portal redirects
+	captiveChain := "WIRETY_CAPTIVE"
+	_ = a.run("-t", "nat", "-N", captiveChain)
+	_ = a.run("-t", "nat", "-F", captiveChain)
+
+	// Redirect HTTP (port 80) and HTTPS (port 443) traffic from non-agent peers
+	// to the local proxy ports (unless they are whitelisted)
+	for _, peer := range p.Peers {
+		if !peer.UseAgent && !whitelisted[peer.IP] {
+			// Redirect HTTP traffic (port 80) to proxy
+			_ = a.run("-t", "nat", "-A", captiveChain,
+				"-i", a.iface,
+				"-s", peer.IP,
+				"-p", "tcp",
+				"--dport", "80",
+				"-j", "REDIRECT",
+				"--to-port", fmt.Sprintf("%d", a.httpPort))
+
+			// Redirect HTTPS traffic (port 443) to proxy
+			_ = a.run("-t", "nat", "-A", captiveChain,
+				"-i", a.iface,
+				"-s", peer.IP,
+				"-p", "tcp",
+				"--dport", "443",
+				"-j", "REDIRECT",
+				"--to-port", fmt.Sprintf("%d", a.httpsPort))
+
+			log.Debug().
+				Str("peer_ip", peer.IP).
+				Str("peer_name", peer.Name).
+				Msg("added captive portal redirect for non-agent peer")
+		} else if !peer.UseAgent && whitelisted[peer.IP] {
+			log.Debug().
+				Str("peer_ip", peer.IP).
+				Str("peer_name", peer.Name).
+				Msg("skipping captive portal redirect for whitelisted peer")
+		}
+	}
+
+	// Attach captive portal chain to PREROUTING
+	_ = a.run("-t", "nat", "-D", "PREROUTING", "-j", captiveChain) // remove if exists
+	_ = a.run("-t", "nat", "-I", "PREROUTING", "1", "-j", captiveChain)
 
 	// NAT (MASQUERADE) if needed
 	if a.natInterface != "" {

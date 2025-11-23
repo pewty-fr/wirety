@@ -24,5 +24,16 @@ type WebSocketClientPort interface {
 
 // FirewallPort defines capability to synchronize firewall rules based on policy.
 type FirewallPort interface {
-	Sync(policy *pol.JumpPolicy, selfIP string) error
+	Sync(policy *pol.JumpPolicy, selfIP string, whitelistedIPs []string) error
+	SetProxyPorts(httpPort, httpsPort int)
+}
+
+// CaptivePortalPort defines capability to run a captive portal proxy.
+type CaptivePortalPort interface {
+	Start() error
+	Stop() error
+	UpdateNonAgentPeers(peerIPs []string)
+	AddWhitelistedPeer(ip string)
+	RemoveWhitelistedPeer(ip string)
+	ClearWhitelist()
 }
