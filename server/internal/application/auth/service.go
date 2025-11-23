@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -273,24 +274,19 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		return "", 0, fmt.Errorf("oidc discovery failed: %w", err)
 	}
 
-	// Prepare refresh token request
-	data := make(map[string]string)
-	data["grant_type"] = "refresh_token"
-	data["refresh_token"] = refreshToken
-	data["client_id"] = s.config.ClientID
-	data["client_secret"] = s.config.ClientSecret
+	// Prepare refresh token request (form-encoded, not JSON)
+	data := url.Values{}
+	data.Set("grant_type", "refresh_token")
+	data.Set("refresh_token", refreshToken)
+	data.Set("client_id", s.config.ClientID)
+	data.Set("client_secret", s.config.ClientSecret)
 
 	// Make request to token endpoint
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, discovery.TokenEndpoint, strings.NewReader(string(jsonData)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, discovery.TokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
