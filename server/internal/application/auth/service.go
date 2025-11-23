@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +95,7 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*auth.
 		Issuer:            getStringClaim(claims, "iss"),
 		ExpiresAt:         getInt64Claim(claims, "exp"),
 		IssuedAt:          getInt64Claim(claims, "iat"),
+		AuthorizedParty:   getStringClaim(claims, "azp"),
 	}
 
 	// Verify issuer
@@ -99,11 +103,11 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*auth.
 		return nil, fmt.Errorf("invalid issuer: expected %s, got %s", s.config.IssuerURL, oidcClaims.Issuer)
 	}
 
-	// Verify audience if ClientID is set
+	// Verify azp if ClientID is set
 	if s.config.ClientID != "" {
-		if aud, ok := claims["aud"].([]interface{}); ok {
+		if azp, ok := claims["azp"].([]interface{}); ok {
 			found := false
-			for _, a := range aud {
+			for _, a := range azp {
 				if a.(string) == s.config.ClientID {
 					found = true
 					break
@@ -112,8 +116,8 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*auth.
 			if !found {
 				return nil, fmt.Errorf("invalid audience")
 			}
-		} else if aud, ok := claims["aud"].(string); ok {
-			if aud != s.config.ClientID {
+		} else if azp, ok := claims["azp"].(string); ok {
+			if azp != s.config.ClientID {
 				return nil, fmt.Errorf("invalid audience")
 			}
 		}
@@ -256,4 +260,52 @@ func getInt64Claim(claims jwt.MapClaims, key string) int64 {
 		return int64(val)
 	}
 	return 0
+}
+
+// RefreshAccessToken refreshes an access token using a refresh token
+func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (string, int, error) {
+	if !s.config.Enabled {
+		return "", 0, fmt.Errorf("authentication is not enabled")
+	}
+
+	// Discover OIDC endpoints
+	discovery, err := oidc.Discover(ctx, s.config.IssuerURL)
+	if err != nil {
+		return "", 0, fmt.Errorf("oidc discovery failed: %w", err)
+	}
+
+	// Prepare refresh token request (form-encoded, not JSON)
+	data := url.Values{}
+	data.Set("grant_type", "refresh_token")
+	data.Set("refresh_token", refreshToken)
+	data.Set("client_id", s.config.ClientID)
+	data.Set("client_secret", s.config.ClientSecret)
+
+	// Make request to token endpoint
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, discovery.TokenEndpoint, strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to refresh token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", 0, fmt.Errorf("token refresh failed: %s", string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", 0, fmt.Errorf("failed to parse token response: %w", err)
+	}
+
+	return tokenResp.AccessToken, tokenResp.ExpiresIn, nil
 }

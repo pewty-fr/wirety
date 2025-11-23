@@ -83,6 +83,10 @@ export default function NetworkDetailModal({ isOpen, onClose, network, onUpdate 
               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
               <p className="text-lg text-gray-900 dark:text-gray-100">{getNetworkDomain(network)}</p>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">DNS</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{network.dns.join(', ')}</p>
+            </div>
           </div>
 
           {/* Capacity Stats */}
