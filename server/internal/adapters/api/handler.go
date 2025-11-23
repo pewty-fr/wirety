@@ -101,7 +101,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 		networks := protected.Group("/networks")
 		{
 			// List/Create networks - admin only
-			networks.GET("", h.ListNetworks)
+			networks.GET("", requireNetworkAccess, h.ListNetworks)
 			networks.POST("", requireAdmin, h.CreateNetwork)
 
 			// Specific network operations - requires network access
