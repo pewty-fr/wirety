@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUser, faUsers } from '@fortawesome/free-solid-svg-icons';
+import { faUser, faUsers, faCog } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import UserDetailModal from '../../components/UserDetailModal';
+import DefaultPermissionsModal from '../../components/DefaultPermissionsModal';
 import api from '../../api/client';
 import type { User } from '../../types';
 
@@ -13,6 +14,21 @@ export default function UsersPage() {
   const [total, setTotal] = useState(0);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isDefaultPermissionsModalOpen, setIsDefaultPermissionsModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    loadCurrentUser();
+  }, []);
+
+  const loadCurrentUser = async () => {
+    try {
+      const userData = await api.getCurrentUser();
+      setCurrentUser(userData);
+    } catch (error) {
+      console.error('Failed to load current user:', error);
+    }
+  };
 
   const pageSize = 20;
 
@@ -43,6 +59,8 @@ export default function UsersPage() {
 
   const totalPages = Math.ceil(total / pageSize);
 
+  const isAdmin = currentUser?.role === 'administrator';
+
   return (
     <div>
       <PageHeader 
@@ -51,6 +69,19 @@ export default function UsersPage() {
       />
 
       <div className="p-8">
+        {/* Default Permissions Button */}
+        {isAdmin && (
+          <div className="mb-6">
+            <button
+              onClick={() => setIsDefaultPermissionsModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              <FontAwesomeIcon icon={faCog} />
+              Default Permissions for New Users
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex flex-col items-center justify-center py-16">
             <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-solid border-current border-r-transparent align-[-0.125em] text-primary-600 dark:text-primary-400 motion-reduce:animate-[spin_1.5s_linear_infinite] mb-4"></div>
@@ -165,6 +196,13 @@ export default function UsersPage() {
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         user={selectedUser}
+        onUpdate={loadUsers}
+      />
+
+      {/* Default Permissions Modal */}
+      <DefaultPermissionsModal
+        isOpen={isDefaultPermissionsModalOpen}
+        onClose={() => setIsDefaultPermissionsModalOpen(false)}
       />
     </div>
   );

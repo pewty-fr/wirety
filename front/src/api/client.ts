@@ -222,6 +222,34 @@ class ApiClient {
     return response.data;
   }
 
+  async updateUser(id: string, data: {
+    name?: string;
+    role?: string;
+    authorized_networks?: string[];
+  }): Promise<User> {
+    const response = await this.client.put(`/users/${id}`, data);
+    return response.data;
+  }
+
+  async getDefaultPermissions(): Promise<{
+    default_role: 'administrator' | 'user';
+    default_authorized_networks: string[];
+  }> {
+    const response = await this.client.get('/users/defaults');
+    return response.data;
+  }
+
+  async updateDefaultPermissions(data: {
+    default_role: 'administrator' | 'user';
+    default_authorized_networks: string[];
+  }): Promise<{
+    default_role: 'administrator' | 'user';
+    default_authorized_networks: string[];
+  }> {
+    const response = await this.client.put('/users/defaults', data);
+    return response.data;
+  }
+
   // ACL
   async getACL(networkId: string): Promise<ACL> {
     const response = await this.client.get(`/networks/${networkId}/acl`);
