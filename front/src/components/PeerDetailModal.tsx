@@ -30,6 +30,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
   // Get owner name from users list
   const getOwnerName = (ownerId: string | undefined) => {
     if (!ownerId) return null;
+    if (user && user?.id == ownerId) return user.name;
     const owner = users.find(u => u.id === ownerId);
     return owner?.name || ownerId;
   };
@@ -117,30 +118,23 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
             <p className="text-lg text-gray-900 dark:text-gray-100">{displayPeer.network_name || displayPeer.network_id}</p>
           </div>
 
-          {/* Connection Info */}
-          {displayPeer.is_jump ? (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IP Address</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
-              </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IP Address</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address}</p>
             </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IP Address</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
             </div>
-          )}
+            {/* Owner */}
+            {displayPeer.owner_id && (
+            <div>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Owner</label>
+              <p className="text-sm text-gray-900 dark:text-gray-100">{getOwnerName(displayPeer.owner_id)}</p>
+            </div>
+            )}
+          </div>
 
           {/* Status Information */}
           <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
@@ -368,14 +362,6 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
             </div>
           )}
 
-          {/* Owner */}
-          {displayPeer.owner_id && (
-            <div>
-              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Owner</label>
-              <p className="text-sm text-gray-900 dark:text-gray-100">{getOwnerName(displayPeer.owner_id)}</p>
-            </div>
-          )}
-
           {/* Timestamps */}
           <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
             <div className="grid grid-cols-2 gap-6">
@@ -441,6 +427,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
           onSuccess={handleEditSuccess}
           networkId={peer.network_id!}
           peer={peer}
+          users={users}
         />
       ) : (
         <RegularPeerModal
@@ -449,6 +436,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
           onSuccess={handleEditSuccess}
           networkId={peer.network_id!}
           peer={peer}
+          users={users}
         />
       )}
     </>
