@@ -92,15 +92,19 @@ func (r *Runner) Start(stop <-chan struct{}) {
 		endpointCheckTicker := time.NewTicker(300 * time.Millisecond)
 		defer endpointCheckTicker.Stop()
 		heartbeatDone := make(chan struct{})
+		var heartbeatWg sync.WaitGroup
 
 		// Track last known peer endpoints
 		var lastPeerEndpoints map[string]string
 		var lastPeerEndpointsMu sync.RWMutex
 
+		heartbeatWg.Add(1)
 		go func() {
+			defer heartbeatWg.Done()
 			for {
 				select {
 				case <-heartbeatDone:
+					log.Debug().Msg("heartbeat goroutine stopping")
 					return
 				case <-heartbeatTicker.C:
 					// Regular heartbeat every 30 seconds
@@ -156,7 +160,9 @@ func (r *Runner) Start(stop <-chan struct{}) {
 		for {
 			select {
 			case <-stop:
+				log.Debug().Msg("stop signal received, closing heartbeat")
 				close(heartbeatDone)
+				heartbeatWg.Wait() // Wait for heartbeat goroutine to finish
 				_ = r.wsClient.Close()
 				return
 			default:
@@ -165,6 +171,7 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			if err != nil {
 				log.Error().Err(err).Msg("websocket read error; reconnecting")
 				close(heartbeatDone)
+				heartbeatWg.Wait() // Wait for heartbeat goroutine to finish
 				_ = r.wsClient.Close()
 				break
 			}
