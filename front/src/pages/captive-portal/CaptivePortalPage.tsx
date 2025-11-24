@@ -7,7 +7,7 @@ import { faWifi, faShieldAlt, faCheckCircle, faExclamationTriangle } from '@fort
 export default function CaptivePortalPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { login, user, authConfig, isAuthenticated } = useAuth();
+  const { login, user, isAuthenticated } = useAuth();
   const [status, setStatus] = useState<'initial' | 'authenticating' | 'success' | 'error'>('initial');
   const [errorMessage, setErrorMessage] = useState('');
 
