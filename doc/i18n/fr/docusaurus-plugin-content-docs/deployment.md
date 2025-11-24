@@ -117,7 +117,7 @@ docker compose logs -f
 ## Déploiement Binaire
 ### Serveur
 ```bash
-curl -fsSL https://github.com/pewty/wirety/releases/latest/download/wirety-server-linux-amd64 -o /usr/local/bin/wirety-server
+curl -fsSL https://github.com/pewty-fr/wirety/releases/latest/download/wirety-server-linux-amd64 -o /usr/local/bin/wirety-server
 chmod +x /usr/local/bin/wirety-server
 ```
 Service systemd :
@@ -160,7 +160,7 @@ server {
 
 ### Agent
 ```bash
-curl -fsSL https://github.com/pewty/wirety/releases/latest/download/wirety-agent-linux-amd64 -o /usr/local/bin/wirety-agent
+curl -fsSL https://github.com/pewty-fr/wirety/releases/latest/download/wirety-agent-linux-amd64 -o /usr/local/bin/wirety-agent
 chmod +x /usr/local/bin/wirety-agent
 cat > /etc/systemd/system/wirety-agent.service <<'EOF'
 [Unit]

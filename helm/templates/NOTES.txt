@@ -53,4 +53,4 @@ Your Wirety instance is accessible at:
 4. Documentation:
    Full documentation available in the doc/ directory or at your documentation site.
 
-For more information, visit: https://github.com/pewty/wirety
+For more information, visit: https://github.com/pewty-fr/wirety

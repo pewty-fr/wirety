@@ -9,9 +9,9 @@ keywords:
   - vpn
   - mesh
   - security
-home: https://github.com/pewty/wirety
+home: https://github.com/pewty-fr/wirety
 sources:
-  - https://github.com/pewty/wirety
+  - https://github.com/pewty-fr/wirety
 maintainers:
   - name: Wirety Team
     email: support@wirety.io

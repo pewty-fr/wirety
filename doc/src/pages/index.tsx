@@ -30,7 +30,7 @@ function HomepageHeader() {
           </Link>
           <Link
             className="button button--outline button--secondary button--lg"
-            to="https://github.com/pewty/wirety"
+            to="https://github.com/pewty-fr/wirety"
             style={{marginLeft: '1rem'}}>
             View on GitHub
           </Link>
