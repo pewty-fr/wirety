@@ -332,6 +332,10 @@ func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req 
 	if peer.AdditionalAllowedIPs == nil {
 		peer.AdditionalAllowedIPs = []string{}
 	}
+	// Allow owner change (admin only, checked in handler)
+	if req.OwnerID != "" {
+		peer.OwnerID = req.OwnerID
+	}
 	peer.UpdatedAt = time.Now()
 	// Preserve token (do not allow overwrite via update)
 

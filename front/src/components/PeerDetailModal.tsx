@@ -7,16 +7,17 @@ import RegularPeerModal from './RegularPeerModal';
 import { usePeer, useNetwork } from '../hooks/useQueries';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api/client';
-import type { Peer } from '../types';
+import type { Peer, User } from '../types';
 
 interface PeerDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   peer: Peer | null;
   onUpdate: () => void;
+  users?: User[];
 }
 
-export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: PeerDetailModalProps) {
+export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users = [] }: PeerDetailModalProps) {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
@@ -25,6 +26,13 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
   const [configCopied, setConfigCopied] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
   const { user } = useAuth();
+
+  // Get owner name from users list
+  const getOwnerName = (ownerId: string | undefined) => {
+    if (!ownerId) return null;
+    const owner = users.find(u => u.id === ownerId);
+    return owner?.name || ownerId;
+  };
 
   // Use React Query to fetch peer details
   const { data: currentPeer, refetch: refetchPeer } = usePeer(
@@ -364,7 +372,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
           {displayPeer.owner_id && (
             <div>
               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Owner</label>
-              <p className="text-sm text-gray-900 dark:text-gray-100">{displayPeer.owner_id}</p>
+              <p className="text-sm text-gray-900 dark:text-gray-100">{getOwnerName(displayPeer.owner_id)}</p>
             </div>
           )}
 

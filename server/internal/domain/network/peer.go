@@ -12,7 +12,7 @@ type Peer struct {
 	PublicKey            string    `json:"public_key"`
 	PrivateKey           string    `json:"-"`                                // Never expose private key in API responses (only used for config generation)
 	Address              string    `json:"address"`                          // IP address in the network CIDR
-	Endpoint             string    `json:"endpoint,omitempty"`                         // External endpoint (IP:port)
+	Endpoint             string    `json:"endpoint,omitempty"`               // External endpoint (IP:port)
 	ListenPort           int       `json:"listen_port,omitempty"`            // WireGuard listen port (mainly for jump peers)
 	AdditionalAllowedIPs []string  `json:"additional_allowed_ips,omitempty"` // Additional IPs this peer can route to
 	Token                string    `json:"token,omitempty"`                  // Agent enrollment token (secret)
@@ -53,4 +53,5 @@ type PeerUpdateRequest struct {
 	IsIsolated           bool     `json:"is_isolated"`
 	FullEncapsulation    bool     `json:"full_encapsulation"`
 	AdditionalAllowedIPs []string `json:"additional_allowed_ips,omitempty"`
+	OwnerID              string   `json:"owner_id,omitempty"` // Admin can change owner
 }

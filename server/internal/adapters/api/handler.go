@@ -592,6 +592,12 @@ func (h *Handler) UpdatePeer(c *gin.Context) {
 		return
 	}
 
+	// Only admins can change owner
+	if req.OwnerID != "" && user != nil && !user.IsAdministrator() {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only administrators can change peer ownership"})
+		return
+	}
+
 	peer, err = h.service.UpdatePeer(c.Request.Context(), networkID, peerID, &req)
 	if err != nil {
 		// Check if it's a validation error
