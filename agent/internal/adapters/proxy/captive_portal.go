@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,12 +15,10 @@ import (
 // CaptivePortal implements an HTTP proxy that redirects non-agent peers to a captive portal
 type CaptivePortal struct {
 	httpPort         int
-	httpsPort        int
 	portalURL        string
 	serverURL        string
 	agentToken       string
 	server           *http.Server
-	httpsServer      *http.Server
 	mu               sync.RWMutex
 	nonAgentPeers    map[string]bool // IP -> true for non-agent peers
 	whitelistedPeers map[string]bool // IP -> true for authenticated peers
@@ -28,10 +27,11 @@ type CaptivePortal struct {
 }
 
 // NewCaptivePortal creates a new captive portal proxy
+// Note: httpsPort parameter is kept for backward compatibility but not used
+// HTTPS traffic is now handled by the TLS-SNI gateway on port 443
 func NewCaptivePortal(httpPort, httpsPort int, portalURL, serverURL, agentToken string) *CaptivePortal {
 	return &CaptivePortal{
 		httpPort:         httpPort,
-		httpsPort:        httpsPort,
 		portalURL:        portalURL,
 		serverURL:        serverURL,
 		agentToken:       agentToken,
@@ -92,18 +92,13 @@ func (cp *CaptivePortal) ClearWhitelist() {
 	log.Info().Msg("whitelist cleared")
 }
 
-// Start starts the HTTP and HTTPS proxy servers
+// Start starts the HTTP proxy server
+// Note: HTTPS traffic is now handled by the TLS-SNI gateway on port 443
 func (cp *CaptivePortal) Start() error {
 	// Start HTTP proxy
 	cp.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", cp.httpPort),
 		Handler: http.HandlerFunc(cp.handleHTTP),
-	}
-
-	// Start HTTPS proxy (for CONNECT method)
-	cp.httpsServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", cp.httpsPort),
-		Handler: http.HandlerFunc(cp.handleHTTPS),
 	}
 
 	// Start HTTP server
@@ -114,29 +109,21 @@ func (cp *CaptivePortal) Start() error {
 		}
 	}()
 
-	// Start HTTPS server
-	go func() {
-		log.Info().Int("port", cp.httpsPort).Msg("starting captive portal HTTPS proxy")
-		if err := cp.httpsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error().Err(err).Msg("HTTPS proxy server error")
-		}
-	}()
-
 	return nil
 }
 
-// Stop stops the proxy servers
+// Stop stops the HTTP proxy server gracefully
 func (cp *CaptivePortal) Stop() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	if cp.server != nil {
-		if err := cp.server.Close(); err != nil {
+		if err := cp.server.Shutdown(ctx); err != nil {
+			log.Error().Err(err).Msg("error shutting down HTTP server")
 			return err
 		}
 	}
-	if cp.httpsServer != nil {
-		if err := cp.httpsServer.Close(); err != nil {
-			return err
-		}
-	}
+
 	return nil
 }
 
@@ -204,49 +191,6 @@ func (cp *CaptivePortal) isCaptivePortalDetection(host, path string) bool {
 	}
 
 	return captiveHosts[strings.ToLower(host)]
-}
-
-// handleHTTPS handles HTTPS CONNECT requests
-func (cp *CaptivePortal) handleHTTPS(w http.ResponseWriter, r *http.Request) {
-	// Extract client IP (remove port)
-	clientIP := r.RemoteAddr
-	if idx := strings.LastIndex(clientIP, ":"); idx != -1 {
-		clientIP = clientIP[:idx]
-	}
-
-	log.Debug().
-		Str("client_ip", clientIP).
-		Str("method", r.Method).
-		Str("host", r.Host).
-		Msg("HTTPS proxy request")
-
-	// Check if this is a non-agent peer
-	if !cp.isNonAgentPeer(clientIP) {
-		// Not a non-agent peer, should not reach here
-		http.Error(w, "Access denied", http.StatusForbidden)
-		return
-	}
-
-	// Check if peer is whitelisted (authenticated)
-	if cp.isWhitelisted(clientIP) {
-		// Whitelisted peer, should not be redirected anymore
-		http.Error(w, "Access granted - firewall rules updating", http.StatusOK)
-		return
-	}
-
-	// For HTTPS, we can't easily redirect, so we return a 403 with a message
-	// The client will see an error and may try HTTP
-	w.WriteHeader(http.StatusForbidden)
-
-	// Get captive token for the message
-	captiveToken, err := cp.getCaptiveToken()
-	if err != nil {
-		fmt.Fprintf(w, "HTTPS access restricted. Please visit %s to authenticate.", cp.portalURL)
-		return
-	}
-
-	portalURL := fmt.Sprintf("%s/captive-portal?token=%s", cp.portalURL, captiveToken)
-	fmt.Fprintf(w, "HTTPS access restricted. Please visit %s to authenticate.", portalURL)
 }
 
 // redirectToFrontend redirects the request to the front-end captive portal page

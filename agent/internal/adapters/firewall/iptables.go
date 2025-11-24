@@ -194,7 +194,7 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 				"-j", "REDIRECT",
 				"--to-port", fmt.Sprintf("%d", a.httpPort))
 
-			// Redirect HTTPS traffic (port 443) to TLS-SNI gateway (localhost:443)
+			// Redirect HTTPS traffic (port 443) to TLS-SNI gateway
 			// The TLS-SNI gateway will parse SNI and only allow server domain
 			_ = a.run("-t", "nat", "-A", captiveChain,
 				"-i", a.iface,
@@ -202,7 +202,7 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 				"-p", "tcp",
 				"--dport", "443",
 				"-j", "DNAT",
-				"--to-destination", "127.0.0.1:443")
+				"--to-destination", fmt.Sprintf("127.0.0.1:%d", a.httpsPort))
 
 			log.Debug().
 				Str("peer_ip", peer.IP).

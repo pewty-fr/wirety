@@ -118,13 +118,12 @@ func main() {
 	}
 	log.Info().
 		Int("http_port", httpPortInt).
-		Int("https_port", httpsPortInt).
 		Str("portal_url", portalURL).
-		Msg("captive portal started")
+		Msg("captive portal HTTP proxy started")
 
 	// Initialize TLS-SNI gateway for HTTPS filtering
 	// This gateway only allows connections to the server domain for non-authenticated users
-	tlsGateway, err := proxy.NewTLSSNIGateway(443, server)
+	tlsGateway, err := proxy.NewTLSSNIGateway(httpsPortInt, server)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create TLS-SNI gateway")
 	}
@@ -132,9 +131,9 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to start TLS-SNI gateway")
 	}
 	log.Info().
-		Int("port", 443).
+		Int("https_port", httpsPortInt).
 		Str("allowed_domain", server).
-		Msg("TLS-SNI gateway started")
+		Msg("TLS-SNI gateway started (HTTPS filtering)")
 
 	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, captivePortal, tlsGateway, wsURL, iface)
 
@@ -144,8 +143,31 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	stop := make(chan struct{})
-	go func() { <-sigCh; close(stop) }()
+
+	// Handle shutdown gracefully
+	go func() {
+		<-sigCh
+		log.Info().Msg("shutdown signal received, stopping services...")
+
+		// Stop captive portal
+		if err := captivePortal.Stop(); err != nil {
+			log.Error().Err(err).Msg("failed to stop captive portal")
+		} else {
+			log.Info().Msg("captive portal stopped")
+		}
+
+		// Stop TLS gateway
+		if err := tlsGateway.Stop(); err != nil {
+			log.Error().Err(err).Msg("failed to stop TLS gateway")
+		} else {
+			log.Info().Msg("TLS gateway stopped")
+		}
+
+		close(stop)
+	}()
+
 	runner.Start(stop)
+	log.Info().Msg("agent stopped")
 }
 
 func envOr(k, def string) string {
