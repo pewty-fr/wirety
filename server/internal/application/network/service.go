@@ -113,7 +113,7 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 	if req.DNS != nil {
 		if len(req.DNS) != len(net.DNS) {
 			dnsChanged = true
-		}else{
+		} else {
 			for _, dns := range req.DNS {
 				match := 0
 				for _, existing := range net.DNS {
@@ -180,7 +180,7 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 		return nil, fmt.Errorf("failed to update network: %w", err)
 	}
 
-	if cidrChanged || dnsChanged{
+	if cidrChanged || dnsChanged {
 		if s.wsNotifier != nil {
 			s.wsNotifier.NotifyNetworkPeers(networkID)
 		}
@@ -331,6 +331,10 @@ func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req 
 	// Ensure AdditionalAllowedIPs is never nil
 	if peer.AdditionalAllowedIPs == nil {
 		peer.AdditionalAllowedIPs = []string{}
+	}
+	// Allow owner change (admin only, checked in handler)
+	if req.OwnerID != "" {
+		peer.OwnerID = req.OwnerID
 	}
 	peer.UpdatedAt = time.Now()
 	// Preserve token (do not allow overwrite via update)

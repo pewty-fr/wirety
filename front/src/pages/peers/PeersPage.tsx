@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faServer, faLaptop, faTriangleExclamation, faRocket, faPencil, faTrash } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
@@ -7,8 +7,9 @@ import RegularPeerModal from '../../components/RegularPeerModal';
 import PeerDetailModal from '../../components/PeerDetailModal';
 import SearchableSelect from '../../components/SearchableSelect';
 import { useNetworks, usePeers, useACLs, useSecurityIncidents } from '../../hooks/useQueries';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/client';
-import type { Peer } from '../../types';
+import type { Peer, User } from '../../types';
 
 export default function PeersPage() {
   const [page, setPage] = useState(1);
@@ -18,6 +19,33 @@ export default function PeersPage() {
   const [selectedNetworkId, setSelectedNetworkId] = useState<string>('');
   const [selectedPeer, setSelectedPeer] = useState<Peer | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [users, setUsers] = useState<User[]>([]);
+  const { user: currentUser } = useAuth();
+
+  const isAdmin = currentUser?.role === 'administrator';
+
+  // Fetch users for owner mapping (admin only)
+  useEffect(() => {
+    if (isAdmin) {
+      loadUsers();
+    }
+  }, [isAdmin]);
+
+  const loadUsers = async () => {
+    try {
+      const usersData = await api.getUsers();
+      setUsers(usersData);
+    } catch (error) {
+      console.error('Failed to load users:', error);
+    }
+  };
+
+  // Create a map of user ID to user name
+  const userMap = useMemo(() => {
+    const map = new Map<string, string>();
+    users.forEach(user => map.set(user.id, user.name));
+    return map;
+  }, [users]);
   
   // Filters
   const [filterNetwork, setFilterNetwork] = useState<string>('');
@@ -255,6 +283,9 @@ export default function PeersPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Network</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Address</th>
+                  {isAdmin && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
+                  )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Agent</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
@@ -300,6 +331,11 @@ export default function PeersPage() {
                       <td className={`px-6 py-4 whitespace-nowrap text-sm font-mono ${hasIncident ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white'}`}>
                         {peer.address}
                       </td>
+                      {isAdmin && (
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                          {peer.owner_id ? (userMap.get(peer.owner_id) || peer.owner_id) : '-'}
+                        </td>
+                      )}
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {/* Agent column: dot badge only */}
                         <div className="flex items-center">
@@ -398,6 +434,7 @@ export default function PeersPage() {
         networkId={selectedNetworkId}
         networks={networks}
         peer={editingPeer}
+        users={users}
       />
       <RegularPeerModal
         isOpen={isRegularModalOpen}
@@ -406,6 +443,7 @@ export default function PeersPage() {
         networkId={selectedNetworkId}
         networks={networks}
         peer={editingPeer}
+        users={users}
       />
 
       {/* Detail Modal */}
@@ -414,6 +452,7 @@ export default function PeersPage() {
         onClose={() => setIsDetailModalOpen(false)}
         peer={selectedPeer}
         onUpdate={refetchPeers}
+        users={users}
       />
     </div>
   );

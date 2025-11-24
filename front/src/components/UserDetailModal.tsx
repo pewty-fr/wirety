@@ -1,15 +1,94 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUser } from '@fortawesome/free-solid-svg-icons';
+import { faUser, faPencil, faCheck, faTimes } from '@fortawesome/free-solid-svg-icons';
 import Modal from './Modal';
-import type { User } from '../types';
+import type { User, Network } from '../types';
+import { useState, useEffect } from 'react';
+import { api } from '../api/client';
 
 interface UserDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: User | null;
+  onUpdate?: () => void;
 }
 
-export default function UserDetailModal({ isOpen, onClose, user }: UserDetailModalProps) {
+export default function UserDetailModal({ isOpen, onClose, user, onUpdate }: UserDetailModalProps) {
+  const [isEditingNetworks, setIsEditingNetworks] = useState(false);
+  const [selectedNetworks, setSelectedNetworks] = useState<string[]>([]);
+  const [availableNetworks, setAvailableNetworks] = useState<Network[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadCurrentUser();
+      loadNetworks(); // Load networks to display names
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (user) {
+      setSelectedNetworks(user.authorized_networks || []);
+    }
+  }, [user]);
+
+  const loadCurrentUser = async () => {
+    try {
+      const userData = await api.getCurrentUser();
+      setCurrentUser(userData);
+    } catch (error) {
+      console.error('Failed to load current user:', error);
+    }
+  };
+
+  const loadNetworks = async () => {
+    setIsLoading(true);
+    try {
+      const response = await api.getNetworks(1, 100);
+      setAvailableNetworks(response.data);
+    } catch (error) {
+      console.error('Failed to load networks:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSaveNetworks = async () => {
+    if (!user) return;
+    
+    setIsSaving(true);
+    try {
+      await api.updateUser(user.id, {
+        authorized_networks: selectedNetworks,
+      });
+      setIsEditingNetworks(false);
+      if (onUpdate) {
+        onUpdate();
+      }
+    } catch (error) {
+      console.error('Failed to update networks:', error);
+      alert('Failed to update authorized networks');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setSelectedNetworks(user?.authorized_networks || []);
+    setIsEditingNetworks(false);
+  };
+
+  const toggleNetwork = (networkId: string) => {
+    setSelectedNetworks(prev => 
+      prev.includes(networkId)
+        ? prev.filter(id => id !== networkId)
+        : [...prev, networkId]
+    );
+  };
+
+  const isAdmin = currentUser?.role === 'administrator';
+
   if (!user) return null;
 
   const roleColors = {
@@ -55,23 +134,100 @@ export default function UserDetailModal({ isOpen, onClose, user }: UserDetailMod
           </div>
         </div>
 
-        {/* Authorized Networks */}
-        <div>
-          <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
-            Authorized Networks ({user.authorized_networks?.length || 0})
-          </label>
-          {user.authorized_networks && user.authorized_networks.length > 0 ? (
-            <div className="space-y-1">
-              {user.authorized_networks.map((networkId, index) => (
-                <div key={index} className="bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded text-sm text-gray-900 dark:text-gray-100">
-                  {networkId}
-                </div>
-              ))}
+        {/* Authorized Networks - Only show for non-admin users */}
+        {user.role !== 'administrator' && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300">
+                Authorized Networks ({selectedNetworks.length})
+              </label>
+              {isAdmin && !isEditingNetworks && (
+                <button
+                  onClick={() => setIsEditingNetworks(true)}
+                  className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 text-sm flex items-center gap-1"
+                >
+                  <FontAwesomeIcon icon={faPencil} className="text-xs" />
+                  Edit
+                </button>
+              )}
             </div>
-          ) : (
-            <p className="text-sm text-gray-500 italic">No networks authorized</p>
-          )}
-        </div>
+
+            {isEditingNetworks ? (
+              <div className="space-y-3">
+                {isLoading ? (
+                  <p className="text-sm text-gray-500">Loading networks...</p>
+                ) : (
+                  <>
+                    <div className="max-h-60 overflow-y-auto border border-gray-200 dark:border-gray-600 rounded-lg">
+                      {availableNetworks.length > 0 ? (
+                        <div className="divide-y divide-gray-200 dark:divide-gray-600">
+                          {availableNetworks.map((network) => (
+                            <label
+                              key={network.id}
+                              className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedNetworks.includes(network.id)}
+                                onChange={() => toggleNetwork(network.id)}
+                                className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                              />
+                              <div className="flex-1">
+                                <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                  {network.name}
+                                </div>
+                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                  {network.cidr}
+                                </div>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-500 p-3">No networks available</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleSaveNetworks}
+                        disabled={isSaving}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                      >
+                        <FontAwesomeIcon icon={faCheck} />
+                        {isSaving ? 'Saving...' : 'Save'}
+                      </button>
+                      <button
+                        onClick={handleCancelEdit}
+                        disabled={isSaving}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                      >
+                        <FontAwesomeIcon icon={faTimes} />
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <>
+                {selectedNetworks.length > 0 ? (
+                  <div className="space-y-1">
+                    {selectedNetworks.map((networkId, index) => {
+                      const network = availableNetworks.find(n => n.id === networkId);
+                      return (
+                        <div key={index} className="bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded text-sm text-gray-900 dark:text-gray-100">
+                          {network ? `${network.name} (${network.cidr})` : networkId}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 italic">No networks authorized</p>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         {/* Activity Info */}
         <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">

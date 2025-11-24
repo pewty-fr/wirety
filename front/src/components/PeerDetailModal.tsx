@@ -5,17 +5,19 @@ import Modal from './Modal';
 import JumpPeerModal from './JumpPeerModal';
 import RegularPeerModal from './RegularPeerModal';
 import { usePeer, useNetwork } from '../hooks/useQueries';
+import { useAuth } from '../contexts/AuthContext';
 import api from '../api/client';
-import type { Peer } from '../types';
+import type { Peer, User } from '../types';
 
 interface PeerDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   peer: Peer | null;
   onUpdate: () => void;
+  users?: User[];
 }
 
-export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: PeerDetailModalProps) {
+export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users = [] }: PeerDetailModalProps) {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
@@ -23,6 +25,15 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
   const [configError, setConfigError] = useState<string | null>(null);
   const [configCopied, setConfigCopied] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
+  const { user } = useAuth();
+
+  // Get owner name from users list
+  const getOwnerName = (ownerId: string | undefined) => {
+    if (!ownerId) return null;
+    if (user && user?.id == ownerId) return user.name;
+    const owner = users.find(u => u.id === ownerId);
+    return owner?.name || ownerId;
+  };
 
   // Use React Query to fetch peer details
   const { data: currentPeer, refetch: refetchPeer } = usePeer(
@@ -48,6 +59,9 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
 
   if (!peer) return null;
   const displayPeer = currentPeer || peer;
+
+  // Check if current user can edit this peer
+  const canEdit = user?.role === 'administrator' || displayPeer.owner_id === user?.id;
 
   const handleDelete = async () => {
     if (!confirm(`Are you sure you want to delete peer "${displayPeer.name}"? This action cannot be undone.`)) {
@@ -104,30 +118,23 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
             <p className="text-lg text-gray-900 dark:text-gray-100">{displayPeer.network_name || displayPeer.network_id}</p>
           </div>
 
-          {/* Connection Info */}
-          {displayPeer.is_jump ? (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IP Address</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
-              </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IP Address</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address}</p>
             </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IP Address</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
-                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
             </div>
-          )}
+            {/* Owner */}
+            {displayPeer.owner_id && (
+            <div>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Owner</label>
+              <p className="text-sm text-gray-900 dark:text-gray-100">{getOwnerName(displayPeer.owner_id)}</p>
+            </div>
+            )}
+          </div>
 
           {/* Status Information */}
           <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
@@ -355,14 +362,6 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
             </div>
           )}
 
-          {/* Owner */}
-          {displayPeer.owner_id && (
-            <div>
-              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Owner</label>
-              <p className="text-sm text-gray-900 dark:text-gray-100">{displayPeer.owner_id}</p>
-            </div>
-          )}
-
           {/* Timestamps */}
           <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
             <div className="grid grid-cols-2 gap-6">
@@ -383,34 +382,38 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
 
           {/* Actions */}
           <div className="flex justify-between gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              title="Delete Peer"
-              className="group px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
-            >
-              <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-              {deleting ? 'Deleting...' : 'Delete'}
-            </button>
-            <div className="flex gap-3">
+            {canEdit && (
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                title="Delete Peer"
+                className="group px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
+              >
+                <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                {deleting ? 'Deleting...' : 'Delete'}
+              </button>
+            )}
+            <div className="flex gap-3 ml-auto">
               <button
                 onClick={handleClose}
                 className="px-4 py-2.5 text-gray-700 dark:text-gray-100 bg-gray-100 dark:bg-gray-700 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 hover:scale-105 active:scale-95 cursor-pointer transition-all font-semibold shadow hover:shadow-lg"
               >
                 Close
               </button>
-              <button
-                onClick={handleEdit}
-                title="Edit Peer"
-                className="group px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
-              >
-                <svg className="w-5 h-5 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-                Edit
-              </button>
+              {canEdit && (
+                <button
+                  onClick={handleEdit}
+                  title="Edit Peer"
+                  className="group px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
+                >
+                  <svg className="w-5 h-5 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Edit
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -424,6 +427,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
           onSuccess={handleEditSuccess}
           networkId={peer.network_id!}
           peer={peer}
+          users={users}
         />
       ) : (
         <RegularPeerModal
@@ -432,6 +436,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate }: Pee
           onSuccess={handleEditSuccess}
           networkId={peer.network_id!}
           peer={peer}
+          users={users}
         />
       )}
     </>

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Modal from './Modal';
+import { useAuth } from '../contexts/AuthContext';
 import api from '../api/client';
 import type { SecurityIncident } from '../types';
 
@@ -12,8 +13,11 @@ interface IncidentDetailModalProps {
 
 export default function IncidentDetailModal({ isOpen, onClose, incident, onUpdate }: IncidentDetailModalProps) {
   const [resolving, setResolving] = useState(false);
+  const { user } = useAuth();
 
   if (!incident) return null;
+
+  const isAdmin = user?.role === 'administrator';
 
   const incidentTypeLabels = {
     shared_config: 'Shared Configuration',
@@ -163,7 +167,7 @@ export default function IncidentDetailModal({ isOpen, onClose, incident, onUpdat
           >
             Close
           </button>
-          {!incident.resolved && (
+          {!incident.resolved && isAdmin && (
             <button
               onClick={handleResolve}
               disabled={resolving}

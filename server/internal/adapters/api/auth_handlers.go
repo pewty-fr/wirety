@@ -177,12 +177,12 @@ func (h *Handler) createSession(userID, accessToken, refreshToken string, expire
 	refreshTokenExpiresAt := time.Now().Add(30 * 24 * time.Hour)
 
 	session := &auth.Session{
-		SessionHash:            sessionHash,
-		UserID:                 userID,
-		AccessToken:            accessToken,
-		RefreshToken:           refreshToken,
-		AccessTokenExpiresAt:   accessTokenExpiresAt,
-		RefreshTokenExpiresAt:  refreshTokenExpiresAt,
+		SessionHash:           sessionHash,
+		UserID:                userID,
+		AccessToken:           accessToken,
+		RefreshToken:          refreshToken,
+		AccessTokenExpiresAt:  accessTokenExpiresAt,
+		RefreshTokenExpiresAt: refreshTokenExpiresAt,
 	}
 
 	if err := h.userRepo.CreateSession(session); err != nil {

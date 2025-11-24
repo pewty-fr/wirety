@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import Modal from './Modal';
+import SearchableSelect from './SearchableSelect';
+import { useAuth } from '../contexts/AuthContext';
 import api from '../api/client';
-import type { Peer, Network } from '../types';
+import type { Peer, Network, User } from '../types';
 
 interface JumpPeerModalProps {
   isOpen: boolean;
@@ -10,20 +12,30 @@ interface JumpPeerModalProps {
   networkId: string;
   networks?: Network[];
   peer?: Peer | null;
+  users?: User[];
 }
 
-export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, networks = [], peer }: JumpPeerModalProps) {
+export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, networks = [], peer, users = [] }: JumpPeerModalProps) {
   const [formData, setFormData] = useState({
     name: '',
     endpoint: '',
     listen_port: 51820,
     use_agent: true, // Always use agent mode for jump peers
+    owner_id: '',
   });
   const [selectedNetworkId, setSelectedNetworkId] = useState(networkId);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { user: currentUser } = useAuth();
 
   const isEditMode = !!peer;
+  const isAdmin = currentUser?.role === 'administrator';
+
+  // Create user options for SearchableSelect
+  const userOptions = users.map(user => ({
+    value: user.id,
+    label: user.name + ' ' + user.email,
+  }));
 
   useEffect(() => {
     if (peer) {
@@ -32,6 +44,7 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
         endpoint: peer.endpoint || '',
         listen_port: peer.listen_port || 51820,
         use_agent: peer.use_agent,
+        owner_id: peer.owner_id || '',
       });
     } else {
       setFormData({
@@ -39,11 +52,12 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
         endpoint: '',
         listen_port: 51820,
         use_agent: true, // Always use agent mode for jump peers
+        owner_id: currentUser?.id || '',
       });
       setSelectedNetworkId(networkId || (networks.length > 0 ? networks[0].id : ''));
     }
     setError(null);
-  }, [peer, isOpen, networkId]);
+  }, [peer, isOpen, networkId, currentUser]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,11 +66,16 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
 
     try {
       if (isEditMode && peer) {
-        await api.updatePeer(networkId, peer.id, {
+        const updateData: any = {
           name: formData.name,
           endpoint: formData.endpoint || undefined,
           listen_port: formData.listen_port,
-        });
+        };
+        // Only include owner_id if admin and it changed
+        if (isAdmin && formData.owner_id !== peer.owner_id) {
+          updateData.owner_id = formData.owner_id;
+        }
+        await api.updatePeer(networkId, peer.id, updateData);
       } else {
         await api.createPeer(selectedNetworkId, {
           name: formData.name,
@@ -157,6 +176,21 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
           <p className="mt-1 text-sm text-gray-500">WireGuard listen port (default: 51820)</p>
         </div>
 
+        {/* Owner (admin only, edit mode only) */}
+        {isAdmin && isEditMode && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Owner
+            </label>
+            <SearchableSelect
+              options={userOptions}
+              value={formData.owner_id}
+              onChange={(value) => setFormData({ ...formData, owner_id: value })}
+              placeholder="Select owner"
+            />
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Change the owner of this peer</p>
+          </div>
+        )}
 
         {/* Use Agent (only for create) */}
         {!isEditMode && (
