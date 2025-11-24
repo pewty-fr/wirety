@@ -114,7 +114,6 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
 
           {/* Network Info */}
           <div>
-            <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Network</label>
             <p className="text-lg text-gray-900 dark:text-gray-100">{displayPeer.network_name || displayPeer.network_id}</p>
           </div>
 
@@ -158,21 +157,6 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                     : 'No Agent'}
                 </span>
               </div>
-              
-              {/* Peer Up/Down */}
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600 dark:text-gray-300">Peer Status</span>
-                <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                  displayPeer.session_status?.current_session?.reported_endpoint
-                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                    : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
-                }`}>
-                  <span className={`w-2 h-2 rounded-full mr-1.5 ${
-                    displayPeer.session_status?.current_session?.reported_endpoint ? 'bg-green-500' : 'bg-gray-400'
-                  }`}></span>
-                  {displayPeer.session_status?.current_session?.reported_endpoint ? 'Up' : 'Down'}
-                </span>
-              </div>
 
               {/* Reported Endpoint */}
               {displayPeer.session_status?.current_session?.reported_endpoint && (
@@ -184,22 +168,22 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                 </div>
               )}
 
-              {/* Last Seen */}
-              {displayPeer.session_status?.current_session?.last_seen && (
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600 dark:text-gray-300">Last Seen</span>
-                  <span className="text-sm text-gray-900 dark:text-gray-100">
-                    {new Date(displayPeer.session_status.current_session.last_seen).toLocaleString()}
-                  </span>
-                </div>
-              )}
-
               {/* Hostname */}
               {displayPeer.session_status?.current_session?.hostname && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600 dark:text-gray-300">Hostname</span>
                   <span className="text-sm font-mono text-gray-900 dark:text-gray-100">
                     {displayPeer.session_status.current_session.hostname}
+                  </span>
+                </div>
+              )}
+
+              {/* Last Seen */}
+              {displayPeer.session_status?.current_session?.last_seen && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">Last Seen</span>
+                  <span className="text-sm text-gray-900 dark:text-gray-100">
+                    {new Date(displayPeer.session_status.current_session.last_seen).toLocaleString()}
                   </span>
                 </div>
               )}
@@ -264,7 +248,8 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        a.download = `${peer.name || 'peer'}-${peer.id}.conf`;
+                        
+                        a.download = `${peer.network_name}.conf`;
                         document.body.appendChild(a);
                         a.click();
                         document.body.removeChild(a);

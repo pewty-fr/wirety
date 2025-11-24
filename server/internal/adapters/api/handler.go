@@ -309,6 +309,22 @@ func (h *Handler) ListNetworks(c *gin.Context) {
 		return
 	}
 
+	user := middleware.GetUserFromContext(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found in context"})
+		c.Abort()
+		return
+	}
+
+	// Ensure user has access to network
+	var hasAccess []*domain.Network
+	for _, n := range networks {
+		if user.HasNetworkAccess(n.ID) {
+			hasAccess = append(hasAccess, n)
+		}
+	}
+	networks = hasAccess
+
 	// Apply filtering
 	var filtered []*domain.Network
 	if filter != "" {

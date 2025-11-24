@@ -267,7 +267,7 @@ export default function SecurityPage() {
                           {new Date(incident.detected_at).toLocaleString()}
                         </span>
                       </div>
-                      {incident.resolved_at && (
+                      {incident.resolved_at && incident.resolved && (
                         <div>
                           <span className="text-gray-600 dark:text-gray-300">Resolved:</span>
                           <span className="ml-2 text-gray-900 dark:text-gray-100">

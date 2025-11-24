@@ -101,6 +101,10 @@ func (c *CombinedRepository) RecordEndpointChange(ctx context.Context, networkID
 func (c *CombinedRepository) GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*network.EndpointChange, error) {
 	return c.netRepo.GetEndpointChanges(ctx, networkID, peerID, since)
 }
+
+func (c *CombinedRepository) DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error {
+	return c.netRepo.DeleteEndpointChanges(ctx, networkID, peerID)
+}
 func (c *CombinedRepository) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
 	return c.netRepo.CreateSecurityIncident(ctx, incident)
 }

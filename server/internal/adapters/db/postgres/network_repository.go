@@ -411,6 +411,14 @@ func (r *NetworkRepository) GetEndpointChanges(ctx context.Context, networkID, p
 	return out, rows.Err()
 }
 
+func (r *NetworkRepository) DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM endpoint_changes WHERE peer_id=$1`, peerID)
+	if err != nil {
+		return fmt.Errorf("delete endpoint changes: %w", err)
+	}
+	return nil
+}
+
 // Security incident operations
 func (r *NetworkRepository) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO security_incidents (id,peer_id,peer_name,network_id,network_name,incident_type,detected_at,public_key,endpoints,details,resolved,resolved_at,resolved_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
