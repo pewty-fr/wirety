@@ -35,6 +35,7 @@ type Runner struct {
 	dnsFactory        func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort // factory to create DNS server instance
 	fwAdapter         ports.FirewallPort
 	captivePortal     ports.CaptivePortalPort
+	tlsGateway        ports.TLSSNIGatewayPort
 	wsURL             string
 	wgInterface       string
 	currentPeerName   string // Track current peer name to detect changes
@@ -43,13 +44,14 @@ type Runner struct {
 	heartbeatInterval time.Duration
 }
 
-func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, captivePortal ports.CaptivePortalPort, wsURL string, wgInterface string) *Runner {
+func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, captivePortal ports.CaptivePortalPort, tlsGateway ports.TLSSNIGatewayPort, wsURL string, wgInterface string) *Runner {
 	return &Runner{
 		wsClient:          wsClient,
 		cfgWriter:         writer,
 		dnsFactory:        dnsFactory,
 		fwAdapter:         fwAdapter,
 		captivePortal:     captivePortal,
+		tlsGateway:        tlsGateway,
 		wsURL:             wsURL,
 		wgInterface:       wgInterface,
 		currentPeerName:   "", // Will be set when first message is received
@@ -195,27 +197,38 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				}()
 			}
 			// Handle whitelist updates
-			if payload.Whitelist != nil && r.captivePortal != nil {
+			if payload.Whitelist != nil {
 				log.Info().Int("count", len(payload.Whitelist)).Msg("updating whitelist")
 				// Clear existing whitelist and add new ones
-				r.captivePortal.ClearWhitelist()
-				for _, ip := range payload.Whitelist {
-					r.captivePortal.AddWhitelistedPeer(ip)
+				if r.captivePortal != nil {
+					r.captivePortal.ClearWhitelist()
+					for _, ip := range payload.Whitelist {
+						r.captivePortal.AddWhitelistedPeer(ip)
+					}
+				}
+				if r.tlsGateway != nil {
+					r.tlsGateway.ClearWhitelist()
+					for _, ip := range payload.Whitelist {
+						r.tlsGateway.AddWhitelistedPeer(ip)
+					}
 				}
 			}
 
 			if payload.Policy != nil && r.fwAdapter != nil {
 				log.Info().Int("peer_count", len(payload.Policy.Peers)).Msg("applying firewall policy")
 
-				// Update captive portal with non-agent peers
-				if r.captivePortal != nil {
-					nonAgentIPs := make([]string, 0)
-					for _, peer := range payload.Policy.Peers {
-						if !peer.UseAgent {
-							nonAgentIPs = append(nonAgentIPs, peer.IP)
-						}
+				// Update captive portal and TLS gateway with non-agent peers
+				nonAgentIPs := make([]string, 0)
+				for _, peer := range payload.Policy.Peers {
+					if !peer.UseAgent {
+						nonAgentIPs = append(nonAgentIPs, peer.IP)
 					}
+				}
+				if r.captivePortal != nil {
 					r.captivePortal.UpdateNonAgentPeers(nonAgentIPs)
+				}
+				if r.tlsGateway != nil {
+					r.tlsGateway.UpdateNonAgentPeers(nonAgentIPs)
 				}
 
 				// Get whitelisted IPs for firewall rules

@@ -37,3 +37,13 @@ type CaptivePortalPort interface {
 	RemoveWhitelistedPeer(ip string)
 	ClearWhitelist()
 }
+
+// TLSSNIGatewayPort defines capability to run a TLS-SNI gateway for HTTPS filtering.
+type TLSSNIGatewayPort interface {
+	Start() error
+	Stop() error
+	UpdateNonAgentPeers(peerIPs []string)
+	AddWhitelistedPeer(ip string)
+	RemoveWhitelistedPeer(ip string)
+	ClearWhitelist()
+}

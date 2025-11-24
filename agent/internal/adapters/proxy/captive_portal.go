@@ -151,6 +151,7 @@ func (cp *CaptivePortal) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Debug().
 		Str("client_ip", clientIP).
 		Str("method", r.Method).
+		Str("host", r.Host).
 		Str("url", r.URL.String()).
 		Msg("HTTP proxy request")
 
@@ -169,8 +170,40 @@ func (cp *CaptivePortal) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is a captive portal detection request
+	// These are special URLs used by operating systems to detect captive portals
+	isCaptiveDetection := cp.isCaptivePortalDetection(r.Host, r.URL.Path)
+
+	if isCaptiveDetection {
+		log.Debug().
+			Str("client_ip", clientIP).
+			Str("host", r.Host).
+			Msg("captive portal detection request - redirecting")
+	}
+
 	// Redirect to front-end captive portal page
 	cp.redirectToFrontend(w, r)
+}
+
+// isCaptivePortalDetection checks if the request is a captive portal detection probe
+func (cp *CaptivePortal) isCaptivePortalDetection(host, path string) bool {
+	// Common captive portal detection endpoints
+	captiveHosts := map[string]bool{
+		"captive.apple.com":             true,
+		"www.apple.com":                 true,
+		"connectivitycheck.gstatic.com": true,
+		"www.gstatic.com":               true,
+		"clients3.google.com":           true,
+		"www.msftconnecttest.com":       true,
+		"www.msftncsi.com":              true,
+	}
+
+	// Remove port from host if present
+	if idx := strings.Index(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+
+	return captiveHosts[strings.ToLower(host)]
 }
 
 // handleHTTPS handles HTTPS CONNECT requests
@@ -226,17 +259,19 @@ func (cp *CaptivePortal) redirectToFrontend(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Build the captive portal URL with captive portal token (NOT agent token)
-	portalURL := fmt.Sprintf("%s/captive-portal?token=%s&redirect=%s",
+	// Always redirect to HTTPS server URL (portalURL should be https://SERVER_URL)
+	// This ensures certificate validation works correctly
+	portalURL := fmt.Sprintf("%s/captive-portal?token=%s",
 		cp.portalURL,
-		captiveToken,
-		r.URL.String())
+		captiveToken)
 
 	log.Debug().
 		Str("portal_url", portalURL).
 		Str("original_url", r.URL.String()).
-		Msg("redirecting to front-end captive portal")
+		Str("original_host", r.Host).
+		Msg("redirecting HTTP to HTTPS captive portal")
 
+	// Use 302 redirect to send user to the HTTPS captive portal
 	http.Redirect(w, r, portalURL, http.StatusFound)
 }
 

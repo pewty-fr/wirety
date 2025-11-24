@@ -180,11 +180,12 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	_ = a.run("-t", "nat", "-N", captiveChain)
 	_ = a.run("-t", "nat", "-F", captiveChain)
 
-	// Redirect HTTP (port 80) and HTTPS (port 443) traffic from non-agent peers
-	// to the local proxy ports (unless they are whitelisted)
+	// Redirect HTTP and HTTPS traffic from non-agent peers
+	// HTTP (port 80) goes to HTTP proxy
+	// HTTPS (port 443) goes to TLS-SNI gateway (port 443 on localhost)
 	for _, peer := range p.Peers {
 		if !peer.UseAgent && !whitelisted[peer.IP] {
-			// Redirect HTTP traffic (port 80) to proxy
+			// Redirect HTTP traffic (port 80) to HTTP proxy
 			_ = a.run("-t", "nat", "-A", captiveChain,
 				"-i", a.iface,
 				"-s", peer.IP,
@@ -193,14 +194,15 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 				"-j", "REDIRECT",
 				"--to-port", fmt.Sprintf("%d", a.httpPort))
 
-			// Redirect HTTPS traffic (port 443) to proxy
+			// Redirect HTTPS traffic (port 443) to TLS-SNI gateway (localhost:443)
+			// The TLS-SNI gateway will parse SNI and only allow server domain
 			_ = a.run("-t", "nat", "-A", captiveChain,
 				"-i", a.iface,
 				"-s", peer.IP,
 				"-p", "tcp",
 				"--dport", "443",
-				"-j", "REDIRECT",
-				"--to-port", fmt.Sprintf("%d", a.httpsPort))
+				"-j", "DNAT",
+				"--to-destination", "127.0.0.1:443")
 
 			log.Debug().
 				Str("peer_ip", peer.IP).

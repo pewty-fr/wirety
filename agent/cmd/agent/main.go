@@ -122,7 +122,21 @@ func main() {
 		Str("portal_url", portalURL).
 		Msg("captive portal started")
 
-	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, captivePortal, wsURL, iface)
+	// Initialize TLS-SNI gateway for HTTPS filtering
+	// This gateway only allows connections to the server domain for non-authenticated users
+	tlsGateway, err := proxy.NewTLSSNIGateway(443, server)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create TLS-SNI gateway")
+	}
+	if err := tlsGateway.Start(); err != nil {
+		log.Fatal().Err(err).Msg("failed to start TLS-SNI gateway")
+	}
+	log.Info().
+		Int("port", 443).
+		Str("allowed_domain", server).
+		Msg("TLS-SNI gateway started")
+
+	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, captivePortal, tlsGateway, wsURL, iface)
 
 	// Set the initial peer name in the runner
 	runner.SetCurrentPeerName(peerName)
