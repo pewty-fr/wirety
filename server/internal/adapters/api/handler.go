@@ -101,7 +101,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 		networks := protected.Group("/networks")
 		{
 			// List/Create networks - admin only
-			networks.GET("", requireNetworkAccess, h.ListNetworks)
+			networks.GET("", h.ListNetworks)
 			networks.POST("", requireAdmin, h.CreateNetwork)
 
 			// Specific network operations - requires network access
@@ -308,6 +308,22 @@ func (h *Handler) ListNetworks(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	user := middleware.GetUserFromContext(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found in context"})
+		c.Abort()
+		return
+	}
+
+	// Ensure user has access to network
+	var hasAccess []*domain.Network
+	for _, n := range networks {
+		if user.HasNetworkAccess(n.ID) {
+			hasAccess = append(hasAccess, n)
+		}
+	}
+	networks = hasAccess
 
 	// Apply filtering
 	var filtered []*domain.Network
