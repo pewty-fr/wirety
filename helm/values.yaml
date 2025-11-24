@@ -51,15 +51,15 @@ replicaCount: 1
 securityContext: {}
 server:
   env:
-    AUTH_CLIENT_ID: wirety
-    AUTH_CLIENT_SECRET: XDpTJsP5gZsIS7EfCiYk2oYMkLGCd8Kq
+    AUTH_CLIENT_ID: 
+    AUTH_CLIENT_SECRET: 
     AUTH_ENABLED: "true"
-    AUTH_ISSUER_URL: https://keycloak.pewty.fr/realms/wirety-personal
+    AUTH_ISSUER_URL: 
     AUTH_JWKS_CACHE_TTL: "3600"
-    DB_DSN: postgres://wiretypersonal:j1nA5Ys7Q2SeuBjMj0eT98z0yPTbkMBczGJ7jqyAtDw6kbvj11@wirety-db-postgres.wirety-core.svc.cluster.local:5432/wiretypersonal?sslmode=disable
+    DB_DSN: 
     DB_ENABLED: "true"
     HTTP_PORT: "8080"
-    ALLOWED_ORIGIN: "https://wirety-personal.pewty.fr"
+    ALLOWED_ORIGIN: 
     SKIP_TLS_VERIFY: "false"
   envFrom: []
   image:
