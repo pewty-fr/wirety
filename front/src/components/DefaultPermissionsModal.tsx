@@ -5,11 +5,6 @@ import type { Network } from '../types';
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 
-interface DefaultPermissions {
-  default_role: 'administrator' | 'user';
-  default_authorized_networks: string[];
-}
-
 interface DefaultPermissionsModalProps {
   isOpen: boolean;
   onClose: () => void;
