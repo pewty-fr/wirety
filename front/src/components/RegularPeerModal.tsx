@@ -38,7 +38,7 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
   // Create user options for SearchableSelect
   const userOptions = users.map(user => ({
     value: user.id,
-    label: user.name,
+    label: user.name + ' ' + user.email,
   }));
 
   useEffect(() => {

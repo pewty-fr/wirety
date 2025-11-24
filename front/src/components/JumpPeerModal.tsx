@@ -34,7 +34,7 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
   // Create user options for SearchableSelect
   const userOptions = users.map(user => ({
     value: user.id,
-    label: user.name,
+    label: user.name + ' ' + user.email,
   }));
 
   useEffect(() => {
