@@ -464,10 +464,17 @@ func (h *Handler) CreatePeer(c *gin.Context) {
 func (h *Handler) GetPeer(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
+	user := middleware.GetUserFromContext(c)
 
 	peer, err := h.service.GetPeer(c.Request.Context(), networkID, peerID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check permission: admins can view any peer, users can only view their own
+	if user != nil && !user.IsAdministrator() && peer.OwnerID != user.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you can only view your own peers"})
 		return
 	}
 
@@ -493,6 +500,7 @@ func (h *Handler) ListPeers(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	filter := c.Query("filter")
+	user := middleware.GetUserFromContext(c)
 
 	if page < 1 {
 		page = 1
@@ -507,15 +515,24 @@ func (h *Handler) ListPeers(c *gin.Context) {
 		return
 	}
 
+	// Filter by ownership for non-admin users
+	var accessiblePeers []*domain.Peer
+	for _, p := range peers {
+		if user != nil && !user.IsAdministrator() && p.OwnerID != user.ID {
+			continue
+		}
+		accessiblePeers = append(accessiblePeers, p)
+	}
+
 	var filtered []*domain.Peer
 	if filter != "" {
-		for _, p := range peers {
+		for _, p := range accessiblePeers {
 			if containsIgnoreCase(p.Name, filter) || containsIgnoreCase(p.Address, filter) || containsIgnoreCase(p.ID, filter) {
 				filtered = append(filtered, p)
 			}
 		}
 	} else {
-		filtered = peers
+		filtered = accessiblePeers
 	}
 
 	total := len(filtered)
@@ -647,6 +664,20 @@ func (h *Handler) DeletePeer(c *gin.Context) {
 func (h *Handler) GetPeerConfig(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
+	user := middleware.GetUserFromContext(c)
+
+	// Get the peer to check ownership
+	peer, err := h.service.GetPeer(c.Request.Context(), networkID, peerID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "peer not found"})
+		return
+	}
+
+	// Check permission: admins can view any config, users can only view their own
+	if user != nil && !user.IsAdministrator() && peer.OwnerID != user.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you can only view your own peer configuration"})
+		return
+	}
 
 	config, err := h.service.GeneratePeerConfig(c.Request.Context(), networkID, peerID)
 	if err != nil {
@@ -793,6 +824,7 @@ func (h *Handler) ListIPAMAllocations(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	filter := c.Query("filter")
+	user := middleware.GetUserFromContext(c)
 
 	if page < 1 {
 		page = 1
@@ -810,6 +842,11 @@ func (h *Handler) ListIPAMAllocations(c *gin.Context) {
 	var allAllocations []IPAMAllocation
 
 	for _, net := range networks {
+		// Skip networks the user doesn't have access to
+		if user != nil && !user.HasNetworkAccess(net.ID) {
+			continue
+		}
+
 		peers, err := h.service.ListPeers(c.Request.Context(), net.ID)
 		if err != nil {
 			continue
@@ -817,6 +854,11 @@ func (h *Handler) ListIPAMAllocations(c *gin.Context) {
 
 		// Create allocation for each peer
 		for _, peer := range peers {
+			// Filter by ownership for non-admin users
+			if user != nil && !user.IsAdministrator() && peer.OwnerID != user.ID {
+				continue
+			}
+
 			allocation := IPAMAllocation{
 				NetworkID:   net.ID,
 				NetworkName: net.Name,
