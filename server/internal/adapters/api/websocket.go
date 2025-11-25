@@ -157,8 +157,8 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 
 	// Get OAuth issuer from config
 	oauthIssuer := ""
-	if h.authConfig != nil && h.authConfig.Enabled {
-		oauthIssuer = h.authConfig.IssuerURL
+	if h.wsManager.authConfig != nil && h.wsManager.authConfig.Enabled {
+		oauthIssuer = h.wsManager.authConfig.IssuerURL
 	}
 
 	msg := struct {
