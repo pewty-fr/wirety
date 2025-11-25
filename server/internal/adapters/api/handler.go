@@ -8,6 +8,7 @@ import (
 	appauth "wirety/internal/application/auth"
 	"wirety/internal/application/ipam"
 	"wirety/internal/application/network"
+	"wirety/internal/config"
 	"wirety/internal/domain/auth"
 	domain "wirety/internal/domain/network"
 	"wirety/internal/infrastructure/validation"
@@ -45,8 +46,8 @@ type PaginatedPeers struct {
 }
 
 // NewHandler creates a new API handler
-func NewHandler(service *network.Service, ipamService *ipam.Service, authService *appauth.Service, userRepo auth.Repository) *Handler {
-	wsManager := NewWebSocketManager(service)
+func NewHandler(service *network.Service, ipamService *ipam.Service, authService *appauth.Service, userRepo auth.Repository, authConfig *config.AuthConfig) *Handler {
+	wsManager := NewWebSocketManager(service, authConfig)
 
 	// Set the WebSocket notifier on the service so it can trigger config updates
 	service.SetWebSocketNotifier(wsManager)

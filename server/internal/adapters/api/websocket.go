@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"wirety/internal/application/network"
+	"wirety/internal/config"
 	domain "wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
@@ -22,14 +23,16 @@ var upgrader = websocket.Upgrader{
 // WebSocketManager manages WebSocket connections for peer configuration updates
 type WebSocketManager struct {
 	service     *network.Service
+	authConfig  *config.AuthConfig
 	connections map[string]map[string]*websocket.Conn // networkID -> peerID -> conn
 	mu          sync.RWMutex
 }
 
 // NewWebSocketManager creates a new WebSocket manager
-func NewWebSocketManager(service *network.Service) *WebSocketManager {
+func NewWebSocketManager(service *network.Service, authConfig *config.AuthConfig) *WebSocketManager {
 	return &WebSocketManager{
 		service:     service,
+		authConfig:  authConfig,
 		connections: make(map[string]map[string]*websocket.Conn),
 	}
 }
@@ -152,16 +155,24 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 		}
 	}
 
+	// Get OAuth issuer from config
+	oauthIssuer := ""
+	if h.authConfig != nil && h.authConfig.Enabled {
+		oauthIssuer = h.authConfig.IssuerURL
+	}
+
 	msg := struct {
-		Config    string      `json:"config"`
-		DNS       interface{} `json:"dns,omitempty"`
-		Policy    interface{} `json:"policy,omitempty"`
-		Whitelist []string    `json:"whitelist,omitempty"`
+		Config      string      `json:"config"`
+		DNS         interface{} `json:"dns,omitempty"`
+		Policy      interface{} `json:"policy,omitempty"`
+		Whitelist   []string    `json:"whitelist,omitempty"`
+		OAuthIssuer string      `json:"oauth_issuer,omitempty"`
 	}{
-		Config:    cfg,
-		DNS:       dnsCfg,
-		Policy:    policy,
-		Whitelist: whitelist,
+		Config:      cfg,
+		DNS:         dnsCfg,
+		Policy:      policy,
+		Whitelist:   whitelist,
+		OAuthIssuer: oauthIssuer,
 	}
 	data, _ := json.Marshal(msg)
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
@@ -229,20 +240,28 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 				}
 			}
 
+			// Get OAuth issuer from config
+			oauthIssuer := ""
+			if m.authConfig != nil && m.authConfig.Enabled {
+				oauthIssuer = m.authConfig.IssuerURL
+			}
+
 			msg := struct {
-				Config    string      `json:"config"`
-				DNS       interface{} `json:"dns,omitempty"`
-				Policy    interface{} `json:"policy,omitempty"`
-				PeerID    string      `json:"peer_id"`
-				PeerName  string      `json:"peer_name"`
-				Whitelist []string    `json:"whitelist,omitempty"`
+				Config      string      `json:"config"`
+				DNS         interface{} `json:"dns,omitempty"`
+				Policy      interface{} `json:"policy,omitempty"`
+				PeerID      string      `json:"peer_id"`
+				PeerName    string      `json:"peer_name"`
+				Whitelist   []string    `json:"whitelist,omitempty"`
+				OAuthIssuer string      `json:"oauth_issuer,omitempty"`
 			}{
-				Config:    cfg,
-				DNS:       dnsCfg,
-				Policy:    policy,
-				PeerID:    peer.ID,
-				PeerName:  peer.Name,
-				Whitelist: whitelist,
+				Config:      cfg,
+				DNS:         dnsCfg,
+				Policy:      policy,
+				PeerID:      peer.ID,
+				PeerName:    peer.Name,
+				Whitelist:   whitelist,
+				OAuthIssuer: oauthIssuer,
 			}
 			data, _ := json.Marshal(msg)
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
