@@ -21,12 +21,13 @@ import (
 // Whitelist optional; list of authenticated peer IPs
 
 type WSMessage struct {
-	Config    string          `json:"config"`
-	DNS       *dom.DNSConfig  `json:"dns,omitempty"`
-	Policy    *pol.JumpPolicy `json:"policy,omitempty"`
-	PeerID    string          `json:"peer_id,omitempty"`
-	PeerName  string          `json:"peer_name,omitempty"`
-	Whitelist []string        `json:"whitelist,omitempty"` // IPs of authenticated non-agent peers
+	Config      string          `json:"config"`
+	DNS         *dom.DNSConfig  `json:"dns,omitempty"`
+	Policy      *pol.JumpPolicy `json:"policy,omitempty"`
+	PeerID      string          `json:"peer_id,omitempty"`
+	PeerName    string          `json:"peer_name,omitempty"`
+	Whitelist   []string        `json:"whitelist,omitempty"`    // IPs of authenticated non-agent peers
+	OAuthIssuer string          `json:"oauth_issuer,omitempty"` // OAuth issuer URL for TLS-SNI gateway
 }
 
 type Runner struct {
@@ -203,6 +204,11 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					}
 				}()
 			}
+			// Handle OAuth issuer for TLS-SNI gateway
+			if payload.OAuthIssuer != "" && r.tlsGateway != nil {
+				r.tlsGateway.AddAllowedDomain(payload.OAuthIssuer)
+			}
+
 			// Handle whitelist updates
 			if payload.Whitelist != nil {
 				log.Info().Int("count", len(payload.Whitelist)).Msg("updating whitelist")

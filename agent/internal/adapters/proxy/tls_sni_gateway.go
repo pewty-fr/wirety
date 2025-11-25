@@ -47,7 +47,6 @@ func NewTLSSNIGateway(port int, serverURL string) (*TLSSNIGateway, error) {
 	// Add the server domain to allowed list
 	// This is the ONLY domain allowed for non-authenticated users
 	gateway.allowedDomains[strings.ToLower(hostname)] = true
-	gateway.allowedDomains[strings.ToLower("keycloak.pewty.fr")] = true
 
 	log.Info().
 		Str("allowed_domain", hostname).
@@ -89,6 +88,25 @@ func (g *TLSSNIGateway) ClearWhitelist() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.whitelistedPeers = make(map[string]bool)
+}
+
+// AddAllowedDomain adds a domain to the allowed list (e.g., OAuth issuer)
+func (g *TLSSNIGateway) AddAllowedDomain(domain string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Parse URL if it's a full URL
+	if strings.HasPrefix(domain, "http://") || strings.HasPrefix(domain, "https://") {
+		if parsedURL, err := url.Parse(domain); err == nil {
+			domain = parsedURL.Hostname()
+		}
+	}
+
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain != "" {
+		g.allowedDomains[domain] = true
+		log.Info().Str("domain", domain).Msg("added allowed domain to TLS-SNI gateway")
+	}
 }
 
 // isNonAgentPeer checks if an IP is a non-agent peer

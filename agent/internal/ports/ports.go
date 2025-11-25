@@ -46,4 +46,5 @@ type TLSSNIGatewayPort interface {
 	AddWhitelistedPeer(ip string)
 	RemoveWhitelistedPeer(ip string)
 	ClearWhitelist()
+	AddAllowedDomain(domain string)
 }
