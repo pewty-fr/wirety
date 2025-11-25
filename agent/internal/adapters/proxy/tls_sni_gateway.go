@@ -47,6 +47,7 @@ func NewTLSSNIGateway(port int, serverURL string) (*TLSSNIGateway, error) {
 	// Add the server domain to allowed list
 	// This is the ONLY domain allowed for non-authenticated users
 	gateway.allowedDomains[strings.ToLower(hostname)] = true
+	gateway.allowedDomains[strings.ToLower("keycloak.pewty.fr")] = true
 
 	log.Info().
 		Str("allowed_domain", hostname).

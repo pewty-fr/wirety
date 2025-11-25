@@ -43,7 +43,32 @@ func (a *Adapter) run(args ...string) error {
 	return nil
 }
 
+// ruleExists checks if an iptables rule exists
+func (a *Adapter) ruleExists(args ...string) bool {
+	// Replace -A (append) or -I (insert) with -C (check)
+	checkArgs := make([]string, len(args))
+	copy(checkArgs, args)
+	for i, arg := range checkArgs {
+		if arg == "-A" || arg == "-I" {
+			checkArgs[i] = "-C"
+			break
+		}
+	}
+	cmd := exec.Command("iptables", checkArgs...) // #nosec G204
+	return cmd.Run() == nil
+}
+
+// runIfNotExists runs an iptables command only if the rule doesn't already exist
+func (a *Adapter) runIfNotExists(args ...string) error {
+	if a.ruleExists(args...) {
+		return nil // Rule already exists, skip
+	}
+	return a.run(args...)
+}
+
 // Sync applies forwarding/NAT plus isolation & ACL blocks.
+// This method is called periodically when policy updates are received.
+// To avoid dropping active connections, we check if rules exist before adding them.
 func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string) error {
 	if p == nil {
 		return nil
@@ -54,7 +79,7 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	}
 	// Create custom chain
 	chain := "WIRETY_JUMP"
-	// Flush or create chain
+	// Flush or create chain (we flush the chain content but keep chain attachments)
 	_ = a.run("-N", chain)
 	_ = a.run("-F", chain)
 
@@ -170,19 +195,19 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	_ = a.run("-A", chain, "-i", a.iface, "-j", "ACCEPT")
 	_ = a.run("-A", chain, "-o", a.iface, "-j", "ACCEPT")
 
-	// Attach chain to FORWARD (insert at top)
-	_ = a.run("-D", "FORWARD", "-j", chain) // remove if exists
-	_ = a.run("-I", "FORWARD", "1", "-j", chain)
+	// Attach chain to FORWARD (insert at top, only if not already attached)
+	_ = a.runIfNotExists("-I", "FORWARD", "1", "-j", chain)
 
 	// Captive portal redirection for non-agent peers
 	// Create a custom chain for captive portal redirects
+	// We flush the chain content but keep chain attachments to avoid dropping connections
 	captiveChain := "WIRETY_CAPTIVE"
 	_ = a.run("-t", "nat", "-N", captiveChain)
 	_ = a.run("-t", "nat", "-F", captiveChain)
 
 	// Redirect HTTP and HTTPS traffic from non-agent peers
-	// HTTP (port 80) goes to HTTP proxy
-	// HTTPS (port 443) goes to TLS-SNI gateway (port 443 on localhost)
+	// HTTP (port 80) → HTTP proxy (port from --http-port flag)
+	// HTTPS (port 443) → TLS-SNI gateway (port from --https-port flag)
 	for _, peer := range p.Peers {
 		if !peer.UseAgent && !whitelisted[peer.IP] {
 			// Redirect HTTP traffic (port 80) to HTTP proxy
@@ -201,12 +226,14 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 				"-s", peer.IP,
 				"-p", "tcp",
 				"--dport", "443",
-				"-j", "DNAT",
-				"--to-destination", fmt.Sprintf("127.0.0.1:%d", a.httpsPort))
+				"-j", "REDIRECT",
+				"--to-port", fmt.Sprintf("%d", a.httpsPort))
 
 			log.Debug().
 				Str("peer_ip", peer.IP).
 				Str("peer_name", peer.Name).
+				Int("http_redirect_port", a.httpPort).
+				Int("https_redirect_port", a.httpsPort).
 				Msg("added captive portal redirect for non-agent peer")
 		} else if !peer.UseAgent && whitelisted[peer.IP] {
 			log.Debug().
@@ -216,14 +243,12 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 		}
 	}
 
-	// Attach captive portal chain to PREROUTING
-	_ = a.run("-t", "nat", "-D", "PREROUTING", "-j", captiveChain) // remove if exists
-	_ = a.run("-t", "nat", "-I", "PREROUTING", "1", "-j", captiveChain)
+	// Attach captive portal chain to PREROUTING (only if not already attached)
+	_ = a.runIfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-j", captiveChain)
 
-	// NAT (MASQUERADE) if needed
+	// NAT (MASQUERADE) if needed (only add if not already present)
 	if a.natInterface != "" {
-		_ = a.run("-t", "nat", "-D", "POSTROUTING", "-o", a.natInterface, "-j", "MASQUERADE")
-		_ = a.run("-t", "nat", "-A", "POSTROUTING", "-o", a.natInterface, "-j", "MASQUERADE")
+		_ = a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", a.natInterface, "-j", "MASQUERADE")
 	}
 	return nil
 }
