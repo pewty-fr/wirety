@@ -59,7 +59,9 @@ func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*
 	if err != nil {
 		return nil, fmt.Errorf("load peers: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	count := 0
 	for rows.Next() {
 		var p network.Peer
@@ -105,7 +107,9 @@ func (r *NetworkRepository) ListNetworks(ctx context.Context) ([]*network.Networ
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*network.Network, 0)
 	for rows.Next() {
 		var n network.Network
@@ -203,7 +207,9 @@ func (r *NetworkRepository) ListPeers(ctx context.Context, networkID string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*network.Peer, 0)
 	for rows.Next() {
 		var p network.Peer
@@ -270,7 +276,9 @@ func (r *NetworkRepository) ListConnections(ctx context.Context, networkID strin
 	if err != nil {
 		return nil, fmt.Errorf("list connections: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*network.PeerConnection, 0)
 	for rows.Next() {
 		var c network.PeerConnection
@@ -340,7 +348,9 @@ func (r *NetworkRepository) GetActiveSessionsForPeer(ctx context.Context, networ
 	if err != nil {
 		return nil, fmt.Errorf("list peer sessions: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*network.AgentSession, 0)
 	var belongs bool
 	_ = r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peers WHERE id=$1 AND network_id=$2)`, peerID, networkID).Scan(&belongs)
@@ -372,7 +382,9 @@ func (r *NetworkRepository) ListSessions(ctx context.Context, networkID string) 
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*network.AgentSession, 0)
 	for rows.Next() {
 		var s network.AgentSession
@@ -399,7 +411,9 @@ func (r *NetworkRepository) GetEndpointChanges(ctx context.Context, networkID, p
 	if err != nil {
 		return nil, fmt.Errorf("get endpoint changes: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*network.EndpointChange, 0)
 	for rows.Next() {
 		var c network.EndpointChange
@@ -459,7 +473,9 @@ func (r *NetworkRepository) ListSecurityIncidents(ctx context.Context, resolved 
 	if err != nil {
 		return nil, fmt.Errorf("list incidents: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*network.SecurityIncident, 0)
 	for rows.Next() {
 		var i network.SecurityIncident
@@ -488,7 +504,9 @@ func (r *NetworkRepository) ListSecurityIncidentsByNetwork(ctx context.Context, 
 	if err != nil {
 		return nil, fmt.Errorf("list network incidents: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*network.SecurityIncident, 0)
 	for rows.Next() {
 		var i network.SecurityIncident
@@ -542,7 +560,9 @@ func (r *NetworkRepository) GetCaptivePortalWhitelist(ctx context.Context, netwo
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var ips []string
 	for rows.Next() {

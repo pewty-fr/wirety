@@ -15,109 +15,108 @@ export default function NetworkTopology({ peer, allPeers }: NetworkTopologyProps
   // Use React Query to load ACL
   const { data: acl } = useACL(peer.network_id || '', !!peer.network_id);
 
-  // Generate Mermaid diagram definition
-  const generateMermaidDiagram = (): string => {
-    const lines: string[] = ['graph TB'];
-    
-    // Add styling
-    lines.push('  classDef jump fill:#e9d5ff,stroke:#a855f7,stroke-width:3px');
-    lines.push('  classDef isolated fill:#fef3c7,stroke:#f59e0b,stroke-width:2px');
-    lines.push('  classDef regular fill:#d1fae5,stroke:#10b981,stroke-width:2px');
-    lines.push('  classDef current fill:#dbeafe,stroke:#3b82f6,stroke-width:4px');
-      lines.push('  classDef blocked fill:#fca5a5,stroke:#dc2626,stroke-width:3px,stroke-dasharray:5 5');
-    lines.push('  classDef connected stroke:#22c55e,stroke-width:3px');
-    lines.push('  classDef disconnected stroke:#ef4444,stroke-width:2px,stroke-dasharray:5 5');
-    lines.push('');
-
-    // Determine accessibility rules
-    const canAccess = (from: Peer, to: Peer): boolean => {
-      // Can't connect to self
-      if (from.id === to.id) return false;
-
-      // Check ACL - if either peer is blocked, no access
-      if (acl?.enabled && acl.blocked_peers) {
-        if (acl.blocked_peers[from.id] || acl.blocked_peers[to.id]) {
-          return false;
-        }
-      }
-
-      // Jump peers can access everything
-      if (from.is_jump) return true;
-
-      // To jump peer - everyone can access
-      if (to.is_jump) return true;
-
-      // Isolated peers can't access other isolated peers
-      if (from.is_isolated && to.is_isolated) return false;
-
-      // Isolated peers can't access regular peers (only jump)
-      if (from.is_isolated && !to.is_jump && !to.is_isolated) return false;
-
-      // Regular peers can't access isolated peers
-      if (!from.is_isolated && !from.is_jump && to.is_isolated) return false;
-
-      return true;
-    };
-
-    // Filter to only accessible peers
-    const accessiblePeers = allPeers.filter(p => canAccess(peer, p) || p.id === peer.id);
-
-    // Add current peer (highlighted)
-    const currentLabel = `${peer.name}<br/>${peer.address}`;
-    lines.push(`  PEER_${peer.id}["${currentLabel}"]:::current`);
-    lines.push('');
-
-    // Add accessible peers only
-    accessiblePeers.forEach(p => {
-      if (p.id === peer.id) return; // Skip current peer
-        const isBlocked = acl?.enabled && acl.blocked_peers && acl.blocked_peers[p.id];
-      
-      const label = `${p.name}<br/>${p.address}`;
-      const className = isBlocked ? 'blocked' : (p.is_jump ? 'jump' : p.is_isolated ? 'isolated' : 'regular');
-      lines.push(`  PEER_${p.id}["${label}"]:::${className}`);
-    });
-    lines.push('');
-
-    // Add connections from current peer to accessible peers
-    accessiblePeers.forEach(targetPeer => {
-      if (targetPeer.id === peer.id) return;
-
-      // Check connection status for jump servers
-      const isConnected = targetPeer.is_jump && targetPeer.session?.reported_endpoint;
-      const lineStyle = isConnected ? '===' : '-.-';
-      // Jump peer edge labeling
-      let label: string;
-      if (targetPeer.is_jump) {
-        if (peer.full_encapsulation) {
-          // Explicitly show Internet access on existing jump edge
-          label = isConnected ? 'Full Tunnel (Internet)' : 'Down';
-        } else {
-          label = isConnected ? 'Connected' : 'Down';
-        }
-      } else {
-        label = 'Can Access';
-      }
-      
-      lines.push(`  PEER_${peer.id} ${lineStyle}>|${label}| PEER_${targetPeer.id}`);
-    });
-
-    // Omit interconnections between other peers to reflect only direct accessibility from current peer.
-
-    // Add Internet node (only show if there is a connected jump and peer is full encapsulation)
-    if (peer.full_encapsulation) {
-      const connectedJump = accessiblePeers.find(p => p.is_jump && p.session?.reported_endpoint);
-      if (connectedJump) {
-        lines.push('');
-        lines.push('  INTERNET["🌐 Internet"]');
-        // Single path from jump peer to Internet to avoid duplicate peer→jump edge
-        lines.push(`  PEER_${connectedJump.id} ==> INTERNET`);
-      }
-    }
-
-    return lines.join('\n');
-  };
-
   useEffect(() => {
+    // Generate Mermaid diagram definition
+    const generateMermaidDiagram = (): string => {
+      const lines: string[] = ['graph TB'];
+      
+      // Add styling
+      lines.push('  classDef jump fill:#e9d5ff,stroke:#a855f7,stroke-width:3px');
+      lines.push('  classDef isolated fill:#fef3c7,stroke:#f59e0b,stroke-width:2px');
+      lines.push('  classDef regular fill:#d1fae5,stroke:#10b981,stroke-width:2px');
+      lines.push('  classDef current fill:#dbeafe,stroke:#3b82f6,stroke-width:4px');
+      lines.push('  classDef blocked fill:#fca5a5,stroke:#dc2626,stroke-width:3px,stroke-dasharray:5 5');
+      lines.push('  classDef connected stroke:#22c55e,stroke-width:3px');
+      lines.push('  classDef disconnected stroke:#ef4444,stroke-width:2px,stroke-dasharray:5 5');
+      lines.push('');
+
+      // Determine accessibility rules
+      const canAccess = (from: Peer, to: Peer): boolean => {
+        // Can't connect to self
+        if (from.id === to.id) return false;
+
+        // Check ACL - if either peer is blocked, no access
+        if (acl?.enabled && acl.blocked_peers) {
+          if (acl.blocked_peers[from.id] || acl.blocked_peers[to.id]) {
+            return false;
+          }
+        }
+
+        // Jump peers can access everything
+        if (from.is_jump) return true;
+
+        // To jump peer - everyone can access
+        if (to.is_jump) return true;
+
+        // Isolated peers can't access other isolated peers
+        if (from.is_isolated && to.is_isolated) return false;
+
+        // Isolated peers can't access regular peers (only jump)
+        if (from.is_isolated && !to.is_jump && !to.is_isolated) return false;
+
+        // Regular peers can't access isolated peers
+        if (!from.is_isolated && !from.is_jump && to.is_isolated) return false;
+
+        return true;
+      };
+
+      // Filter to only accessible peers
+      const accessiblePeers = allPeers.filter(p => canAccess(peer, p) || p.id === peer.id);
+
+      // Add current peer (highlighted)
+      const currentLabel = `${peer.name}<br/>${peer.address}`;
+      lines.push(`  PEER_${peer.id}["${currentLabel}"]:::current`);
+      lines.push('');
+
+      // Add accessible peers only
+      accessiblePeers.forEach(p => {
+        if (p.id === peer.id) return; // Skip current peer
+        const isBlocked = acl?.enabled && acl.blocked_peers && acl.blocked_peers[p.id];
+        
+        const label = `${p.name}<br/>${p.address}`;
+        const className = isBlocked ? 'blocked' : (p.is_jump ? 'jump' : p.is_isolated ? 'isolated' : 'regular');
+        lines.push(`  PEER_${p.id}["${label}"]:::${className}`);
+      });
+      lines.push('');
+
+      // Add connections from current peer to accessible peers
+      accessiblePeers.forEach(targetPeer => {
+        if (targetPeer.id === peer.id) return;
+
+        // Check connection status for jump servers
+        const isConnected = targetPeer.is_jump && targetPeer.session?.reported_endpoint;
+        const lineStyle = isConnected ? '===' : '-.-';
+        // Jump peer edge labeling
+        let label: string;
+        if (targetPeer.is_jump) {
+          if (peer.full_encapsulation) {
+            // Explicitly show Internet access on existing jump edge
+            label = isConnected ? 'Full Tunnel (Internet)' : 'Down';
+          } else {
+            label = isConnected ? 'Connected' : 'Down';
+          }
+        } else {
+          label = 'Can Access';
+        }
+        
+        lines.push(`  PEER_${peer.id} ${lineStyle}>|${label}| PEER_${targetPeer.id}`);
+      });
+
+      // Omit interconnections between other peers to reflect only direct accessibility from current peer.
+
+      // Add Internet node (only show if there is a connected jump and peer is full encapsulation)
+      if (peer.full_encapsulation) {
+        const connectedJump = accessiblePeers.find(p => p.is_jump && p.session?.reported_endpoint);
+        if (connectedJump) {
+          lines.push('');
+          lines.push('  INTERNET["🌐 Internet"]');
+          // Single path from jump peer to Internet to avoid duplicate peer→jump edge
+          lines.push(`  PEER_${connectedJump.id} ==> INTERNET`);
+        }
+      }
+
+      return lines.join('\n');
+    };
     const renderDiagram = async () => {
       if (!containerRef.current) return;
 
@@ -141,14 +140,15 @@ export default function NetworkTopology({ peer, allPeers }: NetworkTopologyProps
 
         const { svg } = await mermaid.render(`mermaid-${peer.id}-${Date.now()}`, diagram);
         containerRef.current.innerHTML = svg;
-      } catch (err: any) {
+      } catch (err) {
+        const error = err as { message?: string };
         console.error('Failed to render network topology:', err);
-        setError(err.message || 'Failed to render topology');
+        setError(error.message || 'Failed to render topology');
       }
     };
 
     renderDiagram();
-  }, [peer, allPeers]);
+  }, [peer, allPeers, acl]);
 
   return (
     <div className="space-y-4">

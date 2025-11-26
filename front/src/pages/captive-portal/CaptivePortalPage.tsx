@@ -15,13 +15,7 @@ export default function CaptivePortalPage() {
   const redirectUrl = searchParams.get('redirect');
 
   useEffect(() => {
-    // If user is already authenticated, proceed with captive portal authentication
-    if (isAuthenticated && user && captiveToken) {
-      authenticateCaptivePortal();
-    }
-  }, [isAuthenticated, user, captiveToken]);
-
-  const authenticateCaptivePortal = async () => {
+    const authenticateCaptivePortal = async () => {
     if (!user || !captiveToken) return;
 
     setStatus('authenticating');
@@ -67,6 +61,13 @@ export default function CaptivePortalPage() {
       setErrorMessage(error instanceof Error ? error.message : 'Authentication failed');
     }
   };
+
+    // If user is already authenticated, proceed with captive portal authentication
+    if (isAuthenticated && user && captiveToken) {
+      void authenticateCaptivePortal();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, user, captiveToken]);
 
   const handleLogin = () => {
     // Store the current URL to return after login

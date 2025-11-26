@@ -64,6 +64,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Handle OAuth callback
   useEffect(() => {
+    const handleOAuthCallback = async (code: string) => {
+      try {
+        const redirectUri = `${window.location.origin}/`;
+        
+        const response = await fetch(`${API_BASE}/auth/token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            code,
+            redirect_uri: redirectUri,
+          }),
+        });
+
+        if (response.ok) {
+          const sessionData = await response.json();
+          console.log('Session created successfully');
+          localStorage.setItem('session_hash', sessionData.session_hash);
+          
+          // Remove code from URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+          
+          // Fetch user data
+          console.log('Fetching user data...');
+          await fetchCurrentUser(sessionData.session_hash);
+        } else {
+          const errorText = await response.text();
+          console.error('Session creation failed:', response.status, errorText);
+          setIsLoading(false);
+        }
+      } catch (error) {
+        console.error('OAuth callback error:', error);
+        setIsLoading(false);
+      }
+    };
+
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     
@@ -114,43 +151,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.error('Failed to fetch current user:', error);
       localStorage.removeItem('session_hash');
       setUser(null);
-      setIsLoading(false);
-    }
-  };
-
-  const handleOAuthCallback = async (code: string) => {
-    try {
-      const redirectUri = `${window.location.origin}/`;
-      
-      const response = await fetch(`${API_BASE}/auth/token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          code,
-          redirect_uri: redirectUri,
-        }),
-      });
-
-      if (response.ok) {
-        const sessionData = await response.json();
-        console.log('Session created successfully');
-        localStorage.setItem('session_hash', sessionData.session_hash);
-        
-        // Remove code from URL
-        window.history.replaceState({}, document.title, window.location.pathname);
-        
-        // Fetch user data
-        console.log('Fetching user data...');
-        await fetchCurrentUser(sessionData.session_hash);
-      } else {
-        const errorText = await response.text();
-        console.error('Session creation failed:', response.status, errorText);
-        setIsLoading(false);
-      }
-    } catch (error) {
-      console.error('OAuth callback error:', error);
       setIsLoading(false);
     }
   };

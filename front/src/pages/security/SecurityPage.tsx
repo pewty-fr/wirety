@@ -25,16 +25,13 @@ export default function SecurityPage() {
   // Fetch networks for filtering
   const { data: networks = [] } = useNetworks();
 
-  useEffect(() => {
-    loadIncidents();
-  }, [page, filterStatus, filterNetwork, filterPeer]);
-
   // Reset page when filters change
   useEffect(() => {
     setPage(1);
   }, [filterNetwork, filterPeer, filterStatus]);
 
-  const loadIncidents = async () => {
+  useEffect(() => {
+    const loadIncidents = async () => {
     setLoading(true);
     try {
       const resolved = filterStatus === 'all' ? undefined : filterStatus === 'resolved';
@@ -49,6 +46,9 @@ export default function SecurityPage() {
       setLoading(false);
     }
   };
+
+    loadIncidents();
+  }, [page, filterStatus, filterNetwork, filterPeer]);
 
   // Get unique peers from incidents for filter dropdown (filtered by network if selected)
   const uniquePeers = useMemo(() => {

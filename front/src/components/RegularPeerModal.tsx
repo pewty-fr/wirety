@@ -63,6 +63,7 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
       setSelectedNetworkId(networkId || (networks.length > 0 ? networks[0].id : ''));
     }
     setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peer, isOpen, networkId, currentUser]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -72,6 +73,7 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
 
     try {
       if (isEditMode && peer) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const updateData: any = {
           name: formData.name,
           is_isolated: formData.is_isolated,
@@ -84,19 +86,23 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
         }
         await api.updatePeer(networkId, peer.id, updateData);
       } else {
-        await api.createPeer(selectedNetworkId, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const createData: any = {
           name: formData.name,
           is_jump: false,
           is_isolated: formData.is_isolated,
           full_encapsulation: formData.full_encapsulation,
           use_agent: formData.use_agent,
           additional_allowed_ips: formData.additional_allowed_ips.length > 0 ? formData.additional_allowed_ips : undefined,
-        });
+        };
+        await api.createPeer(selectedNetworkId, createData);
       }
       onSuccess();
       onClose();
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to save peer');
+    } catch (err) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const error = err as any;
+      setError(error.response?.data?.error || 'Failed to save peer');
     } finally {
       setLoading(false);
     }

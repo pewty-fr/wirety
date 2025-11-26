@@ -33,10 +33,7 @@ export default function UsersPage() {
   const pageSize = 20;
 
   useEffect(() => {
-    loadUsers();
-  }, [page]);
-
-  const loadUsers = async () => {
+    const loadUsers = async () => {
     setLoading(true);
     try {
       const response = await api.getUsers(page, pageSize);
@@ -51,6 +48,9 @@ export default function UsersPage() {
       setLoading(false);
     }
   };
+
+    loadUsers();
+  }, [page]);
 
   const handleUserClick = (user: User) => {
     setSelectedUser(user);

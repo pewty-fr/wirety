@@ -26,19 +26,19 @@ export default function PeersPage() {
 
   // Fetch users for owner mapping (admin only)
   useEffect(() => {
+    const loadUsers = async () => {
+      try {
+        const usersData = await api.getUsers();
+        setUsers(usersData);
+      } catch (error) {
+        console.error('Failed to load users:', error);
+      }
+    };
+
     if (isAdmin) {
-      loadUsers();
+      void loadUsers();
     }
   }, [isAdmin]);
-
-  const loadUsers = async () => {
-    try {
-      const usersData = await api.getUsers();
-      setUsers(usersData);
-    } catch (error) {
-      console.error('Failed to load users:', error);
-    }
-  };
 
   // Create a map of user ID to user name
   const userMap = useMemo(() => {
@@ -61,7 +61,7 @@ export default function PeersPage() {
   const { data: networkACLs = {}, isLoading: aclsLoading } = useACLs(networks);
   const { data: incidentsData } = useSecurityIncidents(false, 200);
 
-  const peers = peersData?.peers || [];
+  const peers = useMemo(() => peersData?.peers || [], [peersData]);
   const total = peersData?.total || 0;
   const incidentPeerIds = incidentsData?.incidentPeerIds || new Set<string>();
   const loading = networksLoading || peersLoading || aclsLoading;

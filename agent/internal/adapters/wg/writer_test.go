@@ -1,5 +1,4 @@
 package wg
-package wg
 
 import (
 	"os"
@@ -14,7 +13,9 @@ func TestWiretyMarker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+	}()
 
 	testConfigPath := filepath.Join(tempDir, "wg0.conf")
 	writer := NewWriter(testConfigPath, "wg0", "wg-quick")
@@ -114,9 +115,7 @@ Address = 10.0.1.1/24
 			}
 		}
 
-		// WriteAndApply should also fail
-		testConfig := `[Interface]
-PrivateKey = test123`
+		// CheckOwnership should also fail
 		if err := nonWiretyWriter.CheckOwnership(); err == nil {
 			t.Errorf("CheckOwnership should fail for non-Wirety config file")
 		}
@@ -125,27 +124,27 @@ PrivateKey = test123`
 
 func TestAddMarkerToConfig(t *testing.T) {
 	writer := NewWriter("/tmp/test.conf", "wg0", "wg-quick")
-	
+
 	t.Run("AddMarkerToNewConfig", func(t *testing.T) {
 		config := `[Interface]
 PrivateKey = test123`
-		
+
 		marked := writer.addMarkerToConfig(config)
-		
+
 		if !strings.HasPrefix(marked, WiretyMarker) {
 			t.Errorf("Config should start with Wirety marker")
 		}
-		
+
 		if !strings.Contains(marked, config) {
 			t.Errorf("Original config should be preserved")
 		}
 	})
-	
+
 	t.Run("SkipMarkerIfAlreadyPresent", func(t *testing.T) {
 		alreadyMarked := WiretyMarker + "\n[Interface]\nPrivateKey = test123"
-		
+
 		result := writer.addMarkerToConfig(alreadyMarked)
-		
+
 		// Should not duplicate the marker
 		markerCount := strings.Count(result, WiretyMarker)
 		if markerCount != 1 {
@@ -157,33 +156,41 @@ PrivateKey = test123`
 	t.Run("CleanupOldConfigs removes old Wirety configs", func(t *testing.T) {
 		// Create test directory
 		tempDir := t.TempDir()
-		
+
 		// Create current config
 		currentConfig := filepath.Join(tempDir, "peer1.conf")
 		oldConfig1 := filepath.Join(tempDir, "peer2.conf")
 		oldConfig2 := filepath.Join(tempDir, "peer3.conf")
 		nonWiretyConfig := filepath.Join(tempDir, "other.conf")
-		
+
 		// Write configs
 		currentContent := WiretyMarker + "\n[Interface]\nPrivateKey=current"
-		oldContent1 := WiretyMarker + "\n[Interface]\nPrivateKey=old1" 
+		oldContent1 := WiretyMarker + "\n[Interface]\nPrivateKey=old1"
 		oldContent2 := WiretyMarker + "\n[Interface]\nPrivateKey=old2"
 		nonWiretyContent := "[Interface]\nPrivateKey=other"
-		
-		os.WriteFile(currentConfig, []byte(currentContent), 0600)
-		os.WriteFile(oldConfig1, []byte(oldContent1), 0600)
-		os.WriteFile(oldConfig2, []byte(oldContent2), 0600)
-		os.WriteFile(nonWiretyConfig, []byte(nonWiretyContent), 0600)
-		
+
+		if err := os.WriteFile(currentConfig, []byte(currentContent), 0600); err != nil {
+			t.Fatalf("Failed to write current config: %v", err)
+		}
+		if err := os.WriteFile(oldConfig1, []byte(oldContent1), 0600); err != nil {
+			t.Fatalf("Failed to write old config 1: %v", err)
+		}
+		if err := os.WriteFile(oldConfig2, []byte(oldContent2), 0600); err != nil {
+			t.Fatalf("Failed to write old config 2: %v", err)
+		}
+		if err := os.WriteFile(nonWiretyConfig, []byte(nonWiretyContent), 0600); err != nil {
+			t.Fatalf("Failed to write non-Wirety config: %v", err)
+		}
+
 		// Create writer for current config
 		writer := &Writer{Path: currentConfig, Interface: "peer1", ApplyMethod: "wg-quick"}
-		
+
 		// Cleanup should remove old Wirety configs but leave non-Wirety and current
 		err := writer.CleanupOldConfigs()
 		if err != nil {
 			t.Fatalf("CleanupOldConfigs failed: %v", err)
 		}
-		
+
 		// Check that current and non-Wirety configs still exist
 		if _, err := os.Stat(currentConfig); os.IsNotExist(err) {
 			t.Error("Current config should still exist")
@@ -191,7 +198,7 @@ PrivateKey = test123`
 		if _, err := os.Stat(nonWiretyConfig); os.IsNotExist(err) {
 			t.Error("Non-Wirety config should still exist")
 		}
-		
+
 		// Check that old Wirety configs were removed
 		if _, err := os.Stat(oldConfig1); !os.IsNotExist(err) {
 			t.Error("Old Wirety config 1 should be removed")
@@ -204,55 +211,63 @@ PrivateKey = test123`
 	t.Run("FindOldWiretyConfigs identifies correct files", func(t *testing.T) {
 		// Create test directory
 		tempDir := t.TempDir()
-		
+
 		// Create various config files
 		currentConfig := filepath.Join(tempDir, "current.conf")
 		wiretyConfig := filepath.Join(tempDir, "old-wirety.conf")
 		nonWiretyConfig := filepath.Join(tempDir, "other.conf")
 		notConfig := filepath.Join(tempDir, "readme.txt")
-		
+
 		// Write content
 		currentContent := WiretyMarker + "\n[Interface]\nPrivateKey=current"
 		wiretyContent := WiretyMarker + "\n[Interface]\nPrivateKey=old"
 		nonWiretyContent := "[Interface]\nPrivateKey=other"
 		txtContent := "This is not a config file"
-		
-		os.WriteFile(currentConfig, []byte(currentContent), 0600)
-		os.WriteFile(wiretyConfig, []byte(wiretyContent), 0600)
-		os.WriteFile(nonWiretyConfig, []byte(nonWiretyContent), 0600)
-		os.WriteFile(notConfig, []byte(txtContent), 0600)
-		
+
+		if err := os.WriteFile(currentConfig, []byte(currentContent), 0600); err != nil {
+			t.Fatalf("Failed to write current config: %v", err)
+		}
+		if err := os.WriteFile(wiretyConfig, []byte(wiretyContent), 0600); err != nil {
+			t.Fatalf("Failed to write wirety config: %v", err)
+		}
+		if err := os.WriteFile(nonWiretyConfig, []byte(nonWiretyContent), 0600); err != nil {
+			t.Fatalf("Failed to write non-Wirety config: %v", err)
+		}
+		if err := os.WriteFile(notConfig, []byte(txtContent), 0600); err != nil {
+			t.Fatalf("Failed to write text file: %v", err)
+		}
+
 		// Set up writer to search tempDir instead of standard locations
 		writer := &Writer{Path: currentConfig, Interface: "current", ApplyMethod: "wg-quick"}
-		
+
 		// Manually check which files would be identified as old Wirety configs
 		oldConfigs := []string{}
-		
+
 		entries, err := os.ReadDir(tempDir)
 		if err != nil {
 			t.Fatalf("Failed to read temp dir: %v", err)
 		}
-		
+
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".conf") {
 				continue
 			}
-			
+
 			configPath := filepath.Join(tempDir, entry.Name())
 			if configPath == writer.Path {
 				continue // Skip current config
 			}
-			
+
 			if writer.isWiretyManaged(configPath) {
 				oldConfigs = append(oldConfigs, configPath)
 			}
 		}
-		
+
 		// Should find only the old-wirety.conf file
 		if len(oldConfigs) != 1 {
 			t.Errorf("Expected 1 old Wirety config, got %d", len(oldConfigs))
 		}
-		
+
 		if len(oldConfigs) > 0 && !strings.Contains(oldConfigs[0], "old-wirety.conf") {
 			t.Errorf("Expected to find old-wirety.conf, got %s", oldConfigs[0])
 		}

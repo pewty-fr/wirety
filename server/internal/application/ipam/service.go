@@ -60,7 +60,7 @@ func (s *Service) SuggestCIDRs(ctx context.Context, baseCIDR string, maxPeers, c
 
 	for i := 0; i < count; i++ {
 
-		prefix, err := ipam.AcquireChildPrefix(ctx, baseCIDR, uint8(prefixLen))
+		prefix, err := ipam.AcquireChildPrefix(ctx, baseCIDR, uint8(prefixLen)) // #nosec G115 - prefixLen is validated to be 0-32
 		if err != nil {
 			return 0, nil, fmt.Errorf("failed allocating child prefix: %w", err)
 		}

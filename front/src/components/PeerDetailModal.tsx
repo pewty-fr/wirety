@@ -73,8 +73,9 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
       await api.deletePeer(displayPeer.network_id!, displayPeer.id);
       onUpdate();
       onClose();
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to delete peer');
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      alert(err.response?.data?.error || 'Failed to delete peer');
     } finally {
       setDeleting(false);
     }
@@ -221,8 +222,9 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                       await navigator.clipboard.writeText(configText!);
                       setConfigCopied(true);
                       setTimeout(() => setConfigCopied(false), 3000);
-                    } catch (e: any) {
-                      setConfigError(e?.message || 'Failed to copy config');
+                    } catch (e) {
+                      const error = e as { message?: string };
+                      setConfigError(error?.message || 'Failed to copy config');
                     } finally {
                       setConfigLoading(false);
                     }
@@ -255,8 +257,9 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                         document.body.removeChild(a);
                         URL.revokeObjectURL(url);
                       }
-                    } catch (e: any) {
-                      setConfigError(e?.message || 'Failed to download config');
+                    } catch (e) {
+                      const error = e as { message?: string };
+                      setConfigError(error?.message || 'Failed to download config');
                     } finally {
                       setConfigLoading(false);
                     }

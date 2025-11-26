@@ -91,8 +91,9 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
       }
       onSuccess();
       onClose();
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to save network');
+    } catch (err) {
+      const error = err as { response?: { data?: { error?: string } } };
+      setError(error.response?.data?.error || 'Failed to save network');
     } finally {
       setLoading(false);
     }

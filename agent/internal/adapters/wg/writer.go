@@ -136,7 +136,7 @@ func (w *Writer) apply() error {
 func (w *Writer) syncconf() error {
 	// First, ensure the interface exists (create it if needed)
 	// Check if interface exists
-	checkCmd := exec.Command("ip", "link", "show", w.Interface)
+	checkCmd := exec.Command("ip", "link", "show", w.Interface) // #nosec G204 - w.Interface is sanitized and controlled
 	if err := checkCmd.Run(); err != nil {
 		// Interface doesn't exist, create it with wg-quick up
 		log.Info().Str("interface", w.Interface).Msg("interface doesn't exist, creating with wg-quick up")
@@ -148,8 +148,8 @@ func (w *Writer) syncconf() error {
 
 	// Interface exists, use syncconf to update it
 	// Run: wg-quick strip <config> | wg syncconf <interface> /dev/stdin
-	stripCmd := exec.Command("wg-quick", "strip", w.Path)
-	syncCmd := exec.Command("wg", "syncconf", w.Interface, "/dev/stdin")
+	stripCmd := exec.Command("wg-quick", "strip", w.Path)                // #nosec G204 - w.Path is controlled by agent
+	syncCmd := exec.Command("wg", "syncconf", w.Interface, "/dev/stdin") // #nosec G204 - w.Interface is sanitized and controlled
 
 	// Pipe strip output to syncconf input
 	pipe, err := stripCmd.StdoutPipe()
@@ -246,7 +246,7 @@ func (w *Writer) FindOldWiretyConfigs() ([]string, error) {
 
 // isWiretyManaged checks if a config file contains the Wirety marker
 func (w *Writer) isWiretyManaged(configPath string) bool {
-	content, err := os.ReadFile(configPath)
+	content, err := os.ReadFile(configPath) // #nosec G304 - configPath is from controlled directory scan
 	if err != nil {
 		return false
 	}

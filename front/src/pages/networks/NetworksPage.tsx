@@ -28,10 +28,7 @@ export default function NetworksPage() {
   const debouncedFilter = useDebounce(filter, 500);
 
   useEffect(() => {
-    loadNetworks();
-  }, [page, debouncedFilter]);
-
-  const loadNetworks = async () => {
+    const loadNetworks = async () => {
     setLoading(true);
     try {
       const response = await api.getNetworks(page, pageSize, debouncedFilter);
@@ -45,6 +42,9 @@ export default function NetworksPage() {
       setLoading(false);
     }
   };
+
+    loadNetworks();
+  }, [page, debouncedFilter]);
 
   const handleNetworkClick = (network: Network) => {
     setSelectedNetwork(network);

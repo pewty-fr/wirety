@@ -1,5 +1,4 @@
 package main
-package main
 
 import (
 	"testing"
@@ -28,12 +27,12 @@ func TestSanitizeInterfaceName(t *testing.T) {
 			if result != tt.expected {
 				t.Errorf("sanitizeInterfaceName(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
-			
+
 			// Verify result is valid length
 			if len(result) > 15 {
 				t.Errorf("sanitizeInterfaceName(%q) = %q is too long (%d chars)", tt.input, result, len(result))
 			}
-			
+
 			// Verify result is not empty (should default to wg0)
 			if result == "" {
 				t.Errorf("sanitizeInterfaceName(%q) returned empty string", tt.input)
