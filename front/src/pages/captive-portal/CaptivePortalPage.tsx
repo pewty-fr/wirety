@@ -13,6 +13,7 @@ export default function CaptivePortalPage() {
 
   const captiveToken = searchParams.get('token'); // Temporary captive portal token (NOT agent token)
   const redirectUrl = searchParams.get('redirect');
+  const peerIp = searchParams.get('peer-ip');
 
   useEffect(() => {
     // If user is already authenticated, proceed with captive portal authentication
@@ -33,10 +34,6 @@ export default function CaptivePortalPage() {
         throw new Error('No session found');
       }
 
-      // Get client IP from a simple API call
-      // In production, the server will extract the real IP from the request
-      const peerIP = await getClientIP();
-
       // Send authentication request to server
       const response = await fetch('/api/v1/captive-portal/authenticate', {
         method: 'POST',
@@ -46,7 +43,7 @@ export default function CaptivePortalPage() {
         body: JSON.stringify({
           captive_token: captiveToken,
           session_hash: sessionHash,
-          peer_ip: peerIP,
+          peer_ip: peerIp,
         }),
       });
 
@@ -69,19 +66,6 @@ export default function CaptivePortalPage() {
       console.error('Captive portal authentication error:', error);
       setStatus('error');
       setErrorMessage(error instanceof Error ? error.message : 'Authentication failed');
-    }
-  };
-
-  const getClientIP = async (): Promise<string> => {
-    // In a real scenario, the server would extract the IP from the request
-    // For now, we'll use a placeholder
-    try {
-      const response = await fetch('https://api.ipify.org?format=json');
-      const data = await response.json();
-      return data.ip;
-    } catch {
-      // Fallback - server will use the actual client IP
-      return '0.0.0.0';
     }
   };
 

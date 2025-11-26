@@ -169,7 +169,7 @@ func (cp *CaptivePortal) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Redirect to front-end captive portal page
-	cp.redirectToFrontend(w, r)
+	cp.redirectToFrontend(w, r, clientIP)
 }
 
 // isCaptivePortalDetection checks if the request is a captive portal detection probe
@@ -194,7 +194,7 @@ func (cp *CaptivePortal) isCaptivePortalDetection(host, path string) bool {
 }
 
 // redirectToFrontend redirects the request to the front-end captive portal page
-func (cp *CaptivePortal) redirectToFrontend(w http.ResponseWriter, r *http.Request) {
+func (cp *CaptivePortal) redirectToFrontend(w http.ResponseWriter, r *http.Request, clientIP string) {
 	// Get a valid captive portal token
 	captiveToken, err := cp.getCaptiveToken()
 	if err != nil {
@@ -205,9 +205,11 @@ func (cp *CaptivePortal) redirectToFrontend(w http.ResponseWriter, r *http.Reque
 
 	// Always redirect to HTTPS server URL (portalURL should be https://SERVER_URL)
 	// This ensures certificate validation works correctly
-	portalURL := fmt.Sprintf("%s/captive-portal?token=%s",
+	portalURL := fmt.Sprintf("%s/captive-portal?token=%s&peer-ip=%s",
 		cp.portalURL,
-		captiveToken)
+		captiveToken,
+		clientIP,
+	)
 
 	log.Debug().
 		Str("portal_url", portalURL).
