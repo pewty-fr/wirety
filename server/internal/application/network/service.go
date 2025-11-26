@@ -1573,6 +1573,11 @@ func (s *Service) RemoveFromWhitelistOnEndpointChange(ctx context.Context, netwo
 
 // GenerateCaptivePortalToken generates a temporary token for captive portal authentication
 func (s *Service) GenerateCaptivePortalToken(ctx context.Context, networkID, jumpPeerID string) (string, error) {
+	return s.GenerateCaptivePortalTokenWithIP(ctx, networkID, jumpPeerID, "")
+}
+
+// GenerateCaptivePortalTokenWithIP generates a temporary token for captive portal authentication with peer IP
+func (s *Service) GenerateCaptivePortalTokenWithIP(ctx context.Context, networkID, jumpPeerID, peerIP string) (string, error) {
 	// Generate a secure random token
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
@@ -1585,6 +1590,7 @@ func (s *Service) GenerateCaptivePortalToken(ctx context.Context, networkID, jum
 		Token:      tokenStr,
 		NetworkID:  networkID,
 		JumpPeerID: jumpPeerID,
+		PeerIP:     peerIP,
 		CreatedAt:  time.Now(),
 		ExpiresAt:  time.Now().Add(5 * time.Minute),
 	}
@@ -1601,20 +1607,20 @@ func (s *Service) GenerateCaptivePortalToken(ctx context.Context, networkID, jum
 	return tokenStr, nil
 }
 
-// ValidateCaptivePortalToken validates a captive portal token and returns network/jump peer info
-func (s *Service) ValidateCaptivePortalToken(ctx context.Context, tokenStr string) (networkID, jumpPeerID string, err error) {
+// ValidateCaptivePortalToken validates a captive portal token and returns network/jump peer/peer IP info
+func (s *Service) ValidateCaptivePortalToken(ctx context.Context, tokenStr string) (networkID, jumpPeerID, peerIP string, err error) {
 	token, err := s.repo.GetCaptivePortalToken(ctx, tokenStr)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid token: %w", err)
+		return "", "", "", fmt.Errorf("invalid token: %w", err)
 	}
 
 	if token.IsExpired() {
 		// Delete expired token
 		_ = s.repo.DeleteCaptivePortalToken(ctx, tokenStr)
-		return "", "", fmt.Errorf("token expired")
+		return "", "", "", fmt.Errorf("token expired")
 	}
 
-	return token.NetworkID, token.JumpPeerID, nil
+	return token.NetworkID, token.JumpPeerID, token.PeerIP, nil
 }
 
 // DeleteCaptivePortalToken deletes a captive portal token

@@ -22,8 +22,6 @@ type CaptivePortal struct {
 	mu               sync.RWMutex
 	nonAgentPeers    map[string]bool // IP -> true for non-agent peers
 	whitelistedPeers map[string]bool // IP -> true for authenticated peers
-	captiveToken     string          // Current captive portal token
-	tokenExpiry      time.Time       // When current token expires
 }
 
 // NewCaptivePortal creates a new captive portal proxy
@@ -195,8 +193,8 @@ func (cp *CaptivePortal) isCaptivePortalDetection(host, path string) bool {
 
 // redirectToFrontend redirects the request to the front-end captive portal page
 func (cp *CaptivePortal) redirectToFrontend(w http.ResponseWriter, r *http.Request, clientIP string) {
-	// Get a valid captive portal token
-	captiveToken, err := cp.getCaptiveToken()
+	// Get a valid captive portal token for this specific peer IP
+	captiveToken, err := cp.getCaptiveTokenForPeer(clientIP)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get captive portal token")
 		http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
@@ -205,14 +203,15 @@ func (cp *CaptivePortal) redirectToFrontend(w http.ResponseWriter, r *http.Reque
 
 	// Always redirect to HTTPS server URL (portalURL should be https://SERVER_URL)
 	// This ensures certificate validation works correctly
-	portalURL := fmt.Sprintf("%s/captive-portal?token=%s&peer-ip=%s",
+	// The peer IP is now embedded in the token, not in the URL
+	portalURL := fmt.Sprintf("%s/captive-portal?token=%s",
 		cp.portalURL,
 		captiveToken,
-		clientIP,
 	)
 
 	log.Debug().
 		Str("portal_url", portalURL).
+		Str("client_ip", clientIP).
 		Str("original_url", r.URL.String()).
 		Str("original_host", r.Host).
 		Msg("redirecting HTTP to HTTPS captive portal")
@@ -221,18 +220,15 @@ func (cp *CaptivePortal) redirectToFrontend(w http.ResponseWriter, r *http.Reque
 	http.Redirect(w, r, portalURL, http.StatusFound)
 }
 
-// getCaptiveToken gets a valid captive portal token, fetching a new one if needed
-func (cp *CaptivePortal) getCaptiveToken() (string, error) {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-
-	// Check if current token is still valid (with 1 minute buffer)
-	// if cp.captiveToken != "" && time.Now().Before(cp.tokenExpiry.Add(-1*time.Minute)) {
-	// 	return cp.captiveToken, nil
-	// }
-
-	// Fetch new token from server
-	url := fmt.Sprintf("%s/api/v1/agent/captive-portal-token?token=%s", cp.serverURL, cp.agentToken)
+// getCaptiveTokenForPeer gets a captive portal token for a specific peer IP
+// Each token is unique and tied to the peer IP for security
+func (cp *CaptivePortal) getCaptiveTokenForPeer(peerIP string) (string, error) {
+	// Fetch new token from server with peer IP
+	url := fmt.Sprintf("%s/api/v1/agent/captive-portal-token?token=%s&peer_ip=%s",
+		cp.serverURL,
+		cp.agentToken,
+		peerIP,
+	)
 	resp, err := http.Get(url) // #nosec G107 - serverURL is trusted
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch captive portal token: %w", err)
@@ -252,13 +248,10 @@ func (cp *CaptivePortal) getCaptiveToken() (string, error) {
 		return "", fmt.Errorf("failed to parse token response: %w", err)
 	}
 
-	// Store the new token
-	cp.captiveToken = result.CaptivePortalToken
-	cp.tokenExpiry = time.Now().Add(time.Duration(result.ExpiresIn) * time.Second)
-
 	log.Info().
-		Str("expires_at", cp.tokenExpiry.Format(time.RFC3339)).
-		Msg("fetched new captive portal token")
+		Str("peer_ip", peerIP).
+		Int("expires_in", result.ExpiresIn).
+		Msg("fetched new captive portal token for peer")
 
-	return cp.captiveToken, nil
+	return result.CaptivePortalToken, nil
 }

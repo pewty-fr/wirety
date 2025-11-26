@@ -567,19 +567,19 @@ func (r *NetworkRepository) ClearCaptivePortalWhitelist(ctx context.Context, net
 
 func (r *NetworkRepository) CreateCaptivePortalToken(ctx context.Context, token *network.CaptivePortalToken) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO captive_portal_tokens (token, network_id, jump_peer_id, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`, token.Token, token.NetworkID, token.JumpPeerID, token.CreatedAt, token.ExpiresAt)
+		INSERT INTO captive_portal_tokens (token, network_id, jump_peer_id, peer_ip, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, token.Token, token.NetworkID, token.JumpPeerID, token.PeerIP, token.CreatedAt, token.ExpiresAt)
 	return err
 }
 
 func (r *NetworkRepository) GetCaptivePortalToken(ctx context.Context, tokenStr string) (*network.CaptivePortalToken, error) {
 	var token network.CaptivePortalToken
 	err := r.db.QueryRowContext(ctx, `
-		SELECT token, network_id, jump_peer_id, created_at, expires_at
+		SELECT token, network_id, jump_peer_id, peer_ip, created_at, expires_at
 		FROM captive_portal_tokens
 		WHERE token=$1
-	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.CreatedAt, &token.ExpiresAt)
+	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.PeerIP, &token.CreatedAt, &token.ExpiresAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("token not found")

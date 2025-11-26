@@ -12,6 +12,7 @@ import (
 // @Tags         agent
 // @Produce      json
 // @Param        token query string true "Agent enrollment token"
+// @Param        peer_ip query string true "IP address of the non-agent peer requesting access"
 // @Success      200 {object} map[string]string
 // @Failure      400 {object} map[string]string
 // @Failure      401 {object} map[string]string
@@ -21,6 +22,12 @@ func (h *Handler) GetCaptivePortalToken(c *gin.Context) {
 	agentToken := c.Query("token")
 	if agentToken == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "token query parameter is required"})
+		return
+	}
+
+	peerIP := c.Query("peer_ip")
+	if peerIP == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "peer_ip query parameter is required"})
 		return
 	}
 
@@ -37,8 +44,8 @@ func (h *Handler) GetCaptivePortalToken(c *gin.Context) {
 		return
 	}
 
-	// Generate captive portal token
-	captiveToken, err := h.service.GenerateCaptivePortalToken(c.Request.Context(), networkID, peer.ID)
+	// Generate captive portal token with peer IP
+	captiveToken, err := h.service.GenerateCaptivePortalTokenWithIP(c.Request.Context(), networkID, peer.ID, peerIP)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return

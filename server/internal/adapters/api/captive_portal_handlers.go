@@ -12,7 +12,6 @@ import (
 type AuthenticateCaptivePortalRequest struct {
 	CaptiveToken string `json:"captive_token" binding:"required"` // Temporary captive portal token
 	SessionHash  string `json:"session_hash" binding:"required"`  // User session hash
-	PeerIP       string `json:"peer_ip" binding:"required"`
 }
 
 // AuthenticateCaptivePortal godoc
@@ -36,10 +35,16 @@ func (h *Handler) AuthenticateCaptivePortal(c *gin.Context) {
 		return
 	}
 
-	// Validate captive portal token
-	networkID, jumpPeerID, err := h.service.ValidateCaptivePortalToken(c.Request.Context(), req.CaptiveToken)
+	// Validate captive portal token and get peer IP from it
+	networkID, jumpPeerID, peerIP, err := h.service.ValidateCaptivePortalToken(c.Request.Context(), req.CaptiveToken)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired captive portal token"})
+		return
+	}
+
+	// Verify peer IP is present in token
+	if peerIP == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token does not contain peer IP"})
 		return
 	}
 
@@ -70,7 +75,7 @@ func (h *Handler) AuthenticateCaptivePortal(c *gin.Context) {
 	}
 
 	// Add peer IP to whitelist for this network
-	if err := h.service.AddCaptivePortalWhitelist(c.Request.Context(), networkID, jumpPeerID, req.PeerIP); err != nil {
+	if err := h.service.AddCaptivePortalWhitelist(c.Request.Context(), networkID, jumpPeerID, peerIP); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to whitelist peer"})
 		return
 	}
@@ -81,6 +86,6 @@ func (h *Handler) AuthenticateCaptivePortal(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Authentication successful",
 		"network_id": networkID,
-		"peer_ip":    req.PeerIP,
+		"peer_ip":    peerIP,
 	})
 }

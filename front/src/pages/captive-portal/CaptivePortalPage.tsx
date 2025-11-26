@@ -13,7 +13,6 @@ export default function CaptivePortalPage() {
 
   const captiveToken = searchParams.get('token'); // Temporary captive portal token (NOT agent token)
   const redirectUrl = searchParams.get('redirect');
-  const peerIp = searchParams.get('peer-ip');
 
   useEffect(() => {
     // If user is already authenticated, proceed with captive portal authentication
@@ -35,6 +34,7 @@ export default function CaptivePortalPage() {
       }
 
       // Send authentication request to server
+      // The peer IP is already embedded in the captive_token
       const response = await fetch('/api/v1/captive-portal/authenticate', {
         method: 'POST',
         headers: {
@@ -43,7 +43,6 @@ export default function CaptivePortalPage() {
         body: JSON.stringify({
           captive_token: captiveToken,
           session_hash: sessionHash,
-          peer_ip: peerIp,
         }),
       });
 
