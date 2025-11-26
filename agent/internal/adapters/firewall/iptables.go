@@ -34,6 +34,17 @@ func (a *Adapter) SetProxyPorts(httpPort, httpsPort int) {
 	a.httpsPort = httpsPort
 }
 
+// EnableDebugLogging adds LOG rules to help debug packet drops
+func (a *Adapter) EnableDebugLogging() error {
+	chain := "WIRETY_JUMP"
+	// Add LOG rule at the beginning of the chain to log all packets
+	if err := a.run("-I", chain, "1", "-j", "LOG", "--log-prefix", "WIRETY-DEBUG: ", "--log-level", "4"); err != nil {
+		return fmt.Errorf("failed to add debug logging: %w", err)
+	}
+	log.Info().Msg("iptables debug logging enabled - check /var/log/kern.log or dmesg")
+	return nil
+}
+
 func (a *Adapter) run(args ...string) error {
 	cmd := exec.Command("iptables", args...) // #nosec G204
 	out, err := cmd.CombinedOutput()
@@ -43,19 +54,96 @@ func (a *Adapter) run(args ...string) error {
 	return nil
 }
 
-// ruleExists checks if an iptables rule exists
+// ruleExists checks if an iptables rule exists by parsing the rule arguments
 func (a *Adapter) ruleExists(args ...string) bool {
-	// Replace -A (append) or -I (insert) with -C (check)
-	checkArgs := make([]string, len(args))
-	copy(checkArgs, args)
-	for i, arg := range checkArgs {
-		if arg == "-A" || arg == "-I" {
-			checkArgs[i] = "-C"
-			break
+	// Extract table, chain, and target from args
+	table := "filter"
+	var chain, target string
+
+	// Parse arguments to find table, chain, and jump target
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-t":
+			if i+1 < len(args) {
+				table = args[i+1]
+				i++
+			}
+		case "-A", "-I":
+			if i+1 < len(args) {
+				chain = args[i+1]
+				i++
+				// Skip position number if present (for -I)
+				if args[i-1] == "-I" && i < len(args) && args[i] != "" && args[i][0] >= '0' && args[i][0] <= '9' {
+					i++
+				}
+			}
+		case "-j":
+			if i+1 < len(args) {
+				target = args[i+1]
+				i++
+			}
 		}
 	}
-	cmd := exec.Command("iptables", checkArgs...) // #nosec G204
-	return cmd.Run() == nil
+
+	if chain == "" || target == "" {
+		return false
+	}
+
+	// Use iptables-save to check if rule exists
+	var cmd *exec.Cmd
+	if table == "filter" {
+		cmd = exec.Command("iptables-save", "-t", "filter") // #nosec G204
+	} else {
+		cmd = exec.Command("iptables-save", "-t", table) // #nosec G204
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+
+	// Look for the rule in the output
+	// Format: -A CHAIN ... -j TARGET
+	searchPattern := fmt.Sprintf("-A %s ", chain)
+	targetPattern := fmt.Sprintf("-j %s", target)
+
+	lines := string(output)
+	for i := 0; i < len(lines); {
+		end := i
+		for end < len(lines) && lines[end] != '\n' {
+			end++
+		}
+		line := lines[i:end]
+
+		// Check if line contains both chain and target
+		if containsSubstring(line, searchPattern) && containsSubstring(line, targetPattern) {
+			return true
+		}
+
+		i = end + 1
+	}
+
+	return false
+}
+
+// containsSubstring checks if s contains substr
+func containsSubstring(s, substr string) bool {
+	if len(substr) > len(s) {
+		return false
+	}
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			if s[i+j] != substr[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 // runIfNotExists runs an iptables command only if the rule doesn't already exist
@@ -77,9 +165,9 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	if err := exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1").Run(); err != nil {
 		log.Warn().Err(err).Msg("failed enabling ip_forward")
 	}
-	// Create custom chain
+	// Create custom chain if it doesn't exist, then flush it
 	chain := "WIRETY_JUMP"
-	// Flush or create chain (we flush the chain content but keep chain attachments)
+	// Try to create the chain (will fail silently if it already exists)
 	_ = a.run("-N", chain)
 	_ = a.run("-F", chain)
 

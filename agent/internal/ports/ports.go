@@ -1,6 +1,9 @@
 package ports
 
-import pol "wirety/agent/internal/domain/policy"
+import (
+	dom "wirety/agent/internal/domain/dns"
+	pol "wirety/agent/internal/domain/policy"
+)
 
 // ConfigWriterPort defines capability to write and apply WireGuard config.
 type ConfigWriterPort interface {
@@ -12,6 +15,7 @@ type ConfigWriterPort interface {
 // DNSStarterPort defines capability to start DNS server with given domain and peers.
 type DNSStarterPort interface {
 	Start(addr string) error
+	Update(domain string, peers []dom.DNSPeer)
 }
 
 // WebSocketClientPort defines capability to connect and receive messages.

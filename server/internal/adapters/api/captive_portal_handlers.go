@@ -11,7 +11,7 @@ import (
 // AuthenticateCaptivePortalRequest contains the authentication request from captive portal
 type AuthenticateCaptivePortalRequest struct {
 	CaptiveToken string `json:"captive_token" binding:"required"` // Temporary captive portal token
-	UserToken    string `json:"user_token" binding:"required"`
+	SessionHash  string `json:"session_hash" binding:"required"`  // User session hash
 	PeerIP       string `json:"peer_ip" binding:"required"`
 }
 
@@ -46,16 +46,17 @@ func (h *Handler) AuthenticateCaptivePortal(c *gin.Context) {
 	// Delete the token after use (one-time use for security)
 	_ = h.service.DeleteCaptivePortalToken(c.Request.Context(), req.CaptiveToken)
 
-	// Validate user access token
+	// Validate user session
 	if cfg.Auth.Enabled {
-		claims, err := h.authService.ValidateToken(c.Request.Context(), req.UserToken)
+		// Get session from session hash
+		session, err := h.userRepo.GetSession(req.SessionHash)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user token"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired session"})
 			return
 		}
 
-		// Get or create user
-		user, err := h.authService.GetOrCreateUser(c.Request.Context(), claims)
+		// Get user from session
+		user, err := h.userRepo.GetUser(session.UserID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
 			return

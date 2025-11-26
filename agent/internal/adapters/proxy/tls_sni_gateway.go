@@ -223,17 +223,17 @@ func (g *TLSSNIGateway) handleConnection(conn net.Conn) {
 		return
 	}
 
-	log.Debug().
-		Str("client_ip", clientIP).
-		Str("sni", sni).
-		Msg("TLS-SNI gateway received connection")
+	// log.Debug().
+	// 	Str("client_ip", clientIP).
+	// 	Str("sni", sni).
+	// 	Msg("TLS-SNI gateway received connection")
 
 	// Check if domain is allowed
 	if !g.isDomainAllowed(sni) {
-		log.Debug().
-			Str("client_ip", clientIP).
-			Str("sni", sni).
-			Msg("blocking connection to non-whitelisted domain")
+		// log.Debug().
+		// 	Str("client_ip", clientIP).
+		// 	Str("sni", sni).
+		// 	Msg("blocking connection to non-whitelisted domain")
 
 		// Send a TLS alert to inform the client that the connection is being refused
 		// This is more graceful than just closing the connection

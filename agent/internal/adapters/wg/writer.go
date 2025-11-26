@@ -123,10 +123,64 @@ func (w *Writer) apply() error {
 		_ = run("wg-quick", "down", w.Path) // ignore error
 		return run("wg-quick", "up", w.Path)
 	case "syncconf":
-		return run("wg-quick", "up", w.Path)
+		// Use wg syncconf with wg-quick strip to update config without recreating interface
+		// This is equivalent to: wg syncconf <interface> <(wg-quick strip <config>)
+		return w.syncconf()
 	default:
 		return fmt.Errorf("unknown apply method: %s", w.ApplyMethod)
 	}
+}
+
+// syncconf applies configuration using wg syncconf with wg-quick strip
+// This updates the interface without bringing it down
+func (w *Writer) syncconf() error {
+	// First, ensure the interface exists (create it if needed)
+	// Check if interface exists
+	checkCmd := exec.Command("ip", "link", "show", w.Interface)
+	if err := checkCmd.Run(); err != nil {
+		// Interface doesn't exist, create it with wg-quick up
+		log.Info().Str("interface", w.Interface).Msg("interface doesn't exist, creating with wg-quick up")
+		if err := run("wg-quick", "up", w.Path); err != nil {
+			return fmt.Errorf("failed to create interface: %w", err)
+		}
+		return nil
+	}
+
+	// Interface exists, use syncconf to update it
+	// Run: wg-quick strip <config> | wg syncconf <interface> /dev/stdin
+	stripCmd := exec.Command("wg-quick", "strip", w.Path)
+	syncCmd := exec.Command("wg", "syncconf", w.Interface, "/dev/stdin")
+
+	// Pipe strip output to syncconf input
+	pipe, err := stripCmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create pipe: %w", err)
+	}
+	syncCmd.Stdin = pipe
+
+	// Capture errors
+	var stripErr, syncErr bytes.Buffer
+	stripCmd.Stderr = &stripErr
+	syncCmd.Stderr = &syncErr
+
+	// Start both commands
+	if err := stripCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start wg-quick strip: %w", err)
+	}
+	if err := syncCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start wg syncconf: %w", err)
+	}
+
+	// Wait for both to complete
+	if err := stripCmd.Wait(); err != nil {
+		return fmt.Errorf("wg-quick strip failed: %v stderr=%s", err, stripErr.String())
+	}
+	if err := syncCmd.Wait(); err != nil {
+		return fmt.Errorf("wg syncconf failed: %v stderr=%s", err, syncErr.String())
+	}
+
+	log.Debug().Str("interface", w.Interface).Msg("configuration synced successfully")
+	return nil
 }
 
 func run(cmd string, args ...string) error {

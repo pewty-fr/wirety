@@ -523,6 +523,22 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 				policy.ACLBlocked = append(policy.ACLBlocked, blockedID)
 			}
 		}
+	} else {
+		// For non-jump peers using agent, send an empty policy to trigger firewall initialization
+		// This ensures firewall rules are applied even for non-jump peers
+		if peer.UseAgent {
+			policy = &JumpPolicy{
+				IP: peer.Address,
+				Peers: []struct {
+					ID       string `json:"id"`
+					Name     string `json:"name"`
+					IP       string `json:"ip"`
+					Isolated bool   `json:"isolated"`
+					UseAgent bool   `json:"use_agent"`
+				}{},
+				ACLBlocked: []string{},
+			}
+		}
 	}
 	return config, dnsConfig, policy, nil
 }

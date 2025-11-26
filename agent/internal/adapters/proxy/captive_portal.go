@@ -29,7 +29,7 @@ type CaptivePortal struct {
 // NewCaptivePortal creates a new captive portal proxy
 // Note: httpsPort parameter is kept for backward compatibility but not used
 // HTTPS traffic is now handled by the TLS-SNI gateway on port 443
-func NewCaptivePortal(httpPort, httpsPort int, portalURL, serverURL, agentToken string) *CaptivePortal {
+func NewCaptivePortal(httpPort int, portalURL, serverURL, agentToken string) *CaptivePortal {
 	return &CaptivePortal{
 		httpPort:         httpPort,
 		portalURL:        portalURL,
@@ -225,9 +225,9 @@ func (cp *CaptivePortal) getCaptiveToken() (string, error) {
 	defer cp.mu.Unlock()
 
 	// Check if current token is still valid (with 1 minute buffer)
-	if cp.captiveToken != "" && time.Now().Before(cp.tokenExpiry.Add(-1*time.Minute)) {
-		return cp.captiveToken, nil
-	}
+	// if cp.captiveToken != "" && time.Now().Before(cp.tokenExpiry.Add(-1*time.Minute)) {
+	// 	return cp.captiveToken, nil
+	// }
 
 	// Fetch new token from server
 	url := fmt.Sprintf("%s/api/v1/agent/captive-portal-token?token=%s", cp.serverURL, cp.agentToken)

@@ -34,6 +34,8 @@ type Runner struct {
 	wsClient          ports.WebSocketClientPort
 	cfgWriter         ports.ConfigWriterPort
 	dnsFactory        func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort // factory to create DNS server instance
+	dnsServer         ports.DNSStarterPort                                          // active DNS server instance
+	dnsServerMu       sync.Mutex                                                    // protects dnsServer
 	fwAdapter         ports.FirewallPort
 	captivePortal     ports.CaptivePortalPort
 	tlsGateway        ports.TLSSNIGatewayPort
@@ -195,14 +197,25 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			} else {
 				log.Debug().Msg("config applied")
 			}
+
+			// Handle DNS server: start once, update on subsequent messages
 			if payload.DNS != nil {
-				log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("starting DNS server")
-				server := r.dnsFactory(payload.DNS.Domain, payload.DNS.Peers)
-				go func() {
-					if err := server.Start(fmt.Sprintf("%s:53", payload.DNS.IP)); err != nil {
-						log.Error().Err(err).Msg("dns server exited")
-					}
-				}()
+				r.dnsServerMu.Lock()
+				if r.dnsServer == nil {
+					// First time: create and start DNS server
+					log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("starting DNS server")
+					r.dnsServer = r.dnsFactory(payload.DNS.Domain, payload.DNS.Peers)
+					go func() {
+						if err := r.dnsServer.Start(fmt.Sprintf("%s:53", payload.DNS.IP)); err != nil {
+							log.Error().Err(err).Msg("dns server exited")
+						}
+					}()
+				} else {
+					// Subsequent times: update existing DNS server
+					log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("updating DNS server configuration")
+					r.dnsServer.Update(payload.DNS.Domain, payload.DNS.Peers)
+				}
+				r.dnsServerMu.Unlock()
 			}
 			// Handle OAuth issuer for TLS-SNI gateway
 			if payload.OAuthIssuer != "" && r.tlsGateway != nil {

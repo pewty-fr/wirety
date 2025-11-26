@@ -45,7 +45,7 @@ export default function CaptivePortalPage() {
         },
         body: JSON.stringify({
           captive_token: captiveToken,
-          user_token: sessionHash,
+          session_hash: sessionHash,
           peer_ip: peerIP,
         }),
       });

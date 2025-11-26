@@ -31,7 +31,7 @@ func main() {
 	server := envOr("SERVER_URL", "http://localhost:8080")
 	token := envOr("TOKEN", "")
 	configPath := envOr("WG_CONFIG_PATH", "")
-	applyMethod := envOr("WG_APPLY_METHOD", "wg-quick")
+	applyMethod := envOr("WG_APPLY_METHOD", "syncconf")
 	natIface := envOr("NAT_INTERFACE", "eth0")
 	httpPort := envOr("HTTP_PROXY_PORT", "3128")
 	httpsPort := envOr("HTTPS_PROXY_PORT", "3129")
@@ -112,7 +112,7 @@ func main() {
 	if portalURL == "https://portal.example.com" {
 		portalURL = server
 	}
-	captivePortal := proxy.NewCaptivePortal(httpPortInt, httpsPortInt, portalURL, server, token)
+	captivePortal := proxy.NewCaptivePortal(httpPortInt, portalURL, server, token)
 	if err := captivePortal.Start(); err != nil {
 		log.Fatal().Err(err).Msg("failed to start captive portal")
 	}
