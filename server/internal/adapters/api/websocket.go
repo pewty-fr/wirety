@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"wirety/internal/application/network"
+	"wirety/internal/config"
 	domain "wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
@@ -22,14 +23,16 @@ var upgrader = websocket.Upgrader{
 // WebSocketManager manages WebSocket connections for peer configuration updates
 type WebSocketManager struct {
 	service     *network.Service
+	authConfig  *config.AuthConfig
 	connections map[string]map[string]*websocket.Conn // networkID -> peerID -> conn
 	mu          sync.RWMutex
 }
 
 // NewWebSocketManager creates a new WebSocket manager
-func NewWebSocketManager(service *network.Service) *WebSocketManager {
+func NewWebSocketManager(service *network.Service, authConfig *config.AuthConfig) *WebSocketManager {
 	return &WebSocketManager{
 		service:     service,
+		authConfig:  authConfig,
 		connections: make(map[string]map[string]*websocket.Conn),
 	}
 }
@@ -141,14 +144,35 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 		log.Error().Err(err).Msg("Failed to generate initial config (token)")
 		return
 	}
+
+	// Get whitelist if this is a jump peer
+	var whitelist []string
+	if peer.IsJump {
+		whitelist, err = h.service.GetCaptivePortalWhitelist(c.Request.Context(), networkID, peer.ID)
+		if err != nil {
+			log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peer.ID).Msg("Failed to get whitelist")
+			whitelist = []string{}
+		}
+	}
+
+	// Get OAuth issuer from config
+	oauthIssuer := ""
+	if h.wsManager.authConfig != nil && h.wsManager.authConfig.Enabled {
+		oauthIssuer = h.wsManager.authConfig.IssuerURL
+	}
+
 	msg := struct {
-		Config string      `json:"config"`
-		DNS    interface{} `json:"dns,omitempty"`
-		Policy interface{} `json:"policy,omitempty"`
+		Config      string      `json:"config"`
+		DNS         interface{} `json:"dns,omitempty"`
+		Policy      interface{} `json:"policy,omitempty"`
+		Whitelist   []string    `json:"whitelist,omitempty"`
+		OAuthIssuer string      `json:"oauth_issuer,omitempty"`
 	}{
-		Config: cfg,
-		DNS:    dnsCfg,
-		Policy: policy,
+		Config:      cfg,
+		DNS:         dnsCfg,
+		Policy:      policy,
+		Whitelist:   whitelist,
+		OAuthIssuer: oauthIssuer,
 	}
 	data, _ := json.Marshal(msg)
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
@@ -206,18 +230,38 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 				return
 			}
 
+			// Get whitelist if this is a jump peer
+			var whitelist []string
+			if peer.IsJump {
+				whitelist, err = m.service.GetCaptivePortalWhitelist(ctx, networkID, peerID)
+				if err != nil {
+					log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to get whitelist")
+					whitelist = []string{}
+				}
+			}
+
+			// Get OAuth issuer from config
+			oauthIssuer := ""
+			if m.authConfig != nil && m.authConfig.Enabled {
+				oauthIssuer = m.authConfig.IssuerURL
+			}
+
 			msg := struct {
-				Config   string      `json:"config"`
-				DNS      interface{} `json:"dns,omitempty"`
-				Policy   interface{} `json:"policy,omitempty"`
-				PeerID   string      `json:"peer_id"`
-				PeerName string      `json:"peer_name"`
+				Config      string      `json:"config"`
+				DNS         interface{} `json:"dns,omitempty"`
+				Policy      interface{} `json:"policy,omitempty"`
+				PeerID      string      `json:"peer_id"`
+				PeerName    string      `json:"peer_name"`
+				Whitelist   []string    `json:"whitelist,omitempty"`
+				OAuthIssuer string      `json:"oauth_issuer,omitempty"`
 			}{
-				Config:   cfg,
-				DNS:      dnsCfg,
-				Policy:   policy,
-				PeerID:   peer.ID,
-				PeerName: peer.Name,
+				Config:      cfg,
+				DNS:         dnsCfg,
+				Policy:      policy,
+				PeerID:      peer.ID,
+				PeerName:    peer.Name,
+				Whitelist:   whitelist,
+				OAuthIssuer: oauthIssuer,
 			}
 			data, _ := json.Marshal(msg)
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {

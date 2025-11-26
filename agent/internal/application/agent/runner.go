@@ -18,20 +18,27 @@ import (
 // DNS optional; only for jump peer
 // Peers list contains name + ip
 // Policy optional; only for jump peer
+// Whitelist optional; list of authenticated peer IPs
 
 type WSMessage struct {
-	Config   string          `json:"config"`
-	DNS      *dom.DNSConfig  `json:"dns,omitempty"`
-	Policy   *pol.JumpPolicy `json:"policy,omitempty"`
-	PeerID   string          `json:"peer_id,omitempty"`
-	PeerName string          `json:"peer_name,omitempty"`
+	Config      string          `json:"config"`
+	DNS         *dom.DNSConfig  `json:"dns,omitempty"`
+	Policy      *pol.JumpPolicy `json:"policy,omitempty"`
+	PeerID      string          `json:"peer_id,omitempty"`
+	PeerName    string          `json:"peer_name,omitempty"`
+	Whitelist   []string        `json:"whitelist,omitempty"`    // IPs of authenticated non-agent peers
+	OAuthIssuer string          `json:"oauth_issuer,omitempty"` // OAuth issuer URL for TLS-SNI gateway
 }
 
 type Runner struct {
 	wsClient          ports.WebSocketClientPort
 	cfgWriter         ports.ConfigWriterPort
 	dnsFactory        func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort // factory to create DNS server instance
+	dnsServer         ports.DNSStarterPort                                          // active DNS server instance
+	dnsServerMu       sync.Mutex                                                    // protects dnsServer
 	fwAdapter         ports.FirewallPort
+	captivePortal     ports.CaptivePortalPort
+	tlsGateway        ports.TLSSNIGatewayPort
 	wsURL             string
 	wgInterface       string
 	currentPeerName   string // Track current peer name to detect changes
@@ -40,12 +47,14 @@ type Runner struct {
 	heartbeatInterval time.Duration
 }
 
-func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string) *Runner {
+func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, captivePortal ports.CaptivePortalPort, tlsGateway ports.TLSSNIGatewayPort, wsURL string, wgInterface string) *Runner {
 	return &Runner{
 		wsClient:          wsClient,
 		cfgWriter:         writer,
 		dnsFactory:        dnsFactory,
 		fwAdapter:         fwAdapter,
+		captivePortal:     captivePortal,
+		tlsGateway:        tlsGateway,
 		wsURL:             wsURL,
 		wgInterface:       wgInterface,
 		currentPeerName:   "", // Will be set when first message is received
@@ -86,15 +95,19 @@ func (r *Runner) Start(stop <-chan struct{}) {
 		endpointCheckTicker := time.NewTicker(300 * time.Millisecond)
 		defer endpointCheckTicker.Stop()
 		heartbeatDone := make(chan struct{})
+		var heartbeatWg sync.WaitGroup
 
 		// Track last known peer endpoints
 		var lastPeerEndpoints map[string]string
 		var lastPeerEndpointsMu sync.RWMutex
 
+		heartbeatWg.Add(1)
 		go func() {
+			defer heartbeatWg.Done()
 			for {
 				select {
 				case <-heartbeatDone:
+					log.Debug().Msg("heartbeat goroutine stopping")
 					return
 				case <-heartbeatTicker.C:
 					// Regular heartbeat every 30 seconds
@@ -150,7 +163,9 @@ func (r *Runner) Start(stop <-chan struct{}) {
 		for {
 			select {
 			case <-stop:
+				log.Debug().Msg("stop signal received, closing heartbeat")
 				close(heartbeatDone)
+				heartbeatWg.Wait() // Wait for heartbeat goroutine to finish
 				_ = r.wsClient.Close()
 				return
 			default:
@@ -159,6 +174,7 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			if err != nil {
 				log.Error().Err(err).Msg("websocket read error; reconnecting")
 				close(heartbeatDone)
+				heartbeatWg.Wait() // Wait for heartbeat goroutine to finish
 				_ = r.wsClient.Close()
 				break
 			}
@@ -181,18 +197,73 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			} else {
 				log.Debug().Msg("config applied")
 			}
+
+			// Handle DNS server: start once, update on subsequent messages
 			if payload.DNS != nil {
-				log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("starting DNS server")
-				server := r.dnsFactory(payload.DNS.Domain, payload.DNS.Peers)
-				go func() {
-					if err := server.Start(fmt.Sprintf("%s:53", payload.DNS.IP)); err != nil {
-						log.Error().Err(err).Msg("dns server exited")
-					}
-				}()
+				r.dnsServerMu.Lock()
+				if r.dnsServer == nil {
+					// First time: create and start DNS server
+					log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("starting DNS server")
+					r.dnsServer = r.dnsFactory(payload.DNS.Domain, payload.DNS.Peers)
+					go func() {
+						if err := r.dnsServer.Start(fmt.Sprintf("%s:53", payload.DNS.IP)); err != nil {
+							log.Error().Err(err).Msg("dns server exited")
+						}
+					}()
+				} else {
+					// Subsequent times: update existing DNS server
+					log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("updating DNS server configuration")
+					r.dnsServer.Update(payload.DNS.Domain, payload.DNS.Peers)
+				}
+				r.dnsServerMu.Unlock()
 			}
+			// Handle OAuth issuer for TLS-SNI gateway
+			if payload.OAuthIssuer != "" && r.tlsGateway != nil {
+				r.tlsGateway.AddAllowedDomain(payload.OAuthIssuer)
+			}
+
+			// Handle whitelist updates
+			if payload.Whitelist != nil {
+				log.Info().Int("count", len(payload.Whitelist)).Msg("updating whitelist")
+				// Clear existing whitelist and add new ones
+				if r.captivePortal != nil {
+					r.captivePortal.ClearWhitelist()
+					for _, ip := range payload.Whitelist {
+						r.captivePortal.AddWhitelistedPeer(ip)
+					}
+				}
+				if r.tlsGateway != nil {
+					r.tlsGateway.ClearWhitelist()
+					for _, ip := range payload.Whitelist {
+						r.tlsGateway.AddWhitelistedPeer(ip)
+					}
+				}
+			}
+
 			if payload.Policy != nil && r.fwAdapter != nil {
 				log.Info().Int("peer_count", len(payload.Policy.Peers)).Msg("applying firewall policy")
-				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP); err != nil {
+
+				// Update captive portal and TLS gateway with non-agent peers
+				nonAgentIPs := make([]string, 0)
+				for _, peer := range payload.Policy.Peers {
+					if !peer.UseAgent {
+						nonAgentIPs = append(nonAgentIPs, peer.IP)
+					}
+				}
+				if r.captivePortal != nil {
+					r.captivePortal.UpdateNonAgentPeers(nonAgentIPs)
+				}
+				if r.tlsGateway != nil {
+					r.tlsGateway.UpdateNonAgentPeers(nonAgentIPs)
+				}
+
+				// Get whitelisted IPs for firewall rules
+				whitelistedIPs := payload.Whitelist
+				if whitelistedIPs == nil {
+					whitelistedIPs = []string{}
+				}
+
+				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, whitelistedIPs); err != nil {
 					log.Error().Err(err).Msg("failed applying firewall policy")
 				} else {
 					log.Debug().Msg("firewall policy applied")

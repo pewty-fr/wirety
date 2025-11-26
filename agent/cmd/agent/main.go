@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	dnsadapter "wirety/agent/internal/adapters/dns"
 	"wirety/agent/internal/adapters/firewall"
+	"wirety/agent/internal/adapters/proxy"
 	"wirety/agent/internal/adapters/wg"
 	"wirety/agent/internal/adapters/ws"
 	app "wirety/agent/internal/application/agent"
@@ -29,14 +31,20 @@ func main() {
 	server := envOr("SERVER_URL", "http://localhost:8080")
 	token := envOr("TOKEN", "")
 	configPath := envOr("WG_CONFIG_PATH", "")
-	applyMethod := envOr("WG_APPLY_METHOD", "wg-quick")
+	applyMethod := envOr("WG_APPLY_METHOD", "syncconf")
 	natIface := envOr("NAT_INTERFACE", "eth0")
+	httpPort := envOr("HTTP_PROXY_PORT", "3128")
+	httpsPort := envOr("HTTPS_PROXY_PORT", "3129")
+	portalURL := envOr("CAPTIVE_PORTAL_URL", "https://portal.example.com")
 
 	flag.StringVar(&server, "server", server, "Server base URL (no trailing /)")
 	flag.StringVar(&token, "token", token, "Enrollment token")
 	flag.StringVar(&configPath, "config", configPath, "Path to wireguard config file")
 	flag.StringVar(&applyMethod, "apply", applyMethod, "Apply method: wg-quick|syncconf")
 	flag.StringVar(&natIface, "nat", natIface, "NAT interface (eth0, etc.)")
+	flag.StringVar(&httpPort, "http-port", httpPort, "HTTP proxy port for captive portal")
+	flag.StringVar(&httpsPort, "https-port", httpsPort, "HTTPS proxy port for captive portal")
+	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal URL")
 	flag.Parse()
 
 	if token == "" {
@@ -84,8 +92,50 @@ func main() {
 	dnsFactory := func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort {
 		return dnsadapter.NewServer(domain, peers)
 	}
+
+	// Parse proxy ports
+	httpPortInt := 3128
+	httpsPortInt := 3129
+	if p, err := strconv.Atoi(httpPort); err == nil {
+		httpPortInt = p
+	}
+	if p, err := strconv.Atoi(httpsPort); err == nil {
+		httpsPortInt = p
+	}
+
+	// Initialize firewall adapter with proxy ports
 	fwAdapter := firewall.NewAdapter(iface, natIface)
-	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, wsURL, iface)
+	fwAdapter.SetProxyPorts(httpPortInt, httpsPortInt)
+
+	// Initialize captive portal
+	// Use server URL as portal URL if not explicitly set
+	if portalURL == "https://portal.example.com" {
+		portalURL = server
+	}
+	captivePortal := proxy.NewCaptivePortal(httpPortInt, portalURL, server, token)
+	if err := captivePortal.Start(); err != nil {
+		log.Fatal().Err(err).Msg("failed to start captive portal")
+	}
+	log.Info().
+		Int("http_port", httpPortInt).
+		Str("portal_url", portalURL).
+		Msg("captive portal HTTP proxy started")
+
+	// Initialize TLS-SNI gateway for HTTPS filtering
+	// This gateway only allows connections to the server domain for non-authenticated users
+	tlsGateway, err := proxy.NewTLSSNIGateway(httpsPortInt, server)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create TLS-SNI gateway")
+	}
+	if err := tlsGateway.Start(); err != nil {
+		log.Fatal().Err(err).Msg("failed to start TLS-SNI gateway")
+	}
+	log.Info().
+		Int("https_port", httpsPortInt).
+		Str("allowed_domain", server).
+		Msg("TLS-SNI gateway started (HTTPS filtering)")
+
+	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, captivePortal, tlsGateway, wsURL, iface)
 
 	// Set the initial peer name in the runner
 	runner.SetCurrentPeerName(peerName)
@@ -93,8 +143,31 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	stop := make(chan struct{})
-	go func() { <-sigCh; close(stop) }()
+
+	// Handle shutdown gracefully
+	go func() {
+		<-sigCh
+		log.Info().Msg("shutdown signal received, stopping services...")
+
+		// Stop captive portal
+		if err := captivePortal.Stop(); err != nil {
+			log.Error().Err(err).Msg("failed to stop captive portal")
+		} else {
+			log.Info().Msg("captive portal stopped")
+		}
+
+		// Stop TLS gateway
+		if err := tlsGateway.Stop(); err != nil {
+			log.Error().Err(err).Msg("failed to stop TLS gateway")
+		} else {
+			log.Info().Msg("TLS gateway stopped")
+		}
+
+		close(stop)
+	}()
+
 	runner.Start(stop)
+	log.Info().Msg("agent stopped")
 }
 
 func envOr(k, def string) string {

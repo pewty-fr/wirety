@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	dom "wirety/agent/internal/domain/dns"
 
 	"github.com/miekg/dns"
@@ -16,6 +17,7 @@ import (
 type Server struct {
 	domain string
 	peers  []dom.DNSPeer
+	mu     sync.RWMutex
 }
 
 func NewServer(domain string, peers []dom.DNSPeer) *Server {
@@ -44,6 +46,9 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func (s *Server) lookupPeerIP(name string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	for _, p := range s.peers {
 		fqdn := fmt.Sprintf("%s.%s", p.Name, s.domain)
 		if name == fqdn {
@@ -51,4 +56,15 @@ func (s *Server) lookupPeerIP(name string) string {
 		}
 	}
 	return ""
+}
+
+// Update updates the DNS server configuration with new domain and peers
+func (s *Server) Update(domain string, peers []dom.DNSPeer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.domain = domain
+	s.peers = peers
+
+	log.Info().Str("domain", domain).Int("peer_count", len(peers)).Msg("DNS server configuration updated")
 }

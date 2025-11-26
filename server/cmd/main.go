@@ -109,7 +109,7 @@ func main() {
 	}
 
 	// Initialize API handler
-	handler := api.NewHandler(networkService, ipamService, authService, userRepo)
+	handler := api.NewHandler(networkService, ipamService, authService, userRepo, &cfg.Auth)
 
 	// Setup Gin router
 	gin.SetMode(gin.ReleaseMode)

@@ -11,12 +11,14 @@ import (
 
 // Repository is an in-memory implementation of the network repository
 type Repository struct {
-	mu              sync.RWMutex
-	networks        map[string]*network.Network
-	connections     map[string]map[string]*network.PeerConnection // networkID -> connectionKey -> PeerConnection
-	sessions        map[string]map[string]*network.AgentSession   // networkID -> sessionID -> AgentSession
-	endpointChanges map[string][]*network.EndpointChange          // networkID -> []EndpointChange
-	incidents       map[string]*network.SecurityIncident          // incidentID -> SecurityIncident
+	mu               sync.RWMutex
+	networks         map[string]*network.Network
+	connections      map[string]map[string]*network.PeerConnection // networkID -> connectionKey -> PeerConnection
+	sessions         map[string]map[string]*network.AgentSession   // networkID -> sessionID -> AgentSession
+	endpointChanges  map[string][]*network.EndpointChange          // networkID -> []EndpointChange
+	incidents        map[string]*network.SecurityIncident          // incidentID -> SecurityIncident
+	captiveWhitelist map[string]map[string]bool                    // "networkID:jumpPeerID" -> peerIP -> true
+	captiveTokens    map[string]*network.CaptivePortalToken        // token -> CaptivePortalToken
 }
 
 // NewRepository creates a new in-memory repository
@@ -517,6 +519,118 @@ func (r *Repository) ResolveSecurityIncident(ctx context.Context, incidentID, re
 	incident.Resolved = true
 	incident.ResolvedAt = time.Now()
 	incident.ResolvedBy = resolvedBy
+
+	return nil
+}
+
+// Captive portal whitelist operations
+
+func (r *Repository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key := networkID + ":" + jumpPeerID
+	if r.captiveWhitelist == nil {
+		r.captiveWhitelist = make(map[string]map[string]bool)
+	}
+	if r.captiveWhitelist[key] == nil {
+		r.captiveWhitelist[key] = make(map[string]bool)
+	}
+	r.captiveWhitelist[key][peerIP] = true
+	return nil
+}
+
+func (r *Repository) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key := networkID + ":" + jumpPeerID
+	if r.captiveWhitelist != nil && r.captiveWhitelist[key] != nil {
+		delete(r.captiveWhitelist[key], peerIP)
+	}
+	return nil
+}
+
+func (r *Repository) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	key := networkID + ":" + jumpPeerID
+	var ips []string
+	if r.captiveWhitelist != nil && r.captiveWhitelist[key] != nil {
+		for ip := range r.captiveWhitelist[key] {
+			ips = append(ips, ip)
+		}
+	}
+	return ips, nil
+}
+
+func (r *Repository) ClearCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key := networkID + ":" + jumpPeerID
+	if r.captiveWhitelist != nil {
+		delete(r.captiveWhitelist, key)
+	}
+	return nil
+}
+
+// Captive portal token operations
+
+func (r *Repository) CreateCaptivePortalToken(ctx context.Context, token *network.CaptivePortalToken) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.captiveTokens == nil {
+		r.captiveTokens = make(map[string]*network.CaptivePortalToken)
+	}
+
+	r.captiveTokens[token.Token] = token
+	return nil
+}
+
+func (r *Repository) GetCaptivePortalToken(ctx context.Context, tokenStr string) (*network.CaptivePortalToken, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.captiveTokens == nil {
+		return nil, fmt.Errorf("token not found")
+	}
+
+	token, exists := r.captiveTokens[tokenStr]
+	if !exists {
+		return nil, fmt.Errorf("token not found")
+	}
+
+	return token, nil
+}
+
+func (r *Repository) DeleteCaptivePortalToken(ctx context.Context, tokenStr string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.captiveTokens != nil {
+		delete(r.captiveTokens, tokenStr)
+	}
+
+	return nil
+}
+
+func (r *Repository) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.captiveTokens == nil {
+		return nil
+	}
+
+	now := time.Now()
+	for token, t := range r.captiveTokens {
+		if now.After(t.ExpiresAt) {
+			delete(r.captiveTokens, token)
+		}
+	}
 
 	return nil
 }

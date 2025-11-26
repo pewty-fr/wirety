@@ -148,3 +148,37 @@ func (c *CombinedRepository) ReleaseIP(ctx context.Context, cidr string, ip stri
 }
 
 var _ FullRepository = (*CombinedRepository)(nil)
+
+// Captive portal whitelist operations
+func (c *CombinedRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	return c.netRepo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP)
+}
+
+func (c *CombinedRepository) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	return c.netRepo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP)
+}
+
+func (c *CombinedRepository) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
+	return c.netRepo.GetCaptivePortalWhitelist(ctx, networkID, jumpPeerID)
+}
+
+func (c *CombinedRepository) ClearCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) error {
+	return c.netRepo.ClearCaptivePortalWhitelist(ctx, networkID, jumpPeerID)
+}
+
+// Captive portal token operations
+func (c *CombinedRepository) CreateCaptivePortalToken(ctx context.Context, token *network.CaptivePortalToken) error {
+	return c.netRepo.CreateCaptivePortalToken(ctx, token)
+}
+
+func (c *CombinedRepository) GetCaptivePortalToken(ctx context.Context, tokenStr string) (*network.CaptivePortalToken, error) {
+	return c.netRepo.GetCaptivePortalToken(ctx, tokenStr)
+}
+
+func (c *CombinedRepository) DeleteCaptivePortalToken(ctx context.Context, tokenStr string) error {
+	return c.netRepo.DeleteCaptivePortalToken(ctx, tokenStr)
+}
+
+func (c *CombinedRepository) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
+	return c.netRepo.CleanupExpiredCaptivePortalTokens(ctx)
+}

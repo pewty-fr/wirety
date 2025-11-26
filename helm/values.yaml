@@ -1,70 +1,23 @@
-# Default values for wirety
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
-
-# Global settings
-replicaCount: 1
-nameOverride: ""
-fullnameOverride: ""
-
-# Server configuration
-server:
-  image:
-    repository: ghcr.io/pewty/wirety-server
-    pullPolicy: IfNotPresent
-    tag: "" # Defaults to chart appVersion
-
-  service:
-    type: ClusterIP
-    port: 8080
-
-  resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 100m
-      memory: 128Mi
-
-  # Environment variables for server
-  env:
-    HTTP_PORT: "8080"
-    AUTH_ENABLED: "false"
-    AUTH_ISSUER_URL: ""
-    AUTH_CLIENT_ID: ""
-    AUTH_CLIENT_SECRET: ""
-    AUTH_JWKS_CACHE_TTL: "3600"
-
-  # Secret environment variables (from existing secret)
-  envFrom: []
-  # - secretRef:
-  #     name: wirety-server-secrets
-
-  livenessProbe:
-    httpGet:
-      path: /api/v1/health
-      port: http
-    initialDelaySeconds: 10
-    periodSeconds: 10
-
-  readinessProbe:
-    httpGet:
-      path: /api/v1/health
-      port: http
-    initialDelaySeconds: 5
-    periodSeconds: 5
-
-# Frontend configuration
+affinity: {}
 frontend:
+  # env:
+  #   REACT_APP_API_URL: "/api"
   image:
-    repository: ghcr.io/pewty/wirety-front
     pullPolicy: IfNotPresent
-    tag: "" # Defaults to chart appVersion
-
-  service:
-    type: ClusterIP
-    port: 8080
-
+    repository: rg.fr-par.scw.cloud/wirety/front
+    tag: 2025-11-22T22-26-49Z-SNAPSHOT
+  # livenessProbe:
+  #   httpGet:
+  #     path: /
+  #     port: http
+  #   initialDelaySeconds: 5
+  #   periodSeconds: 10
+  # readinessProbe:
+  #   httpGet:
+  #     path: /
+  #     port: http
+  #   initialDelaySeconds: 3
+  #   periodSeconds: 5
   resources:
     limits:
       cpu: 200m
@@ -72,77 +25,71 @@ frontend:
     requests:
       cpu: 50m
       memory: 64Mi
-
-  # Environment variables passed to frontend build/runtime
+  service:
+    port: 8080
+    type: ClusterIP
+fullnameOverride: ""
+imagePullSecrets: []
+ingress:
+  className: traefik
+  enabled: true
+  hosts:
+  - host: wirety-personal.pewty.fr
+    paths:
+    - backend: server
+      path: /api
+      pathType: Prefix
+    - backend: frontend
+      path: /
+      pathType: Prefix
+  tls: []
+nameOverride: ""
+nodeSelector: {}
+podAnnotations: {}
+podSecurityContext: {}
+replicaCount: 1
+securityContext: {}
+server:
   env:
-    REACT_APP_API_URL: "" # Will default to /api if empty
-
+    AUTH_CLIENT_ID: 
+    AUTH_CLIENT_SECRET: 
+    AUTH_ENABLED: "true"
+    AUTH_ISSUER_URL: 
+    AUTH_JWKS_CACHE_TTL: "3600"
+    DB_DSN: 
+    DB_ENABLED: "true"
+    HTTP_PORT: "8080"
+    ALLOWED_ORIGIN: 
+    SKIP_TLS_VERIFY: "false"
+  envFrom: []
+  image:
+    pullPolicy: IfNotPresent
+    repository: rg.fr-par.scw.cloud/wirety/server
+    tag: 2025-11-22T22-34-35Z-SNAPSHOT
   livenessProbe:
     httpGet:
-      path: /
+      path: /api/v1/health
       port: http
-    initialDelaySeconds: 5
+    initialDelaySeconds: 10
     periodSeconds: 10
-
   readinessProbe:
     httpGet:
-      path: /
+      path: /api/v1/health
       port: http
-    initialDelaySeconds: 3
+    initialDelaySeconds: 5
     periodSeconds: 5
-
-# Ingress configuration
-ingress:
-  enabled: true
-  className: "nginx"
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    # nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-  hosts:
-    - host: wirety.example.com
-      paths:
-        - path: /api
-          pathType: Prefix
-          backend: server
-        - path: /
-          pathType: Prefix
-          backend: frontend
-  tls:
-    - secretName: wirety-tls
-      hosts:
-        - wirety.example.com
-
-# ServiceAccount
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  service:
+    port: 8080
+    type: ClusterIP
 serviceAccount:
-  create: true
   annotations: {}
+  create: true
   name: ""
-
-# Pod annotations
-podAnnotations: {}
-
-# Pod security context
-podSecurityContext: {}
-  # fsGroup: 2000
-
-# Security context
-securityContext: {}
-  # capabilities:
-  #   drop:
-  #   - ALL
-  # readOnlyRootFilesystem: true
-  # runAsNonRoot: true
-  # runAsUser: 1000
-
-# Node selector
-nodeSelector: {}
-
-# Tolerations
 tolerations: []
-
-# Affinity
-affinity: {}
-
-# Image pull secrets
-imagePullSecrets: []
