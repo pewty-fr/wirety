@@ -52,7 +52,7 @@ export default function DashboardPage() {
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      const [networksRes, peersRes, _ipamRes, securityRes, usersRes] = await Promise.all([
+      const [networksRes, peersRes, , securityRes, usersRes] = await Promise.all([
         api.getNetworks(1, 5).catch(() => null),
         api.getAllPeers(1, 1000).catch(() => null),
         api.getIPAMAllocations(1, 1000).catch(() => null),
@@ -62,7 +62,8 @@ export default function DashboardPage() {
 
       const peers = peersRes?.peers || [];
       const securityData = securityRes?.data || [];
-      const usersData = usersRes || [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const usersData = (usersRes || []) as any[];
       const networks = networksRes?.data || [];
 
       // Calculate total capacity and used slots across all networks
@@ -109,7 +110,9 @@ export default function DashboardPage() {
         },
         users: {
           total: usersData.length,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           administrators: usersData.filter((u: any) => u.role === 'administrator').length,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           regularUsers: usersData.filter((u: any) => u.role === 'user').length,
         },
       };

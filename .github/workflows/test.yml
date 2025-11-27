@@ -24,18 +24,18 @@ jobs:
           cache-dependency-path: agent/go.sum
       
       - name: Go mod download
-        run: go mod download
+        run: |
+          go mod download
       
       - name: Go lint
         uses: golangci/golangci-lint-action@v9
         with:
-          working-directory: agent
           args: --timeout=30m
       
       - name: Go security
         uses: securego/gosec@master
         with:
-          args: ./agent/...
+          args: ./...
       
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
@@ -55,18 +55,18 @@ jobs:
           cache-dependency-path: server/go.sum
       
       - name: Go mod download
-        run: go mod download
+        run: |
+          go mod download
       
       - name: Go lint
         uses: golangci/golangci-lint-action@v9
         with:
-          working-directory: server
           args: --timeout=30m
       
       - name: Go security
         uses: securego/gosec@master
         with:
-          args: ./server/...
+          args: ./...
       
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...

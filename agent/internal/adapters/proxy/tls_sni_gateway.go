@@ -180,7 +180,9 @@ func (g *TLSSNIGateway) acceptLoop() {
 
 // handleConnection handles a single TLS connection
 func (g *TLSSNIGateway) handleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	// Set read deadline for ClientHello
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -264,7 +266,9 @@ func (g *TLSSNIGateway) handleConnection(conn net.Conn) {
 		log.Error().Err(err).Str("target", target).Msg("failed to connect to target")
 		return
 	}
-	defer remote.Close()
+	defer func() {
+		_ = remote.Close()
+	}()
 
 	// Clear read deadline for relay
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {

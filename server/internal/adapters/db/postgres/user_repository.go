@@ -111,7 +111,9 @@ func (r *UserRepository) ListUsers() ([]*auth.User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*auth.User, 0)
 	for rows.Next() {
 		u, err := scanUser(rows)

@@ -31,7 +31,7 @@ func (r *IPAMRepository) EnsureRootPrefix(ctx context.Context, cidr string) (*ne
 		}
 	}
 	usage := p.Usage()
-	return &network.IPAMPrefix{CIDR: p.Cidr, ParentCIDR: "", UsableHosts: int(usage.AvailableIPs)}, nil
+	return &network.IPAMPrefix{CIDR: p.Cidr, ParentCIDR: "", UsableHosts: int(usage.AvailableIPs)}, nil // #nosec G115 - AvailableIPs fits in int
 }
 
 func (r *IPAMRepository) AcquireChildPrefix(ctx context.Context, parentCIDR string, prefixLen uint8) (*network.IPAMPrefix, error) {
@@ -40,7 +40,7 @@ func (r *IPAMRepository) AcquireChildPrefix(ctx context.Context, parentCIDR stri
 		return nil, err
 	}
 	usage := child.Usage()
-	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil
+	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil // #nosec G115 - AvailableIPs fits in int
 }
 
 func (r *IPAMRepository) AcquireSpecificChildPrefix(ctx context.Context, parentCIDR string, cidr string) (*network.IPAMPrefix, error) {
@@ -49,7 +49,7 @@ func (r *IPAMRepository) AcquireSpecificChildPrefix(ctx context.Context, parentC
 		return nil, err
 	}
 	usage := child.Usage()
-	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil
+	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil // #nosec G115 - AvailableIPs fits in int
 }
 
 func (r *IPAMRepository) ReleaseChildPrefix(ctx context.Context, cidr string) error {
@@ -93,7 +93,7 @@ func (r *IPAMRepository) ListChildPrefixes(ctx context.Context, parentCIDR strin
 				continue
 			}
 			usage := cp.Usage()
-			out = append(out, &network.IPAMPrefix{CIDR: cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)})
+			out = append(out, &network.IPAMPrefix{CIDR: cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}) // #nosec G115 - AvailableIPs fits in int
 		}
 	}
 	return out, nil

@@ -36,8 +36,9 @@ export default function NetworkDetailModal({ isOpen, onClose, network, onUpdate 
       await api.deleteNetwork(network.id);
       onUpdate();
       onClose();
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to delete network');
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      alert(err.response?.data?.error || 'Failed to delete network');
     } finally {
       setDeleting(false);
     }

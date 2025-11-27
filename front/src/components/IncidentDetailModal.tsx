@@ -37,8 +37,9 @@ export default function IncidentDetailModal({ isOpen, onClose, incident, onUpdat
       await api.resolveIncident(incident.id);
       onUpdate();
       onClose();
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to resolve incident');
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      alert(err.response?.data?.error || 'Failed to resolve incident');
     } finally {
       setResolving(false);
     }

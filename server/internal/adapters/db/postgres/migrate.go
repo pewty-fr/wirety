@@ -18,12 +18,16 @@ func RunMigrations(ctx context.Context, db *sql.DB, dir string) error {
 	if _, err := db.ExecContext(ctx, `SELECT pg_advisory_lock(42)`); err != nil {
 		return fmt.Errorf("acquire migration lock: %w", err)
 	}
-	defer db.ExecContext(ctx, `SELECT pg_advisory_unlock(42)`)
+	defer func() {
+		_, _ = db.ExecContext(ctx, `SELECT pg_advisory_unlock(42)`)
+	}()
 
 	applied := map[int]bool{}
 	rows, err := db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
 	if err == nil { // if table doesn't exist that's okay (first migration creates it)
-		defer rows.Close()
+		defer func() {
+			_ = rows.Close()
+		}()
 		for rows.Next() {
 			var v int
 			if err = rows.Scan(&v); err != nil {
@@ -66,7 +70,7 @@ func RunMigrations(ctx context.Context, db *sql.DB, dir string) error {
 		if applied[version] {
 			continue
 		}
-		sqlBytes, err := os.ReadFile(file)
+		sqlBytes, err := os.ReadFile(file) // #nosec G304 - file path is from controlled migration directory
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", base, err)
 		}
@@ -75,11 +79,11 @@ func RunMigrations(ctx context.Context, db *sql.DB, dir string) error {
 			return fmt.Errorf("begin tx: %w", err)
 		}
 		if _, err = tx.ExecContext(ctx, string(sqlBytes)); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("exec migration %s: %w", base, err)
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("record migration %s: %w", base, err)
 		}
 		if err = tx.Commit(); err != nil {

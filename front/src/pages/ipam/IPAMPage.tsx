@@ -17,10 +17,7 @@ export default function IPAMPage() {
   const debouncedFilter = useDebounce(filter, 500);
 
   useEffect(() => {
-    loadAllocations();
-  }, [page, debouncedFilter]);
-
-  const loadAllocations = async () => {
+    const loadAllocations = async () => {
     setLoading(true);
     try {
       const response = await api.getIPAMAllocations(page, pageSize, debouncedFilter);
@@ -34,6 +31,9 @@ export default function IPAMPage() {
       setLoading(false);
     }
   };
+
+    loadAllocations();
+  }, [page, debouncedFilter]);
 
   const totalPages = Math.ceil(total / pageSize);
   const allocatedCount = allocations.filter(a => a.allocated).length;

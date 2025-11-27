@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
 
 	"wirety/internal/domain/ipam"
 	"wirety/internal/domain/network"
@@ -27,7 +26,9 @@ func NewIPAMRepository(ctx context.Context, db *sql.DB) (*IPAMRepository, error)
 	// Load prefixes first
 	rows, err := db.QueryContext(ctx, `SELECT cidr FROM ipam_prefixes ORDER BY cidr`)
 	if err == nil {
-		defer rows.Close()
+		defer func() {
+			_ = rows.Close()
+		}()
 		for rows.Next() {
 			var cidr string
 			if err = rows.Scan(&cidr); err != nil {
@@ -40,7 +41,9 @@ func NewIPAMRepository(ctx context.Context, db *sql.DB) (*IPAMRepository, error)
 	// Load allocated IPs and mark them as used in the engine
 	ipRows, err := db.QueryContext(ctx, `SELECT prefix_cidr, ip FROM ipam_allocated_ips`)
 	if err == nil {
-		defer ipRows.Close()
+		defer func() {
+			_ = ipRows.Close()
+		}()
 		for ipRows.Next() {
 			var prefix, ip string
 			if err = ipRows.Scan(&prefix, &ip); err != nil {
@@ -76,7 +79,7 @@ func (r *IPAMRepository) EnsureRootPrefix(ctx context.Context, cidr string) (*ne
 		}
 	}
 	usage := p.Usage()
-	return &network.IPAMPrefix{CIDR: p.Cidr, ParentCIDR: "", UsableHosts: int(usage.AvailableIPs)}, nil
+	return &network.IPAMPrefix{CIDR: p.Cidr, ParentCIDR: "", UsableHosts: int(usage.AvailableIPs)}, nil // #nosec G115 - AvailableIPs fits in int
 }
 
 func (r *IPAMRepository) AcquireChildPrefix(ctx context.Context, parentCIDR string, prefixLen uint8) (*network.IPAMPrefix, error) {
@@ -95,7 +98,7 @@ func (r *IPAMRepository) AcquireChildPrefix(ctx context.Context, parentCIDR stri
 		return nil, fmt.Errorf("persist child prefix: %w", err)
 	}
 	usage := child.Usage()
-	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil
+	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil // #nosec G115 - AvailableIPs fits in int
 }
 
 func (r *IPAMRepository) AcquireSpecificChildPrefix(ctx context.Context, parentCIDR string, cidr string) (*network.IPAMPrefix, error) {
@@ -112,7 +115,7 @@ func (r *IPAMRepository) AcquireSpecificChildPrefix(ctx context.Context, parentC
 		return nil, fmt.Errorf("persist specific child: %w", err)
 	}
 	usage := child.Usage()
-	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil
+	return &network.IPAMPrefix{CIDR: child.Cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}, nil // #nosec G115 - AvailableIPs fits in int
 }
 
 func (r *IPAMRepository) ReleaseChildPrefix(ctx context.Context, cidr string) error {
@@ -145,7 +148,9 @@ func (r *IPAMRepository) ListChildPrefixes(ctx context.Context, parentCIDR strin
 	if err != nil {
 		return nil, fmt.Errorf("list child prefixes: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	out := make([]*network.IPAMPrefix, 0)
 	for rows.Next() {
 		var cidr string
@@ -155,7 +160,7 @@ func (r *IPAMRepository) ListChildPrefixes(ctx context.Context, parentCIDR strin
 		p, _ := r.engine.PrefixFrom(ctx, cidr)
 		if p != nil {
 			usage := p.Usage()
-			out = append(out, &network.IPAMPrefix{CIDR: cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)})
+			out = append(out, &network.IPAMPrefix{CIDR: cidr, ParentCIDR: parentCIDR, UsableHosts: int(usage.AvailableIPs)}) // #nosec G115 - AvailableIPs fits in int
 		} else {
 			out = append(out, &network.IPAMPrefix{CIDR: cidr, ParentCIDR: parentCIDR})
 		}
@@ -215,21 +220,3 @@ func (r *IPAMRepository) ReleaseIP(ctx context.Context, cidr string, ip string) 
 
 // Ensure interface compliance
 var _ ipam.Repository = (*IPAMRepository)(nil)
-
-// Utility: compute usable hosts (approx) for CIDR
-func usableHosts(cidr string) int {
-	_, ipNet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return 0
-	}
-	ones, bits := ipNet.Mask.Size()
-	hostBits := bits - ones
-	if hostBits <= 1 {
-		return 0
-	}
-	// IPv4 only assumption for now
-	if bits != 32 {
-		return 0
-	}
-	return (1 << hostBits) - 2
-}

@@ -1,0 +1,26 @@
+name: Trigger Dependabot
+
+on:
+  workflow_dispatch:
+    inputs:
+      ecosystem:
+        description: 'Package ecosystem to update (leave empty for all)'
+        required: false
+        type: choice
+        options:
+          - 'all'
+          - 'gomod'
+          - 'npm'
+          - 'docker'
+          - 'github-actions'
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Dependabot
+        run: |
+          echo "Triggering Dependabot for ${{ inputs.ecosystem || 'all' }} ecosystems"
+          echo "Note: Dependabot will run automatically based on the schedule in dependabot.yml"
+          echo "To manually trigger, go to: Insights > Dependency graph > Dependabot"
+          echo "Or use: gh api -X POST /repos/${{ github.repository }}/dependabot/updates"

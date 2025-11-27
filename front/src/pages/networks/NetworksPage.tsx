@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faNetworkWired, faPencil, faTrash } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
@@ -27,11 +27,7 @@ export default function NetworksPage() {
   const pageSize = 20;
   const debouncedFilter = useDebounce(filter, 500);
 
-  useEffect(() => {
-    loadNetworks();
-  }, [page, debouncedFilter]);
-
-  const loadNetworks = async () => {
+  const loadNetworks = useCallback(async () => {
     setLoading(true);
     try {
       const response = await api.getNetworks(page, pageSize, debouncedFilter);
@@ -44,7 +40,11 @@ export default function NetworksPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, debouncedFilter]);
+
+  useEffect(() => {
+    void loadNetworks();
+  }, [loadNetworks]);
 
   const handleNetworkClick = (network: Network) => {
     setSelectedNetwork(network);

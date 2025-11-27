@@ -95,8 +95,9 @@ func (cp *CaptivePortal) ClearWhitelist() {
 func (cp *CaptivePortal) Start() error {
 	// Start HTTP proxy
 	cp.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", cp.httpPort),
-		Handler: http.HandlerFunc(cp.handleHTTP),
+		Addr:              fmt.Sprintf(":%d", cp.httpPort),
+		Handler:           http.HandlerFunc(cp.handleHTTP),
+		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
 
 	// Start HTTP server
@@ -233,7 +234,9 @@ func (cp *CaptivePortal) getCaptiveTokenForPeer(peerIP string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch captive portal token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("failed to fetch captive portal token: status %d", resp.StatusCode)
