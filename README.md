@@ -44,6 +44,7 @@ Wirety is a **next-generation WireGuard orchestration platform** that brings dyn
 | **🔥 NAT & Firewall** | Automatic NAT configuration and firewall rules |
 | **📊 Real-time Monitoring** | WebSocket-based live network status |
 | **🔐 Enterprise Auth** | OIDC/OAuth2 support (Keycloak, Dex, etc.) |
+| **🌐 Captive Portal** | Web-based authentication for basic WireGuard peers with internet access control |
 
 ### Security Features
 
