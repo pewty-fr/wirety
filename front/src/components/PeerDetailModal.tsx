@@ -215,11 +215,12 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                     setConfigLoading(true);
                     setConfigError(null);
                     try {
-                      if (!configText) {
-                        const cfg = await api.getPeerConfig(peer.network_id, peer.id);
+                      let cfg = configText;
+                      if (!cfg) {
+                        cfg = await api.getPeerConfig(peer.network_id, peer.id);
                         setConfigText(cfg);
                       }
-                      await navigator.clipboard.writeText(configText!);
+                      await navigator.clipboard.writeText(cfg);
                       setConfigCopied(true);
                       setTimeout(() => setConfigCopied(false), 3000);
                     } catch (e) {
@@ -238,25 +239,23 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                   onClick={async () => {
                     if (!peer.network_id) return;
                     setConfigError(null);
+                    setConfigLoading(true);
                     try {
-                      if (!configText) {
-                        setConfigLoading(true);
-                        const cfg = await api.getPeerConfig(peer.network_id, peer.id);
+                      let cfg = configText;
+                      if (!cfg) {
+                        cfg = await api.getPeerConfig(peer.network_id, peer.id);
                         setConfigText(cfg);
-                        setConfigLoading(false);
                       }
-                      if (configText) {
-                        const blob = new Blob([configText], { type: 'text/plain' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        
-                        a.download = `${peer.network_name}.conf`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                      }
+                      const blob = new Blob([cfg], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      
+                      a.download = `${peer.network_name}.conf`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
                     } catch (e) {
                       const error = e as { message?: string };
                       setConfigError(error?.message || 'Failed to download config');
@@ -266,7 +265,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                   }}
                   className="px-4 py-2 text-sm font-semibold bg-gradient-to-r from-green-600 to-accent-green text-white rounded-lg hover:scale-105 active:scale-95 disabled:opacity-50 transition-all"
                 >
-                  {configLoading && !configCopied && !configText ? 'Fetching...' : 'Download .conf'}
+                  {configLoading ? 'Fetching...' : 'Download .conf'}
                 </button>
               </div>
               {configError && <p className="text-xs text-red-600">{configError}</p>}

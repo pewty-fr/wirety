@@ -117,7 +117,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(`Failed to fetch auth config: ${response.status}`);
       }
       const config = await response.json();
-      console.log('Auth config loaded:', config);
       setAuthConfig(config);
     } catch (error) {
       console.error('Failed to fetch auth config:', error);
