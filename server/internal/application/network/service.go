@@ -61,6 +61,7 @@ func (s *Service) CreateNetwork(ctx context.Context, req *network.NetworkCreateR
 		ACL:       &network.ACL{Enabled: false, BlockedPeers: make(map[string]bool)},
 		CreatedAt: now,
 		UpdatedAt: now,
+		DNS:       req.DNS,
 	}
 
 	if err := s.repo.CreateNetwork(ctx, net); err != nil {

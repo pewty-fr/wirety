@@ -29,6 +29,10 @@ func (r *NetworkRepository) CreateNetwork(ctx context.Context, n *network.Networ
 	now := time.Now()
 	n.CreatedAt = now
 	n.UpdatedAt = now
+	// Ensure DNS is never nil to avoid database constraint violation
+	if n.DNS == nil {
+		n.DNS = []string{}
+	}
 	_, err := r.db.ExecContext(ctx, `INSERT INTO networks (id,name,cidr,dns,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6)`,
 		n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.CreatedAt, n.UpdatedAt)
 	if err != nil {
@@ -82,6 +86,10 @@ func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*
 
 func (r *NetworkRepository) UpdateNetwork(ctx context.Context, n *network.Network) error {
 	n.UpdatedAt = time.Now()
+	// Ensure DNS is never nil to avoid database constraint violation
+	if n.DNS == nil {
+		n.DNS = []string{}
+	}
 	_, err := r.db.ExecContext(ctx, `UPDATE networks SET name=$2,cidr=$3,dns=$4,updated_at=$5 WHERE id=$1`, n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update network: %w", err)
