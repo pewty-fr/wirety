@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faUser, faUsers, faCog } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
@@ -18,22 +18,20 @@ export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   useEffect(() => {
-    loadCurrentUser();
+    const loadCurrentUser = async () => {
+      try {
+        const userData = await api.getCurrentUser();
+        setCurrentUser(userData);
+      } catch (error) {
+        console.error('Failed to load current user:', error);
+      }
+    };
+    void loadCurrentUser();
   }, []);
-
-  const loadCurrentUser = async () => {
-    try {
-      const userData = await api.getCurrentUser();
-      setCurrentUser(userData);
-    } catch (error) {
-      console.error('Failed to load current user:', error);
-    }
-  };
 
   const pageSize = 20;
 
-  useEffect(() => {
-    const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     setLoading(true);
     try {
       const response = await api.getUsers(page, pageSize);
@@ -47,10 +45,11 @@ export default function UsersPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-    loadUsers();
   }, [page]);
+
+  useEffect(() => {
+    void loadUsers();
+  }, [loadUsers]);
 
   const handleUserClick = (user: User) => {
     setSelectedUser(user);

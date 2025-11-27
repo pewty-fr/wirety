@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faShieldHalved } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
@@ -30,8 +30,7 @@ export default function SecurityPage() {
     setPage(1);
   }, [filterNetwork, filterPeer, filterStatus]);
 
-  useEffect(() => {
-    const loadIncidents = async () => {
+  const loadIncidents = useCallback(async () => {
     setLoading(true);
     try {
       const resolved = filterStatus === 'all' ? undefined : filterStatus === 'resolved';
@@ -45,10 +44,11 @@ export default function SecurityPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, filterStatus]);
 
-    loadIncidents();
-  }, [page, filterStatus, filterNetwork, filterPeer]);
+  useEffect(() => {
+    void loadIncidents();
+  }, [loadIncidents]);
 
   // Get unique peers from incidents for filter dropdown (filtered by network if selected)
   const uniquePeers = useMemo(() => {
