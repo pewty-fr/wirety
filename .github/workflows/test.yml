@@ -34,7 +34,7 @@ jobs:
           args: --timeout=30m
       
       - name: Go security
-        uses: securego/gosec@v2.22.10
+        uses: securego/gosec@master
         with:
           args: ./agent/...
       
@@ -66,7 +66,7 @@ jobs:
           args: --timeout=30m
       
       - name: Go security
-        uses: securego/gosec@v2.22.10
+        uses: securego/gosec@master
         with:
           args: ./server/...
       
