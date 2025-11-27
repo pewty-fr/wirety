@@ -29,8 +29,8 @@ jobs:
       
       - name: Go lint
         uses: golangci/golangci-lint-action@v9
-        working-directory: agent
         with:
+          working-directory: agent
           args: --timeout=30m
       
       - name: Go security
@@ -61,8 +61,8 @@ jobs:
       
       - name: Go lint
         uses: golangci/golangci-lint-action@v9
-        working-directory: server
         with:
+          working-directory: server
           args: --timeout=30m
       
       - name: Go security
