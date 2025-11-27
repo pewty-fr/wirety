@@ -16,7 +16,7 @@ jobs:
       run:
         working-directory: ./agent
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - uses: actions/setup-go@v5
         with:
@@ -47,7 +47,7 @@ jobs:
       run:
         working-directory: ./server
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - uses: actions/setup-go@v5
         with:
@@ -78,7 +78,7 @@ jobs:
       run:
         working-directory: ./front
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - uses: actions/setup-node@v4
         with:
@@ -99,7 +99,7 @@ jobs:
       run:
         working-directory: ./doc/website
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - uses: actions/setup-node@v4
         with:
@@ -117,7 +117,7 @@ jobs:
     name: Lint Helm Chart
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Set up Helm
         uses: azure/setup-helm@v4

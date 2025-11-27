@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: xt0rted/pull-request-comment-branch@v2
         id: comment_branch
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.comment_branch.outputs.head_ref }}
       - run: |
@@ -73,7 +73,7 @@ jobs:
     steps:
       - uses: xt0rted/pull-request-comment-branch@v2
         id: comment_branch
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.comment_branch.outputs.head_ref }}
       - run: |
@@ -132,7 +132,7 @@ jobs:
     steps:
       - uses: xt0rted/pull-request-comment-branch@v2
         id: comment_branch
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.comment_branch.outputs.head_ref }}
       - run: |
@@ -167,7 +167,7 @@ jobs:
     steps:
       - uses: xt0rted/pull-request-comment-branch@v2
         id: comment_branch
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.comment_branch.outputs.head_ref }}
       - run: |
@@ -205,7 +205,7 @@ jobs:
     steps:
       - uses: xt0rted/pull-request-comment-branch@v2
         id: comment_branch
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.comment_branch.outputs.head_ref }}
       - run: |
