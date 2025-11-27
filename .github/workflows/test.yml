@@ -67,7 +67,6 @@ jobs:
       
       - name: Go security
         uses: securego/gosec@v2.22.10
-        wor
         with:
           args: ./server/...
       
