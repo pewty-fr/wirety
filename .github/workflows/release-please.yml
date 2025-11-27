@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Get token
         id: get_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v2
         with:
           owner: ${{ github.repository_owner }}
           app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
