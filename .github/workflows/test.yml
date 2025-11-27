@@ -29,13 +29,14 @@ jobs:
       
       - name: Go lint
         uses: golangci/golangci-lint-action@v9
+        working-directory: agent
         with:
           args: --timeout=30m
       
       - name: Go security
         uses: securego/gosec@v2.22.10
         with:
-          args: ./...
+          args: ./agent/...
       
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
@@ -60,13 +61,15 @@ jobs:
       
       - name: Go lint
         uses: golangci/golangci-lint-action@v9
+        working-directory: server
         with:
           args: --timeout=30m
       
       - name: Go security
         uses: securego/gosec@v2.22.10
+        wor
         with:
-          args: ./...
+          args: ./server/...
       
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
