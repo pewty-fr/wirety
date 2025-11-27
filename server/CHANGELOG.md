@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/pewty-fr/wirety/compare/wirety-server/v1.2.0...wirety-server/v1.2.1) (2025-11-27)
+
+
+### Bug Fixes
+
+* network creation ([a20fc7d](https://github.com/pewty-fr/wirety/commit/a20fc7d6d929c4df713447c47dc6a3b905b1340c))
+
 ## [1.2.0](https://github.com/pewty-fr/wirety/compare/wirety-server/v1.1.4...wirety-server/v1.2.0) (2025-11-27)
 
 
