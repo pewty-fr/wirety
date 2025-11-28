@@ -11,6 +11,8 @@ export default function IPAMPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [allocatedCount, setAllocatedCount] = useState(0);
+  const [availableCount, setAvailableCount] = useState(0);
   const [filter, setFilter] = useState('');
 
   const pageSize = 50;
@@ -23,10 +25,36 @@ export default function IPAMPage() {
       const response = await api.getIPAMAllocations(page, pageSize, debouncedFilter);
       setAllocations(response.data || []);
       setTotal(response.total || 0);
+      
+      // Calculate allocated and available counts from current page
+      const pageAllocated = (response.data || []).filter(a => a.allocated).length;
+      const pageAvailable = (response.data || []).filter(a => !a.allocated).length;
+      
+      // If we're on the first page, also fetch all data to get accurate counts
+      if (page === 1 && !debouncedFilter) {
+        try {
+          // Fetch a large page to get all allocations for counting
+          const allResponse = await api.getIPAMAllocations(1, 10000, '');
+          const allAllocated = (allResponse.data || []).filter(a => a.allocated).length;
+          const allAvailable = (allResponse.data || []).filter(a => !a.allocated).length;
+          setAllocatedCount(allAllocated);
+          setAvailableCount(allAvailable);
+        } catch {
+          // Fallback to page counts if full fetch fails
+          setAllocatedCount(pageAllocated);
+          setAvailableCount(pageAvailable);
+        }
+      } else if (page === 1) {
+        // For filtered results, use the page counts
+        setAllocatedCount(pageAllocated);
+        setAvailableCount(pageAvailable);
+      }
     } catch (error) {
       console.error('Failed to load IPAM allocations:', error);
       setAllocations([]);
       setTotal(0);
+      setAllocatedCount(0);
+      setAvailableCount(0);
     } finally {
       setLoading(false);
     }
@@ -36,8 +64,6 @@ export default function IPAMPage() {
   }, [page, debouncedFilter]);
 
   const totalPages = Math.ceil(total / pageSize);
-  const allocatedCount = allocations.filter(a => a.allocated).length;
-  const availableCount = allocations.filter(a => !a.allocated).length;
 
   return (
     <div>

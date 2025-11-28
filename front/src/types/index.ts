@@ -22,7 +22,6 @@ export interface Peer {
   address: string;
   endpoint: string;
   listen_port?: number;
-  additional_allowed_ips?: string[];
   token?: string;
   is_jump: boolean;
   use_agent: boolean;
@@ -164,7 +163,7 @@ export interface PolicyRule {
   direction: 'input' | 'output';
   action: 'allow' | 'deny';
   target: string;
-  target_type: 'cidr' | 'peer' | 'group';
+  target_type: 'cidr' | 'peer' | 'group' | 'route';
   description: string;
 }
 

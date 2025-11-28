@@ -275,93 +275,121 @@ func (s *Service) GetDefaultTemplates() []PolicyTemplate {
 }
 
 // GenerateIPTablesRules generates iptables rules for a jump peer based on all policies affecting it
+// Rules are generated per-peer for the FORWARD chain since the jump peer routes traffic
 func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
 	// Verify jump peer exists
-	peer, err := s.peerRepo.GetPeer(ctx, networkID, jumpPeerID)
+	jumpPeer, err := s.peerRepo.GetPeer(ctx, networkID, jumpPeerID)
 	if err != nil {
 		return nil, fmt.Errorf("jump peer not found: %w", err)
 	}
 
-	if !peer.IsJump {
+	if !jumpPeer.IsJump {
 		return nil, fmt.Errorf("peer is not a jump peer")
 	}
 
-	// Get all groups in the network
-	groups, err := s.groupRepo.ListGroups(ctx, networkID)
+	// Get all peers in the network
+	allPeers, err := s.peerRepo.ListPeers(ctx, networkID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list groups: %w", err)
-	}
-
-	// Collect all policies from all groups
-	policyMap := make(map[string]*network.Policy)
-	var orderedPolicies []*network.Policy
-
-	for _, group := range groups {
-		policies, err := s.policyRepo.GetPoliciesForGroup(ctx, networkID, group.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get policies for group %s: %w", group.ID, err)
-		}
-
-		for _, policy := range policies {
-			// Avoid duplicates
-			if _, exists := policyMap[policy.ID]; !exists {
-				policyMap[policy.ID] = policy
-				orderedPolicies = append(orderedPolicies, policy)
-			}
-		}
+		return nil, fmt.Errorf("failed to list peers: %w", err)
 	}
 
 	// Generate iptables rules
 	var rules []string
 
-	// Add rules from each policy
-	for _, policy := range orderedPolicies {
-		for _, rule := range policy.Rules {
-			iptablesRule := s.generateIPTablesRule(rule, networkID)
-			if iptablesRule != "" {
-				rules = append(rules, iptablesRule)
+	// Generate rules for each regular peer (non-jump peers)
+	for _, peer := range allPeers {
+		if peer.IsJump {
+			continue // Skip jump peers
+		}
+
+		// Get groups this peer belongs to
+		groups, err := s.groupRepo.GetPeerGroups(ctx, networkID, peer.ID)
+		if err != nil {
+			// If we can't get groups, skip this peer
+			continue
+		}
+
+		// Collect all policies from peer's groups
+		policyMap := make(map[string]*network.Policy)
+		for _, group := range groups {
+			policies, err := s.policyRepo.GetPoliciesForGroup(ctx, networkID, group.ID)
+			if err != nil {
+				continue
+			}
+
+			for _, policy := range policies {
+				// Avoid duplicates
+				if _, exists := policyMap[policy.ID]; !exists {
+					policyMap[policy.ID] = policy
+				}
+			}
+		}
+
+		// Generate rules for this peer based on their policies
+		for _, policy := range policyMap {
+			for _, rule := range policy.Rules {
+				peerRules := s.generateIPTablesRulesForPeer(peer.Address, rule)
+				rules = append(rules, peerRules...)
 			}
 		}
 	}
 
-	// Add default deny rules at the end
-	rules = append(rules, "iptables -A INPUT -j DROP")
-	rules = append(rules, "iptables -A OUTPUT -j DROP")
+	// Add default deny rule at the end for FORWARD chain
+	rules = append(rules, "iptables -A FORWARD -j DROP")
 
 	return rules, nil
 }
 
-// generateIPTablesRule converts a policy rule to an iptables command
-func (s *Service) generateIPTablesRule(rule network.PolicyRule, networkID string) string {
-	// Determine the chain based on direction
-	chain := "INPUT"
-	if rule.Direction == "output" {
-		chain = "OUTPUT"
-	}
+// generateIPTablesRulesForPeer converts a policy rule to iptables commands for a specific peer
+// Since the jump peer routes traffic, we use FORWARD chain rules with the peer's IP
+func (s *Service) generateIPTablesRulesForPeer(peerIP string, rule network.PolicyRule) []string {
+	var rules []string
 
-	// Determine the target based on action
-	target := "ACCEPT"
-	if rule.Action == "deny" {
-		target = "DROP"
-	}
-
-	// Build the iptables rule based on target type
+	// Build the iptables rules based on target type
 	switch rule.TargetType {
 	case "cidr":
-		// For CIDR targets, use source/destination based on direction
+		// For CIDR targets, generate FORWARD rules
 		if rule.Direction == "input" {
-			return fmt.Sprintf("iptables -A %s -s %s -j %s", chain, rule.Target, target)
+			// "input" means traffic coming TO the peer (peer is receiving)
+			// This translates to:
+			// 1. Allow traffic FROM peer TO destination (outbound from peer's perspective)
+			// 2. Allow return traffic FROM destination TO peer (established connections)
+
+			if rule.Action == "allow" {
+				// Outbound: peer → destination
+				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -s %s -d %s -j ACCEPT", peerIP, rule.Target))
+
+				// Return traffic: destination → peer (established connections only)
+				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -d %s -s %s -m state --state RELATED,ESTABLISHED -j ACCEPT", peerIP, rule.Target))
+			} else {
+				// Deny inbound from destination to peer
+				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -s %s -d %s -j DROP", rule.Target, peerIP))
+			}
+		} else if rule.Direction == "output" {
+			// "output" means traffic going FROM the peer (peer is sending)
+			// This translates to:
+			// 1. Control traffic FROM peer TO destination
+
+			if rule.Action == "allow" {
+				// Allow outbound: peer → destination
+				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -s %s -d %s -j ACCEPT", peerIP, rule.Target))
+
+				// Allow return traffic: destination → peer (established connections only)
+				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -d %s -s %s -m state --state RELATED,ESTABLISHED -j ACCEPT", peerIP, rule.Target))
+			} else {
+				// Deny outbound: peer → destination
+				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -s %s -d %s -j DROP", peerIP, rule.Target))
+			}
 		}
-		return fmt.Sprintf("iptables -A %s -d %s -j %s", chain, rule.Target, target)
 	case "peer":
 		// For peer targets, we would need to resolve the peer IP
-		// This is a simplified version - in production, you'd look up the peer's IP
-		return fmt.Sprintf("# Peer-based rule for peer %s (requires IP resolution)", rule.Target)
+		// TODO: Implement peer IP resolution
+		rules = append(rules, fmt.Sprintf("# Peer-based rule for peer %s (requires IP resolution)", rule.Target))
 	case "group":
 		// For group targets, we would need to resolve all peer IPs in the group
-		// This is a simplified version - in production, you'd look up all group member IPs
-		return fmt.Sprintf("# Group-based rule for group %s (requires IP resolution)", rule.Target)
-	default:
-		return ""
+		// TODO: Implement group member IP resolution
+		rules = append(rules, fmt.Sprintf("# Group-based rule for group %s (requires IP resolution)", rule.Target))
 	}
+
+	return rules
 }

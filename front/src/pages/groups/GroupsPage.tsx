@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faUsers, faPencil, faTrash, faUserPlus, faUserMinus, faShieldAlt, faRoute } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
+import SearchableSelect from '../../components/SearchableSelect';
 import api from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
 import type { Group, Network, Peer, Policy, Route } from '../../types';
@@ -120,23 +121,22 @@ export default function GroupsPage() {
       />
 
       <div className="p-8">
-        {/* Network Selector */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Select Network
-          </label>
-          <select
-            value={selectedNetworkId}
-            onChange={(e) => setSelectedNetworkId(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-          >
-            <option value="">Select a network...</option>
-            {networks.map((network) => (
-              <option key={network.id} value={network.id}>
-                {network.name} ({network.cidr})
-              </option>
-            ))}
-          </select>
+        {/* Network Filter */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Network</label>
+              <SearchableSelect
+                options={useMemo(() => networks.map(network => ({
+                  value: network.id,
+                  label: `${network.name} (${network.cidr})`
+                })), [networks])}
+                value={selectedNetworkId}
+                onChange={setSelectedNetworkId}
+                placeholder="Select a network..."
+              />
+            </div>
+          </div>
         </div>
 
         {/* Groups List */}
@@ -312,8 +312,20 @@ function GroupModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      {/* Backdrop with blur */}
+      <div 
+        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div 
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all border-2 border-primary-300 dark:border-primary-700"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
           {group ? 'Edit Group' : 'Create Group'}
         </h2>
@@ -360,6 +372,8 @@ function GroupModal({
             </button>
           </div>
         </form>
+        </div>
+      </div>
       </div>
     </div>
   );
@@ -504,13 +518,32 @@ function GroupDetailModal({
   if (!isOpen || !group) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      {/* Backdrop with blur */}
+      <div 
+        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div 
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-4xl transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
         <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{group.name}</h2>
-          {group.description && (
-            <p className="text-gray-600 dark:text-gray-400 mt-1">{group.description}</p>
-          )}
+          <div className="flex items-start gap-4">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
+              <FontAwesomeIcon icon={faUsers} className="text-2xl text-white" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{group.name}</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {group.id}</p>
+              {group.description && (
+                <p className="text-gray-600 dark:text-gray-400 mt-1">{group.description}</p>
+              )}
+            </div>
+          </div>
         </div>
 
         {loading ? (
@@ -647,6 +680,7 @@ function GroupDetailModal({
             Close
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

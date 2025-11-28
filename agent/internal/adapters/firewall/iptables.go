@@ -287,10 +287,10 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 
 	// Default deny rule at the end for policy-based access control
 	// This ensures that any traffic not explicitly allowed by policies is denied
-	_ = a.run("-A", chain, "-i", a.iface, "-j", "DROP")
-	_ = a.run("-A", chain, "-o", a.iface, "-j", "DROP")
+	// Note: The server generates the final "iptables -A FORWARD -j DROP" rule
+	// which will be applied to our custom chain
 
-	log.Debug().Msg("applied default deny rules for policy-based access control")
+	log.Debug().Msg("applied policy-based iptables rules")
 
 	// Attach chain to FORWARD (insert at top, only if not already attached)
 	_ = a.runIfNotExists("-I", "FORWARD", "1", "-j", chain)

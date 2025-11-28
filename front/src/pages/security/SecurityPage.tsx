@@ -85,17 +85,19 @@ export default function SecurityPage() {
     })), [uniquePeers]
   );
 
-  // Filter incidents based on selected filters
+  // Filter and sort incidents based on selected filters (most recent first)
   const filteredIncidents = useMemo(() => {
-    return incidents.filter(incident => {
-      if (filterNetwork && incident.network_id !== filterNetwork) {
-        return false;
-      }
-      if (filterPeer && incident.peer_id !== filterPeer) {
-        return false;
-      }
-      return true;
-    });
+    return incidents
+      .filter(incident => {
+        if (filterNetwork && incident.network_id !== filterNetwork) {
+          return false;
+        }
+        if (filterPeer && incident.peer_id !== filterPeer) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime());
   }, [incidents, filterNetwork, filterPeer]);
 
   const handleFilterChange = (status: FilterStatus) => {
