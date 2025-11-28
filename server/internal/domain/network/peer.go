@@ -5,7 +5,7 @@ import "time"
 // Peer represents a network participant in the WireGuard mesh
 // Two types of peers exist:
 // - Jump peers: Act as hubs routing traffic for regular peers
-// - Regular peers: Connect through jump peers, can be isolated or fully encapsulated
+// - Regular peers: Connect through jump peers
 type Peer struct {
 	ID                   string    `json:"id"`
 	Name                 string    `json:"name"`
@@ -17,10 +17,9 @@ type Peer struct {
 	AdditionalAllowedIPs []string  `json:"additional_allowed_ips,omitempty"` // Additional IPs this peer can route to
 	Token                string    `json:"token,omitempty"`                  // Agent enrollment token (secret)
 	IsJump               bool      `json:"is_jump"`                          // Whether this peer acts as a jump server (hub)
-	IsIsolated           bool      `json:"is_isolated"`                      // Regular peers only: isolated from other peers
-	FullEncapsulation    bool      `json:"full_encapsulation"`               // Regular peers only: route all traffic (0.0.0.0/0) through jump
 	UseAgent             bool      `json:"use_agent"`                        // Whether this peer uses the agent (dynamic) or static config
 	OwnerID              string    `json:"owner_id,omitempty"`               // User ID who owns this peer (empty for admin-created peers)
+	GroupIDs             []string  `json:"group_ids"`                        // Groups this peer belongs to
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }
@@ -39,8 +38,6 @@ type PeerCreateRequest struct {
 	Endpoint             string   `json:"endpoint,omitempty"`
 	ListenPort           int      `json:"listen_port,omitempty"`
 	IsJump               bool     `json:"is_jump"`
-	IsIsolated           bool     `json:"is_isolated"`
-	FullEncapsulation    bool     `json:"full_encapsulation"`
 	UseAgent             bool     `json:"use_agent"`
 	AdditionalAllowedIPs []string `json:"additional_allowed_ips,omitempty"`
 }
@@ -50,8 +47,6 @@ type PeerUpdateRequest struct {
 	Name                 string   `json:"name,omitempty"`
 	Endpoint             string   `json:"endpoint,omitempty"`
 	ListenPort           int      `json:"listen_port,omitempty"`
-	IsIsolated           bool     `json:"is_isolated"`
-	FullEncapsulation    bool     `json:"full_encapsulation"`
 	AdditionalAllowedIPs []string `json:"additional_allowed_ips,omitempty"`
 	OwnerID              string   `json:"owner_id,omitempty"` // Admin can change owner
 }

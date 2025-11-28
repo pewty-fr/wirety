@@ -17,8 +17,12 @@ import (
 	"wirety/internal/adapters/db/memory"
 	pgrepo "wirety/internal/adapters/db/postgres"
 	appauth "wirety/internal/application/auth"
+	appdns "wirety/internal/application/dns"
+	appgroup "wirety/internal/application/group"
 	"wirety/internal/application/ipam"
 	appnetwork "wirety/internal/application/network"
+	apppolicy "wirety/internal/application/policy"
+	approute "wirety/internal/application/route"
 	"wirety/internal/config"
 	domainauth "wirety/internal/domain/auth"
 	domainipam "wirety/internal/domain/ipam"
@@ -63,10 +67,16 @@ func main() {
 	var networkRepo domainnetwork.Repository
 	var ipamRepo domainipam.Repository
 	var userRepo domainauth.Repository
+	var groupRepo domainnetwork.GroupRepository
+	var policyRepo domainnetwork.PolicyRepository
+	var routeRepo domainnetwork.RouteRepository
+	var dnsRepo domainnetwork.DNSRepository
+	var db *sql.DB
 
 	if cfg.Database.Enabled {
 		log.Info().Str("dsn", cfg.Database.DSN).Msg("Initializing Postgres repositories")
-		db, err := sql.Open("postgres", cfg.Database.DSN)
+		var err error
+		db, err = sql.Open("postgres", cfg.Database.DSN)
 		if err != nil {
 			log.Fatal().Err(err).Msg("open postgres")
 		}
@@ -89,15 +99,24 @@ func main() {
 			log.Fatal().Err(ipErr).Msg("init ipam repository")
 		}
 		userRepo = pgrepo.NewUserRepository(db)
+		groupRepo = pgrepo.NewGroupRepository(db)
+		policyRepo = pgrepo.NewPolicyRepository(db)
+		routeRepo = pgrepo.NewRouteRepository(db)
+		dnsRepo = pgrepo.NewDNSRepository(db)
 	} else {
 		log.Warn().Msg("DB disabled - using in-memory repositories")
 		networkRepo = memory.NewRepository()
 		ipamRepo = memory.NewIPAMRepository(context.Background())
 		userRepo = memory.NewUserRepository()
+		// TODO: Implement in-memory group repository
+		groupRepo = nil
+		policyRepo = nil
+		routeRepo = nil
+		dnsRepo = nil
 	}
 
 	// Initialize services
-	networkService := appnetwork.NewService(networkRepo, ipamRepo)
+	networkService := appnetwork.NewService(networkRepo, ipamRepo, userRepo, groupRepo, routeRepo, dnsRepo)
 	ipamService := ipam.NewService(ipamRepo)
 
 	var authService *appauth.Service
@@ -108,8 +127,34 @@ func main() {
 		log.Warn().Msg("Authentication disabled - running in open mode with admin permissions")
 	}
 
+	// Initialize group service
+	var groupService *appgroup.Service
+	if groupRepo != nil {
+		groupService = appgroup.NewService(groupRepo, networkRepo)
+	}
+
+	// Initialize policy service
+	var policyService api.PolicyService
+	if policyRepo != nil {
+		policyServiceImpl := apppolicy.NewService(policyRepo, groupRepo, networkRepo)
+		policyService = api.NewPolicyServiceAdapter(policyServiceImpl)
+	}
+
+	// Initialize route service
+	var routeService api.RouteService
+	if routeRepo != nil {
+		routeService = approute.NewService(routeRepo, groupRepo, networkRepo)
+	}
+
+	// Initialize DNS service
+	var dnsService api.DNSService
+	if dnsRepo != nil {
+		dnsServiceImpl := appdns.NewService(dnsRepo, routeRepo, networkRepo)
+		dnsService = api.NewDNSServiceAdapter(dnsServiceImpl)
+	}
+
 	// Initialize API handler
-	handler := api.NewHandler(networkService, ipamService, authService, userRepo, &cfg.Auth)
+	handler := api.NewHandler(networkService, ipamService, authService, groupService, policyService, routeService, dnsService, groupRepo, userRepo, &cfg.Auth)
 
 	// Setup Gin router
 	gin.SetMode(gin.ReleaseMode)

@@ -8,6 +8,8 @@ import {
   faMapMarkerAlt, 
   faShieldAlt, 
   faUsers,
+  faUsersGear,
+  faRoute,
   faSun,
   faMoon,
   faDesktop,
@@ -21,13 +23,16 @@ import ProfileModal from './ProfileModal';
 import FooterBanner from './FooterBanner';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
 
-const navigation: { name: string; href: string; icon: IconDefinition }[] = [
+const navigation: { name: string; href: string; icon: IconDefinition; adminOnly?: boolean }[] = [
   { name: 'Dashboard', href: '/dashboard', icon: faChartLine },
   { name: 'Networks', href: '/networks', icon: faNetworkWired },
   { name: 'Peers', href: '/peers', icon: faServer },
+  { name: 'Groups', href: '/groups', icon: faUsersGear, adminOnly: true },
+  { name: 'Policies', href: '/policies', icon: faShieldAlt, adminOnly: true },
+  { name: 'Routes', href: '/routes', icon: faRoute, adminOnly: true },
   { name: 'IPAM', href: '/ipam', icon: faMapMarkerAlt },
   { name: 'Security', href: '/security', icon: faShieldAlt },
-  { name: 'Users', href: '/users', icon: faUsers },
+  { name: 'Users', href: '/users', icon: faUsers, adminOnly: true },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -41,7 +46,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   // Filter navigation items based on user role
   const visibleNavigation = navigation.filter(item => {
-    if (item.href === '/users' && !isAdmin) {
+    if (item.adminOnly && !isAdmin) {
       return false;
     }
     return true;

@@ -181,16 +181,18 @@ func envOr(k, def string) string {
 // sanitizeInterfaceName converts a peer name to a valid WireGuard interface name
 // Interface names must be alphanumeric, underscore, or dash, max 15 chars
 func sanitizeInterfaceName(peerName string) string {
-	// Replace invalid characters with underscores
-	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	sanitized := re.ReplaceAllString(peerName, "_")
+	// Convert to lowercase for consistency first
+	sanitized := strings.ToLower(peerName)
 
-	// Convert to lowercase for consistency
-	sanitized = strings.ToLower(sanitized)
+	// Replace invalid characters with underscores
+	re := regexp.MustCompile(`[^a-z0-9_-]`)
+	sanitized = re.ReplaceAllString(sanitized, "_")
 
 	// Truncate to max 15 characters (Linux interface name limit)
 	if len(sanitized) > 15 {
 		sanitized = sanitized[:15]
+		// Remove trailing underscores or dashes after truncation
+		sanitized = strings.TrimRight(sanitized, "_-")
 	}
 
 	// If empty after sanitization, use default

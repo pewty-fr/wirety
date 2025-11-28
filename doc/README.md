@@ -19,10 +19,15 @@ doc/
 			incidents.md        # Security incident model
 			agent.md            # Agent usage and internals
 			server.md           # Server configuration & data
+			api-reference.md    # Complete API documentation
+			migration-guide.md  # Migration from legacy system
+			user-guide.md       # Step-by-step user guides
+			groups-policies-routes-overview.md  # New architecture overview
 			guides/             # Task-oriented guides
 				internet-access.md
 				isolate-peer.md
 				oidc.md
+				groups-management.md  # Groups management guide
 ```
 
 ## Local Development
@@ -47,6 +52,30 @@ npm run serve   # Preview production build
 ## Deployment
 
 Configure `url` and `baseUrl` in `docusaurus.config.js` to match your hosting environment. If using GitHub Pages, set `organizationName` and `projectName` appropriately and use `npm run deploy`.
+
+## New Documentation (v2.0)
+
+The following documentation has been added for the groups, policies, and routes architecture:
+
+### Core Documentation
+- **[Groups, Policies, Routes Overview](docs/groups-policies-routes-overview.md)** - High-level overview of the new architecture
+- **[API Reference](docs/api-reference.md)** - Complete API documentation for all endpoints
+- **[Migration Guide](docs/migration-guide.md)** - Migrate from legacy ACL and peer flag system
+- **[User Guide](docs/user-guide.md)** - Step-by-step guides for common tasks
+
+### Detailed Guides
+- **[Groups Management](docs/guides/groups-management.md)** - Comprehensive groups management guide
+
+### Key Changes in v2.0
+- ✅ Groups for organizing peers
+- ✅ Policies for iptables-based traffic filtering
+- ✅ Routes for external network access
+- ✅ DNS mappings for route networks
+- ✅ Default groups for automatic assignment
+- ❌ Legacy ACL system removed
+- ❌ Peer flags (is_isolated, full_encapsulation) removed
+
+**Migration Required:** See [Migration Guide](docs/migration-guide.md)
 
 ## Contributing
 

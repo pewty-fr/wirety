@@ -241,7 +241,10 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			}
 
 			if payload.Policy != nil && r.fwAdapter != nil {
-				log.Info().Int("peer_count", len(payload.Policy.Peers)).Msg("applying firewall policy")
+				log.Info().
+					Int("peer_count", len(payload.Policy.Peers)).
+					Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
+					Msg("applying firewall policy update")
 
 				// Update captive portal and TLS gateway with non-agent peers
 				nonAgentIPs := make([]string, 0)
@@ -263,10 +266,14 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					whitelistedIPs = []string{}
 				}
 
+				// Apply policy-based iptables rules atomically
+				// The Sync method flushes the chain and applies all rules in order
 				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, whitelistedIPs); err != nil {
-					log.Error().Err(err).Msg("failed applying firewall policy")
+					log.Error().Err(err).Msg("failed applying firewall policy update")
 				} else {
-					log.Debug().Msg("firewall policy applied")
+					log.Info().
+						Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
+						Msg("firewall policy update applied successfully")
 				}
 			}
 		}
