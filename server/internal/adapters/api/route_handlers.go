@@ -1,8 +1,10 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
+	appgroup "wirety/internal/application/group"
 	"wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
@@ -169,6 +171,19 @@ func (h *Handler) AttachRouteToGroup(c *gin.Context) {
 	routeID := c.Param("routeId")
 
 	if err := h.groupService.AttachRouteToGroup(c.Request.Context(), networkID, groupID, routeID); err != nil {
+		// Check if this is a circular routing error
+		var circularErr *appgroup.CircularRoutingError
+		if errors.As(err, &circularErr) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": circularErr.Message,
+				"details": gin.H{
+					"peer_id":   circularErr.PeerID,
+					"group_id":  circularErr.GroupID,
+					"route_ids": circularErr.RouteIDs,
+				},
+			})
+			return
+		}
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}

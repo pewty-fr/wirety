@@ -22,6 +22,11 @@ type WebSocketNotifier interface {
 	NotifyNetworkPeers(networkID string)
 }
 
+// WebSocketConnectionChecker is an interface for checking if a peer has an active WebSocket connection
+type WebSocketConnectionChecker interface {
+	IsConnected(networkID, peerID string) bool
+}
+
 // PolicyService interface for generating iptables rules
 type PolicyService interface {
 	GenerateIPTablesRules(ctx context.Context, networkID, jumpPeerID string) ([]string, error)
@@ -29,18 +34,24 @@ type PolicyService interface {
 
 // Service implements the business logic for network management
 type Service struct {
-	repo          FullRepository
-	authRepo      auth.Repository
-	groupRepo     network.GroupRepository
-	routeRepo     network.RouteRepository
-	dnsRepo       network.DNSRepository
-	policyService PolicyService
-	wsNotifier    WebSocketNotifier
+	repo                FullRepository
+	authRepo            auth.Repository
+	groupRepo           network.GroupRepository
+	routeRepo           network.RouteRepository
+	dnsRepo             network.DNSRepository
+	policyService       PolicyService
+	wsNotifier          WebSocketNotifier
+	wsConnectionChecker WebSocketConnectionChecker
 }
 
 // SetWebSocketNotifier sets the WebSocket notifier for the service
 func (s *Service) SetWebSocketNotifier(notifier WebSocketNotifier) {
 	s.wsNotifier = notifier
+}
+
+// SetWebSocketConnectionChecker sets the WebSocket connection checker for the service
+func (s *Service) SetWebSocketConnectionChecker(checker WebSocketConnectionChecker) {
+	s.wsConnectionChecker = checker
 }
 
 // ResolveAgentToken returns networkID, peer for a given enrollment token.
@@ -958,7 +969,12 @@ func (s *Service) GetPeerSessionStatus(ctx context.Context, networkID, peerID st
 		LastChecked:           now,
 	}
 
-	// Find active sessions
+	// Check if peer has an active WebSocket connection to the server
+	if s.wsConnectionChecker != nil {
+		status.HasActiveAgent = s.wsConnectionChecker.IsConnected(networkID, peerID)
+	}
+
+	// Find active sessions (for security incident detection)
 	var activeSessions []*network.AgentSession
 	for _, session := range sessions {
 		if session.LastSeen.After(activeThreshold) {
@@ -967,7 +983,6 @@ func (s *Service) GetPeerSessionStatus(ctx context.Context, networkID, peerID st
 	}
 
 	if len(activeSessions) > 0 {
-		status.HasActiveAgent = true
 		status.CurrentSession = activeSessions[0]
 	}
 

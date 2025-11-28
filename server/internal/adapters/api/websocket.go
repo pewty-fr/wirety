@@ -63,6 +63,18 @@ func (m *WebSocketManager) Unregister(networkID, peerID string) {
 	log.Info().Str("network_id", networkID).Str("peer_id", peerID).Msg("WebSocket connection unregistered")
 }
 
+// IsConnected checks if a peer has an active WebSocket connection
+func (m *WebSocketManager) IsConnected(networkID, peerID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if peers, exists := m.connections[networkID]; exists {
+		_, connected := peers[peerID]
+		return connected
+	}
+	return false
+}
+
 // HandleWebSocket handles WebSocket connections for peer configuration updates
 func (h *Handler) HandleWebSocket(c *gin.Context) {
 	networkID := c.Param("networkId")
