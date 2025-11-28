@@ -576,6 +576,7 @@ function AddRuleModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (targetType === 'route') setTargetType('cidr');
     onAdd({ direction, action, target_type: targetType, target, description });
     setDirection('input');
     setAction('allow');

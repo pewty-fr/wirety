@@ -26,28 +26,31 @@ export default function IPAMPage() {
       setAllocations(response.data || []);
       setTotal(response.total || 0);
       
-      // Calculate allocated and available counts from current page
-      const pageAllocated = (response.data || []).filter(a => a.allocated).length;
-      const pageAvailable = (response.data || []).filter(a => !a.allocated).length;
-      
-      // If we're on the first page, also fetch all data to get accurate counts
-      if (page === 1 && !debouncedFilter) {
-        try {
-          // Fetch a large page to get all allocations for counting
-          const allResponse = await api.getIPAMAllocations(1, 10000, '');
-          const allAllocated = (allResponse.data || []).filter(a => a.allocated).length;
-          const allAvailable = (allResponse.data || []).filter(a => !a.allocated).length;
-          setAllocatedCount(allAllocated);
-          setAvailableCount(allAvailable);
-        } catch {
-          // Fallback to page counts if full fetch fails
+      // Only update counts on first page to avoid resetting to 0
+      if (page === 1) {
+        // Calculate allocated and available counts from current page
+        const pageAllocated = (response.data || []).filter(a => a.allocated).length;
+        const pageAvailable = (response.data || []).filter(a => !a.allocated).length;
+        
+        // If no filter, fetch all data to get accurate counts
+        if (!debouncedFilter) {
+          try {
+            // Fetch a large page to get all allocations for counting
+            const allResponse = await api.getIPAMAllocations(1, 10000, '');
+            const allAllocated = (allResponse.data || []).filter(a => a.allocated).length;
+            const allAvailable = (allResponse.data || []).filter(a => !a.allocated).length;
+            setAllocatedCount(allAllocated);
+            setAvailableCount(allAvailable);
+          } catch {
+            // Fallback to page counts if full fetch fails
+            setAllocatedCount(pageAllocated);
+            setAvailableCount(pageAvailable);
+          }
+        } else {
+          // For filtered results, use the page counts
           setAllocatedCount(pageAllocated);
           setAvailableCount(pageAvailable);
         }
-      } else if (page === 1) {
-        // For filtered results, use the page counts
-        setAllocatedCount(pageAllocated);
-        setAvailableCount(pageAvailable);
       }
     } catch (error) {
       console.error('Failed to load IPAM allocations:', error);

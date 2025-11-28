@@ -413,15 +413,18 @@ function GroupDetailModal({
 
     setLoading(true);
     try {
+      // Refetch the group to get updated peer_ids, policy_ids, route_ids
+      const updatedGroup = await api.getGroup(networkId, group.id);
+      
       // Load all network peers
       const allPeers = await api.getAllNetworkPeers(networkId);
-      const groupPeerIds = new Set(group.peer_ids || []);
+      const groupPeerIds = new Set(updatedGroup.peer_ids || []);
       setPeers(allPeers.filter(p => groupPeerIds.has(p.id)));
       setAvailablePeers(allPeers.filter(p => !groupPeerIds.has(p.id)));
 
       // Load group policies and all network policies
       const [groupPolicies, allPolicies] = await Promise.all([
-        api.getGroupPolicies(networkId, group.id),
+        api.getGroupPolicies(networkId, updatedGroup.id),
         api.getPolicies(networkId),
       ]);
       setPolicies(groupPolicies);
@@ -430,7 +433,7 @@ function GroupDetailModal({
 
       // Load group routes and all network routes
       const [groupRoutes, allRoutes] = await Promise.all([
-        api.getGroupRoutes(networkId, group.id),
+        api.getGroupRoutes(networkId, updatedGroup.id),
         api.getRoutes(networkId),
       ]);
       setRoutes(groupRoutes);
