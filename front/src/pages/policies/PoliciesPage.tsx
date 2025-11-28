@@ -424,6 +424,7 @@ function PolicyDetailModal({
 
   const handleAddRule = async (rule: Omit<PolicyRule, 'id'>) => {
     if (!policy || !networkId) return;
+    if(rule.target_type=='route') rule.target_type = 'cidr';
     try {
       await api.addRuleToPolicy(networkId, policy.id, rule);
       const updatedPolicy = await api.getPolicy(networkId, policy.id);
@@ -576,7 +577,6 @@ function AddRuleModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (targetType === 'route') setTargetType('cidr');
     onAdd({ direction, action, target_type: targetType, target, description });
     setDirection('input');
     setAction('allow');
@@ -663,7 +663,7 @@ function AddRuleModal({
                 >
                   <option value="">Select a route...</option>
                   {routes.map((route) => (
-                    <option key={route.id} value={route.id}>
+                    <option key={route.id} value={route.destination_cidr}>
                       {route.name} ({route.destination_cidr})
                     </option>
                   ))}
