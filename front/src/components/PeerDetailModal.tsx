@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faServer, faLaptop, faRocket, faCopy } from '@fortawesome/free-solid-svg-icons';
 import Modal from './Modal';
@@ -25,6 +25,10 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
   const [configError, setConfigError] = useState<string | null>(null);
   const [configCopied, setConfigCopied] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
+  const [groups, setGroups] = useState<any[]>([]);
+  const [policies, setPolicies] = useState<any[]>([]);
+  const [routes, setRoutes] = useState<any[]>([]);
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const { user } = useAuth();
 
   // Get owner name from users list
@@ -47,6 +51,64 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     isOpen && !!peer?.network_id
   );
 
+  // Determine which peer data to display
+  const displayPeer = currentPeer || peer;
+
+  // Load groups, policies, and routes for this peer
+  useEffect(() => {
+    const loadPeerDetails = async () => {
+      if (!isOpen || !peer?.network_id || !displayPeer || !displayPeer.group_ids || displayPeer.group_ids.length === 0) {
+        setGroups([]);
+        setPolicies([]);
+        setRoutes([]);
+        return;
+      }
+
+      setLoadingDetails(true);
+      try {
+        // Fetch all groups for the network
+        const allGroups = await api.getGroups(peer.network_id);
+        
+        // Filter to only groups this peer belongs to
+        const peerGroups = allGroups.filter((g: any) => displayPeer.group_ids?.includes(g.id));
+        setGroups(peerGroups);
+
+        // Collect all unique policy IDs and route IDs from peer's groups
+        const policyIds = new Set<string>();
+        const routeIds = new Set<string>();
+        
+        peerGroups.forEach((group: any) => {
+          group.policy_ids?.forEach((id: string) => policyIds.add(id));
+          group.route_ids?.forEach((id: string) => routeIds.add(id));
+        });
+
+        // Fetch policies
+        if (policyIds.size > 0) {
+          const allPolicies = await api.getPolicies(peer.network_id);
+          const peerPolicies = allPolicies.filter((p: any) => policyIds.has(p.id));
+          setPolicies(peerPolicies);
+        } else {
+          setPolicies([]);
+        }
+
+        // Fetch routes
+        if (routeIds.size > 0) {
+          const allRoutes = await api.getRoutes(peer.network_id);
+          const peerRoutes = allRoutes.filter((r: any) => routeIds.has(r.id));
+          setRoutes(peerRoutes);
+        } else {
+          setRoutes([]);
+        }
+      } catch (error) {
+        console.error('Failed to load peer details:', error);
+      } finally {
+        setLoadingDetails(false);
+      }
+    };
+
+    void loadPeerDetails();
+  }, [isOpen, peer?.network_id, displayPeer?.group_ids]);
+
   const handleClose = () => {
     // Reset state before closing
     setIsEditModalOpen(false);
@@ -57,8 +119,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     onClose();
   };
 
-  if (!peer) return null;
-  const displayPeer = currentPeer || peer;
+  if (!peer || !displayPeer) return null;
 
   // Check if current user can edit this peer
   const canEdit = user?.role === 'administrator' || displayPeer.owner_id === user?.id;
@@ -293,24 +354,61 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
           {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
             <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
               <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Group Memberships</h4>
+              {loadingDetails ? (
+                <div className="text-sm text-gray-500">Loading groups...</div>
+              ) : groups.length > 0 ? (
+                <div className="space-y-2">
+                  {groups.map((group) => (
+                    <div key={group.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{group.name}</div>
+                      {group.description && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.description}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No groups found</div>
+              )}
+            </div>
+          )}
+
+          {/* Effective Policies */}
+          {policies.length > 0 && (
+            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Effective Policies</h4>
               <div className="space-y-2">
-                {displayPeer.group_ids.map((groupId) => (
-                  <div key={groupId} className="bg-white dark:bg-gray-700 px-3 py-2 rounded text-sm text-gray-900 dark:text-gray-100">
-                    {groupId}
+                {policies.map((policy) => (
+                  <div key={policy.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{policy.name}</div>
+                    {policy.description && (
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{policy.description}</div>
+                    )}
+                    {policy.rules && policy.rules.length > 0 && (
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {policy.rules.length} rule{policy.rules.length !== 1 ? 's' : ''}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Additional Allowed IPs */}
-          {displayPeer.additional_allowed_ips && displayPeer.additional_allowed_ips.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">Additional Allowed IPs</label>
-              <div className="space-y-1">
-                {displayPeer.additional_allowed_ips.map((ip, index) => (
-                  <div key={index} className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 px-3 py-2 rounded text-sm font-mono text-gray-900 dark:text-gray-100">
-                    {ip}
+          {/* Effective Routes */}
+          {routes.length > 0 && (
+            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Effective Routes</h4>
+              <div className="space-y-2">
+                {routes.map((route) => (
+                  <div key={route.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{route.name}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {route.destination_cidr}
+                    </div>
+                    {route.description && (
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{route.description}</div>
+                    )}
                   </div>
                 ))}
               </div>

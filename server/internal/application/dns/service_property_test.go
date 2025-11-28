@@ -244,7 +244,7 @@ func TestProperty_DNSMappingIPValidation(t *testing.T) {
 				}
 
 				// Attempt to create DNS mapping
-				mapping, err := service.CreateDNSMapping(context.Background(), routeID, req)
+				mapping, err := service.CreateDNSMapping(context.Background(), networkID, routeID, req)
 
 				// Verify property: DNS mapping creation should succeed when IP is in CIDR
 				return err == nil &&
@@ -294,7 +294,7 @@ func TestProperty_DNSMappingIPValidation(t *testing.T) {
 				}
 
 				// Attempt to create DNS mapping
-				_, err := service.CreateDNSMapping(context.Background(), routeID, req)
+				_, err := service.CreateDNSMapping(context.Background(), networkID, routeID, req)
 
 				// Verify property: DNS mapping creation should fail when IP is not in CIDR
 				// The error should indicate IP validation failure
@@ -368,7 +368,7 @@ func TestProperty_DNSMappingFQDNFormat(t *testing.T) {
 					IPAddress: ip,
 				}
 
-				mapping, err := service.CreateDNSMapping(context.Background(), routeID, req)
+				mapping, err := service.CreateDNSMapping(context.Background(), networkID, routeID, req)
 				if err != nil {
 					// If creation fails, skip this test case
 					return true

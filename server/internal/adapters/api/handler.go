@@ -90,11 +90,11 @@ type DNSRecord struct {
 
 // DNSService defines the interface for DNS mapping operations
 type DNSService interface {
-	CreateDNSMapping(ctx context.Context, routeID string, req *domain.DNSMappingCreateRequest) (*domain.DNSMapping, error)
+	CreateDNSMapping(ctx context.Context, networkID, routeID string, req *domain.DNSMappingCreateRequest) (*domain.DNSMapping, error)
 	GetDNSMapping(ctx context.Context, routeID, mappingID string) (*domain.DNSMapping, error)
-	UpdateDNSMapping(ctx context.Context, routeID, mappingID string, req *domain.DNSMappingUpdateRequest) (*domain.DNSMapping, error)
-	DeleteDNSMapping(ctx context.Context, routeID, mappingID string) error
-	ListDNSMappings(ctx context.Context, routeID string) ([]*domain.DNSMapping, error)
+	UpdateDNSMapping(ctx context.Context, networkID, routeID, mappingID string, req *domain.DNSMappingUpdateRequest) (*domain.DNSMapping, error)
+	DeleteDNSMapping(ctx context.Context, networkID, routeID, mappingID string) error
+	ListDNSMappings(ctx context.Context, networkID, routeID string) ([]*domain.DNSMapping, error)
 	GetNetworkDNSRecords(ctx context.Context, networkID string) ([]DNSRecord, error)
 }
 

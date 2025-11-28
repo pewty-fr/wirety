@@ -18,8 +18,8 @@ func NewDNSServiceAdapter(service *dns.Service) *DNSServiceAdapter {
 }
 
 // CreateDNSMapping creates a new DNS mapping
-func (a *DNSServiceAdapter) CreateDNSMapping(ctx context.Context, routeID string, req *network.DNSMappingCreateRequest) (*network.DNSMapping, error) {
-	return a.service.CreateDNSMapping(ctx, routeID, req)
+func (a *DNSServiceAdapter) CreateDNSMapping(ctx context.Context, networkID, routeID string, req *network.DNSMappingCreateRequest) (*network.DNSMapping, error) {
+	return a.service.CreateDNSMapping(ctx, networkID, routeID, req)
 }
 
 // GetDNSMapping retrieves a DNS mapping by ID
@@ -28,18 +28,18 @@ func (a *DNSServiceAdapter) GetDNSMapping(ctx context.Context, routeID, mappingI
 }
 
 // UpdateDNSMapping updates an existing DNS mapping
-func (a *DNSServiceAdapter) UpdateDNSMapping(ctx context.Context, routeID, mappingID string, req *network.DNSMappingUpdateRequest) (*network.DNSMapping, error) {
-	return a.service.UpdateDNSMapping(ctx, routeID, mappingID, req)
+func (a *DNSServiceAdapter) UpdateDNSMapping(ctx context.Context, networkID, routeID, mappingID string, req *network.DNSMappingUpdateRequest) (*network.DNSMapping, error) {
+	return a.service.UpdateDNSMapping(ctx, networkID, routeID, mappingID, req)
 }
 
 // DeleteDNSMapping deletes a DNS mapping
-func (a *DNSServiceAdapter) DeleteDNSMapping(ctx context.Context, routeID, mappingID string) error {
-	return a.service.DeleteDNSMapping(ctx, routeID, mappingID)
+func (a *DNSServiceAdapter) DeleteDNSMapping(ctx context.Context, networkID, routeID, mappingID string) error {
+	return a.service.DeleteDNSMapping(ctx, networkID, routeID, mappingID)
 }
 
 // ListDNSMappings lists all DNS mappings for a route
-func (a *DNSServiceAdapter) ListDNSMappings(ctx context.Context, routeID string) ([]*network.DNSMapping, error) {
-	return a.service.ListDNSMappings(ctx, routeID)
+func (a *DNSServiceAdapter) ListDNSMappings(ctx context.Context, networkID, routeID string) ([]*network.DNSMapping, error) {
+	return a.service.ListDNSMappings(ctx, networkID, routeID)
 }
 
 // GetNetworkDNSRecords combines peer and route DNS records

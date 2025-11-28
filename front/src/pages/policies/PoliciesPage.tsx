@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faShieldAlt, faPencil, faTrash, faPlus, faCopy } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
+import SearchableSelect from '../../components/SearchableSelect';
 import api from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
-import type { Policy, PolicyRule, Network } from '../../types';
+import type { Policy, PolicyRule, Network, Route } from '../../types';
 
 export default function PoliciesPage() {
   const { user } = useAuth();
@@ -129,22 +130,22 @@ export default function PoliciesPage() {
       />
 
       <div className="p-8">
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Select Network
-          </label>
-          <select
-            value={selectedNetworkId}
-            onChange={(e) => setSelectedNetworkId(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-          >
-            <option value="">Select a network...</option>
-            {networks.map((network) => (
-              <option key={network.id} value={network.id}>
-                {network.name} ({network.cidr})
-              </option>
-            ))}
-          </select>
+        {/* Network Filter */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Network</label>
+              <SearchableSelect
+                options={useMemo(() => networks.map(network => ({
+                  value: network.id,
+                  label: `${network.name} (${network.cidr})`
+                })), [networks])}
+                value={selectedNetworkId}
+                onChange={setSelectedNetworkId}
+                placeholder="Select a network..."
+              />
+            </div>
+          </div>
         </div>
 
         {!selectedNetworkId ? (
@@ -316,8 +317,20 @@ function PolicyModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      {/* Backdrop with blur */}
+      <div 
+        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div 
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all border-2 border-primary-300 dark:border-primary-700"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
           {policy ? 'Edit Policy' : 'Create Policy'}
         </h2>
@@ -364,6 +377,8 @@ function PolicyModal({
             </button>
           </div>
         </form>
+        </div>
+      </div>
       </div>
     </div>
   );
@@ -424,13 +439,32 @@ function PolicyDetailModal({
   if (!isOpen || !policy) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      {/* Backdrop with blur */}
+      <div 
+        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div 
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-4xl transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
         <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{policy.name}</h2>
-          {policy.description && (
-            <p className="text-gray-600 dark:text-gray-400 mt-1">{policy.description}</p>
-          )}
+          <div className="flex items-start gap-4">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
+              <FontAwesomeIcon icon={faShieldAlt} className="text-2xl text-white" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{policy.name}</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {policy.id}</p>
+              {policy.description && (
+                <p className="text-gray-600 dark:text-gray-400 mt-1">{policy.description}</p>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="p-6">
@@ -502,7 +536,9 @@ function PolicyDetailModal({
         isOpen={isAddRuleModalOpen}
         onClose={() => setIsAddRuleModalOpen(false)}
         onAdd={handleAddRule}
+        networkId={networkId}
       />
+      </div>
     </div>
   );
 }
@@ -512,16 +548,31 @@ function AddRuleModal({
   isOpen,
   onClose,
   onAdd,
+  networkId,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onAdd: (rule: Omit<PolicyRule, 'id'>) => void;
+  networkId: string;
 }) {
   const [direction, setDirection] = useState<'input' | 'output'>('input');
   const [action, setAction] = useState<'allow' | 'deny'>('allow');
-  const [targetType, setTargetType] = useState<'cidr' | 'peer' | 'group'>('cidr');
+  const [targetType, setTargetType] = useState<'cidr' | 'peer' | 'group' | 'route'>('cidr');
   const [target, setTarget] = useState('');
   const [description, setDescription] = useState('');
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [loadingRoutes, setLoadingRoutes] = useState(false);
+
+  // Load routes when target type is 'route'
+  useEffect(() => {
+    if (targetType === 'route' && networkId && isOpen) {
+      setLoadingRoutes(true);
+      api.getRoutes(networkId)
+        .then(setRoutes)
+        .catch((error) => console.error('Failed to load routes:', error))
+        .finally(() => setLoadingRoutes(false));
+    }
+  }, [targetType, networkId, isOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -536,8 +587,20 @@ function AddRuleModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+    <div className="fixed inset-0 z-[60] overflow-y-auto">
+      {/* Backdrop with blur */}
+      <div 
+        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div 
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all border-2 border-primary-300 dark:border-primary-700"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Add Rule</h2>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
@@ -573,26 +636,47 @@ function AddRuleModal({
               </label>
               <select
                 value={targetType}
-                onChange={(e) => setTargetType(e.target.value as 'cidr' | 'peer' | 'group')}
+                onChange={(e) => {
+                  setTargetType(e.target.value as 'cidr' | 'peer' | 'group' | 'route');
+                  setTarget(''); // Reset target when type changes
+                }}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               >
                 <option value="cidr">CIDR</option>
                 <option value="peer">Peer</option>
                 <option value="group">Group</option>
+                <option value="route">Route (CIDR helper)</option>
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Target *
               </label>
-              <input
-                type="text"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                placeholder={targetType === 'cidr' ? '10.0.0.0/24' : 'ID'}
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
+              {targetType === 'route' ? (
+                <select
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  required
+                  disabled={loadingRoutes}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="">Select a route...</option>
+                  {routes.map((route) => (
+                    <option key={route.id} value={route.id}>
+                      {route.name} ({route.destination_cidr})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  placeholder={targetType === 'cidr' ? '10.0.0.0/24' : 'ID'}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -622,6 +706,8 @@ function AddRuleModal({
             </button>
           </div>
         </form>
+        </div>
+      </div>
       </div>
     </div>
   );
@@ -679,8 +765,19 @@ function TemplateModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      {/* Backdrop with blur */}
+      <div 
+        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div 
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-3xl transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
         <div className="p-6 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Policy Templates</h2>
           <p className="text-gray-600 dark:text-gray-400 mt-1">
@@ -743,6 +840,7 @@ function TemplateModal({
             Close
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

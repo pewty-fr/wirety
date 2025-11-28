@@ -25,6 +25,7 @@ import (
 //	@Router			/networks/{networkId}/routes/{routeId}/dns [post]
 //	@Security		BearerAuth
 func (h *Handler) CreateDNSMapping(c *gin.Context) {
+	networkID := c.Param("networkId")
 	routeID := c.Param("routeId")
 
 	var req network.DNSMappingCreateRequest
@@ -33,7 +34,7 @@ func (h *Handler) CreateDNSMapping(c *gin.Context) {
 		return
 	}
 
-	mapping, err := h.dnsService.CreateDNSMapping(c.Request.Context(), routeID, &req)
+	mapping, err := h.dnsService.CreateDNSMapping(c.Request.Context(), networkID, routeID, &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -56,9 +57,10 @@ func (h *Handler) CreateDNSMapping(c *gin.Context) {
 //	@Router			/networks/{networkId}/routes/{routeId}/dns [get]
 //	@Security		BearerAuth
 func (h *Handler) ListDNSMappings(c *gin.Context) {
+	networkID := c.Param("networkId")
 	routeID := c.Param("routeId")
 
-	mappings, err := h.dnsService.ListDNSMappings(c.Request.Context(), routeID)
+	mappings, err := h.dnsService.ListDNSMappings(c.Request.Context(), networkID, routeID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -85,6 +87,7 @@ func (h *Handler) ListDNSMappings(c *gin.Context) {
 //	@Router			/networks/{networkId}/routes/{routeId}/dns/{dnsId} [put]
 //	@Security		BearerAuth
 func (h *Handler) UpdateDNSMapping(c *gin.Context) {
+	networkID := c.Param("networkId")
 	routeID := c.Param("routeId")
 	dnsID := c.Param("dnsId")
 
@@ -94,7 +97,7 @@ func (h *Handler) UpdateDNSMapping(c *gin.Context) {
 		return
 	}
 
-	mapping, err := h.dnsService.UpdateDNSMapping(c.Request.Context(), routeID, dnsID, &req)
+	mapping, err := h.dnsService.UpdateDNSMapping(c.Request.Context(), networkID, routeID, dnsID, &req)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -117,10 +120,11 @@ func (h *Handler) UpdateDNSMapping(c *gin.Context) {
 //	@Router			/networks/{networkId}/routes/{routeId}/dns/{dnsId} [delete]
 //	@Security		BearerAuth
 func (h *Handler) DeleteDNSMapping(c *gin.Context) {
+	networkID := c.Param("networkId")
 	routeID := c.Param("routeId")
 	dnsID := c.Param("dnsId")
 
-	if err := h.dnsService.DeleteDNSMapping(c.Request.Context(), routeID, dnsID); err != nil {
+	if err := h.dnsService.DeleteDNSMapping(c.Request.Context(), networkID, routeID, dnsID); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}

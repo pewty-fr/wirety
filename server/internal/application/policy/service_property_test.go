@@ -275,7 +275,11 @@ func (a *networkGetterAdapter) DeletePeer(ctx context.Context, networkID, peerID
 	return nil
 }
 func (a *networkGetterAdapter) ListPeers(ctx context.Context, networkID string) ([]*network.Peer, error) {
-	return nil, nil
+	var peers []*network.Peer
+	for _, peer := range a.getter.peers {
+		peers = append(peers, peer)
+	}
+	return peers, nil
 }
 func (a *networkGetterAdapter) CreateACL(ctx context.Context, networkID string, acl *network.ACL) error {
 	return nil
@@ -815,8 +819,8 @@ func TestProperty_PolicyAttachmentApplication(t *testing.T) {
 				// Generate iptables rules for jump peer
 				rules, err := service.GenerateIPTablesRules(ctx, networkID, jumpPeerID)
 
-				// Verify rules are generated (at minimum, default deny rules)
-				return err == nil && len(rules) >= 2
+				// Verify rules are generated (at minimum, default deny rule for FORWARD)
+				return err == nil && len(rules) >= 1
 			},
 			genNetworkID(),
 			gen.Identifier().Map(func(v string) string { return "peer-" + v }),
@@ -1038,10 +1042,10 @@ func TestProperty_PolicyOnlyAccessControl(t *testing.T) {
 					return false
 				}
 
-				// Verify that default deny rules are present (policy-based access control)
+				// Verify that default deny rule is present for FORWARD chain (policy-based access control)
 				hasDefaultDeny := false
 				for _, rule := range rules {
-					if rule == "iptables -A INPUT -j DROP" || rule == "iptables -A OUTPUT -j DROP" {
+					if rule == "iptables -A FORWARD -j DROP" {
 						hasDefaultDeny = true
 						break
 					}
@@ -1208,19 +1212,15 @@ func TestProperty_DefaultDenyBehavior(t *testing.T) {
 					return false
 				}
 
-				// Verify default deny rules are present
-				hasInputDeny := false
-				hasOutputDeny := false
+				// Verify default deny rule is present for FORWARD chain
+				hasForwardDeny := false
 				for _, rule := range rules {
-					if rule == "iptables -A INPUT -j DROP" {
-						hasInputDeny = true
-					}
-					if rule == "iptables -A OUTPUT -j DROP" {
-						hasOutputDeny = true
+					if rule == "iptables -A FORWARD -j DROP" {
+						hasForwardDeny = true
 					}
 				}
 
-				return hasInputDeny && hasOutputDeny
+				return hasForwardDeny
 			},
 			genNetworkID(),
 			gen.Identifier().Map(func(v string) string { return "peer-" + v }),

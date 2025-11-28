@@ -113,13 +113,13 @@ func main() {
 		portalURL = server
 	}
 	captivePortal := proxy.NewCaptivePortal(httpPortInt, portalURL, server, token)
-	if err := captivePortal.Start(); err != nil {
-		log.Fatal().Err(err).Msg("failed to start captive portal")
-	}
-	log.Info().
-		Int("http_port", httpPortInt).
-		Str("portal_url", portalURL).
-		Msg("captive portal HTTP proxy started")
+	// if err := captivePortal.Start(); err != nil {
+	// 	log.Fatal().Err(err).Msg("failed to start captive portal")
+	// }
+	// log.Info().
+	// 	Int("http_port", httpPortInt).
+	// 	Str("portal_url", portalURL).
+	// 	Msg("captive portal HTTP proxy started")
 
 	// Initialize TLS-SNI gateway for HTTPS filtering
 	// This gateway only allows connections to the server domain for non-authenticated users

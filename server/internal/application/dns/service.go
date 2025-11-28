@@ -46,14 +46,14 @@ func (s *Service) SetWebSocketNotifier(notifier WebSocketNotifier) {
 }
 
 // CreateDNSMapping creates a new DNS mapping with IP validation within route CIDR
-func (s *Service) CreateDNSMapping(ctx context.Context, routeID string, req *network.DNSMappingCreateRequest) (*network.DNSMapping, error) {
+func (s *Service) CreateDNSMapping(ctx context.Context, networkID, routeID string, req *network.DNSMappingCreateRequest) (*network.DNSMapping, error) {
 	// Validate request
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Get route to validate IP is within CIDR
-	route, err := s.routeRepo.GetRoute(ctx, "", routeID)
+	route, err := s.routeRepo.GetRoute(ctx, networkID, routeID)
 	if err != nil {
 		return nil, fmt.Errorf("route not found: %w", err)
 	}
@@ -95,7 +95,7 @@ func (s *Service) GetDNSMapping(ctx context.Context, routeID, mappingID string) 
 }
 
 // UpdateDNSMapping updates an existing DNS mapping
-func (s *Service) UpdateDNSMapping(ctx context.Context, routeID, mappingID string, req *network.DNSMappingUpdateRequest) (*network.DNSMapping, error) {
+func (s *Service) UpdateDNSMapping(ctx context.Context, networkID, routeID, mappingID string, req *network.DNSMappingUpdateRequest) (*network.DNSMapping, error) {
 	// Validate request
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
@@ -108,7 +108,7 @@ func (s *Service) UpdateDNSMapping(ctx context.Context, routeID, mappingID strin
 	}
 
 	// Get route for validation
-	route, err := s.routeRepo.GetRoute(ctx, "", routeID)
+	route, err := s.routeRepo.GetRoute(ctx, networkID, routeID)
 	if err != nil {
 		return nil, fmt.Errorf("route not found: %w", err)
 	}
@@ -139,9 +139,9 @@ func (s *Service) UpdateDNSMapping(ctx context.Context, routeID, mappingID strin
 }
 
 // DeleteDNSMapping deletes a DNS mapping
-func (s *Service) DeleteDNSMapping(ctx context.Context, routeID, mappingID string) error {
+func (s *Service) DeleteDNSMapping(ctx context.Context, networkID, routeID, mappingID string) error {
 	// Get route for network ID
-	route, err := s.routeRepo.GetRoute(ctx, "", routeID)
+	route, err := s.routeRepo.GetRoute(ctx, networkID, routeID)
 	if err != nil {
 		return fmt.Errorf("route not found: %w", err)
 	}
@@ -165,9 +165,9 @@ func (s *Service) DeleteDNSMapping(ctx context.Context, routeID, mappingID strin
 }
 
 // ListDNSMappings lists all DNS mappings for a route
-func (s *Service) ListDNSMappings(ctx context.Context, routeID string) ([]*network.DNSMapping, error) {
+func (s *Service) ListDNSMappings(ctx context.Context, networkID, routeID string) ([]*network.DNSMapping, error) {
 	// Verify route exists
-	_, err := s.routeRepo.GetRoute(ctx, "", routeID)
+	_, err := s.routeRepo.GetRoute(ctx, networkID, routeID)
 	if err != nil {
 		return nil, fmt.Errorf("route not found: %w", err)
 	}

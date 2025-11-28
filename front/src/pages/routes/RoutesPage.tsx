@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRoute, faPencil, faTrash, faGlobe } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
+import SearchableSelect from '../../components/SearchableSelect';
 import api from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
 import type { Route, DNSMapping, Network, Peer } from '../../types';
@@ -11,6 +12,7 @@ export default function RoutesPage() {
   const [networks, setNetworks] = useState<Network[]>([]);
   const [selectedNetworkId, setSelectedNetworkId] = useState<string>('');
   const [routes, setRoutes] = useState<Route[]>([]);
+  const [jumpPeers, setJumpPeers] = useState<Peer[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRoute, setEditingRoute] = useState<Route | null>(null);
@@ -18,6 +20,13 @@ export default function RoutesPage() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   const isAdmin = user?.role === 'administrator';
+
+  // Create a map of jump peer IDs to names
+  const jumpPeerMap = useMemo(() => {
+    const map = new Map<string, string>();
+    jumpPeers.forEach(peer => map.set(peer.id, peer.name));
+    return map;
+  }, [jumpPeers]);
 
   useEffect(() => {
     const loadNetworks = async () => {
@@ -37,14 +46,19 @@ export default function RoutesPage() {
   const loadRoutes = useCallback(async () => {
     if (!selectedNetworkId) {
       setRoutes([]);
+      setJumpPeers([]);
       setLoading(false);
       return;
     }
 
     setLoading(true);
     try {
-      const data = await api.getRoutes(selectedNetworkId);
-      setRoutes(data || []);
+      const [routesData, peersData] = await Promise.all([
+        api.getRoutes(selectedNetworkId),
+        api.getAllNetworkPeers(selectedNetworkId)
+      ]);
+      setRoutes(routesData || []);
+      setJumpPeers((peersData || []).filter((p: Peer) => p.is_jump));
     } catch (error) {
       console.error('Failed to load routes:', error);
       setRoutes([]);
@@ -119,22 +133,22 @@ export default function RoutesPage() {
       />
 
       <div className="p-8">
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Select Network
-          </label>
-          <select
-            value={selectedNetworkId}
-            onChange={(e) => setSelectedNetworkId(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-          >
-            <option value="">Select a network...</option>
-            {networks.map((network) => (
-              <option key={network.id} value={network.id}>
-                {network.name} ({network.cidr})
-              </option>
-            ))}
-          </select>
+        {/* Network Filter */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Network</label>
+              <SearchableSelect
+                options={useMemo(() => networks.map(network => ({
+                  value: network.id,
+                  label: `${network.name} (${network.cidr})`
+                })), [networks])}
+                value={selectedNetworkId}
+                onChange={setSelectedNetworkId}
+                placeholder="Select a network..."
+              />
+            </div>
+          </div>
         </div>
 
         {!selectedNetworkId ? (
@@ -193,7 +207,7 @@ export default function RoutesPage() {
                       {route.destination_cidr}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                      {route.jump_peer_id}
+                      {jumpPeerMap.get(route.jump_peer_id) || route.jump_peer_id || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                       {route.domain_suffix || 'internal'}
@@ -341,8 +355,20 @@ function RouteModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      {/* Backdrop with blur */}
+      <div 
+        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div 
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all border-2 border-primary-300 dark:border-primary-700"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
           {route ? 'Edit Route' : 'Create Route'}
         </h2>
@@ -432,6 +458,8 @@ function RouteModal({
             </button>
           </div>
         </form>
+        </div>
+      </div>
       </div>
     </div>
   );
@@ -504,20 +532,39 @@ function RouteDetailModal({
   if (!isOpen || !route) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      {/* Backdrop with blur */}
+      <div 
+        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div 
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-4xl transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
         <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{route.name}</h2>
-          {route.description && (
-            <p className="text-gray-600 dark:text-gray-400 mt-1">{route.description}</p>
-          )}
-          <div className="mt-3 space-y-1">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              <span className="font-medium">Destination:</span> <span className="font-mono">{route.destination_cidr}</span>
-            </p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              <span className="font-medium">Domain Suffix:</span> {route.domain_suffix || 'internal'}
-            </p>
+          <div className="flex items-start gap-4">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
+              <FontAwesomeIcon icon={faRoute} className="text-2xl text-white" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{route.name}</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {route.id}</p>
+              {route.description && (
+                <p className="text-gray-600 dark:text-gray-400 mt-1">{route.description}</p>
+              )}
+              <div className="mt-3 space-y-1">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  <span className="font-medium">Destination:</span> <span className="font-mono">{route.destination_cidr}</span>
+                </p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  <span className="font-medium">Domain Suffix:</span> {route.domain_suffix || 'internal'}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -576,8 +623,9 @@ function RouteDetailModal({
             Close
           </button>
         </div>
+        </div>
       </div>
-
+      
       <AddDNSModal
         isOpen={isAddDNSModalOpen}
         onClose={() => setIsAddDNSModalOpen(false)}
@@ -613,8 +661,20 @@ function AddDNSModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+    <div className="fixed inset-0 z-[60] overflow-y-auto">
+      {/* Backdrop with blur */}
+      <div 
+        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
+        onClick={onClose}
+      />
+      
+      {/* Modal */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div 
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all border-2 border-primary-300 dark:border-primary-700"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Add DNS Mapping</h2>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
@@ -664,6 +724,8 @@ function AddDNSModal({
             </button>
           </div>
         </form>
+        </div>
+      </div>
       </div>
     </div>
   );
