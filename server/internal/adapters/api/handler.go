@@ -121,6 +121,9 @@ func NewHandler(service *network.Service, ipamService *ipam.Service, authService
 	// Set the WebSocket notifier on the service so it can trigger config updates
 	service.SetWebSocketNotifier(wsManager)
 
+	// Set the WebSocket connection checker so the service can check if agents are connected
+	service.SetWebSocketConnectionChecker(wsManager)
+
 	return &Handler{
 		service:       service,
 		ipamService:   ipamService,

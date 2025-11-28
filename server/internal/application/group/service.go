@@ -19,14 +19,16 @@ type WebSocketNotifier interface {
 type Service struct {
 	groupRepo  network.GroupRepository
 	peerRepo   network.Repository
+	routeRepo  network.RouteRepository
 	wsNotifier WebSocketNotifier
 }
 
 // NewService creates a new group service
-func NewService(groupRepo network.GroupRepository, peerRepo network.Repository) *Service {
+func NewService(groupRepo network.GroupRepository, peerRepo network.Repository, routeRepo network.RouteRepository) *Service {
 	return &Service{
 		groupRepo: groupRepo,
 		peerRepo:  peerRepo,
+		routeRepo: routeRepo,
 	}
 }
 
@@ -146,9 +148,29 @@ func (s *Service) AddPeerToGroup(ctx context.Context, networkID, groupID, peerID
 	}
 
 	// Verify group exists
-	_, err = s.groupRepo.GetGroup(ctx, networkID, groupID)
+	group, err := s.groupRepo.GetGroup(ctx, networkID, groupID)
 	if err != nil {
 		return fmt.Errorf("group not found: %w", err)
+	}
+
+	// Check for circular routing: if this is a jump peer and the group has routes,
+	// verify that this peer is not the gateway for any of those routes
+	if peer.IsJump && len(group.RouteIDs) > 0 {
+		routes, err := s.routeRepo.GetRoutesForGroup(ctx, networkID, groupID)
+		if err != nil {
+			return fmt.Errorf("failed to get group routes: %w", err)
+		}
+
+		conflictingRoutes := []string{}
+		for _, route := range routes {
+			if route.JumpPeerID == peerID {
+				conflictingRoutes = append(conflictingRoutes, route.ID)
+			}
+		}
+
+		if len(conflictingRoutes) > 0 {
+			return NewCircularRoutingErrorForPeer(peerID, groupID, conflictingRoutes)
+		}
 	}
 
 	// Add peer to group
@@ -235,10 +257,26 @@ func (s *Service) DetachPolicyFromGroup(ctx context.Context, networkID, groupID,
 
 // AttachRouteToGroup attaches a route to a group with config regeneration
 func (s *Service) AttachRouteToGroup(ctx context.Context, networkID, groupID, routeID string) error {
+	// Verify route exists
+	route, err := s.routeRepo.GetRoute(ctx, networkID, routeID)
+	if err != nil {
+		return fmt.Errorf("route not found: %w", err)
+	}
+
 	// Verify group exists
-	_, err := s.groupRepo.GetGroup(ctx, networkID, groupID)
+	group, err := s.groupRepo.GetGroup(ctx, networkID, groupID)
 	if err != nil {
 		return fmt.Errorf("group not found: %w", err)
+	}
+
+	// Check for circular routing: if the group has members,
+	// verify that the route's jump peer is not a member of this group
+	if len(group.PeerIDs) > 0 {
+		for _, peerID := range group.PeerIDs {
+			if peerID == route.JumpPeerID {
+				return NewCircularRoutingErrorForRoute(route.JumpPeerID, groupID, routeID)
+			}
+		}
 	}
 
 	// Attach route to group

@@ -247,6 +247,68 @@ func (m *mockNetworkGetter) GetPeer(ctx context.Context, networkID, peerID strin
 	return peer, nil
 }
 
+type mockRouteRepository struct {
+	routes map[string]*network.Route
+}
+
+func newMockRouteRepository() *mockRouteRepository {
+	return &mockRouteRepository{
+		routes: make(map[string]*network.Route),
+	}
+}
+
+func (m *mockRouteRepository) CreateRoute(ctx context.Context, networkID string, route *network.Route) error {
+	m.routes[route.ID] = route
+	return nil
+}
+
+func (m *mockRouteRepository) GetRoute(ctx context.Context, networkID, routeID string) (*network.Route, error) {
+	route, exists := m.routes[routeID]
+	if !exists || route.NetworkID != networkID {
+		return nil, network.ErrRouteNotFound
+	}
+	return route, nil
+}
+
+func (m *mockRouteRepository) UpdateRoute(ctx context.Context, networkID string, route *network.Route) error {
+	if _, exists := m.routes[route.ID]; !exists {
+		return network.ErrRouteNotFound
+	}
+	m.routes[route.ID] = route
+	return nil
+}
+
+func (m *mockRouteRepository) DeleteRoute(ctx context.Context, networkID, routeID string) error {
+	delete(m.routes, routeID)
+	return nil
+}
+
+func (m *mockRouteRepository) ListRoutes(ctx context.Context, networkID string) ([]*network.Route, error) {
+	routes := []*network.Route{}
+	for _, route := range m.routes {
+		if route.NetworkID == networkID {
+			routes = append(routes, route)
+		}
+	}
+	return routes, nil
+}
+
+func (m *mockRouteRepository) GetRoutesForGroup(ctx context.Context, networkID, groupID string) ([]*network.Route, error) {
+	// For testing, return all routes that match the network
+	// In real implementation, this would filter by group attachment
+	return m.ListRoutes(ctx, networkID)
+}
+
+func (m *mockRouteRepository) GetRoutesByJumpPeer(ctx context.Context, networkID, jumpPeerID string) ([]*network.Route, error) {
+	routes := []*network.Route{}
+	for _, route := range m.routes {
+		if route.NetworkID == networkID && route.JumpPeerID == jumpPeerID {
+			routes = append(routes, route)
+		}
+	}
+	return routes, nil
+}
+
 // networkGetterAdapter adapts mockNetworkGetter to the minimal interface needed by GroupService
 type networkGetterAdapter struct {
 	getter *mockNetworkGetter
@@ -427,7 +489,8 @@ func TestProperty_GroupCreationCompleteness(t *testing.T) {
 					Name: "test-network",
 				}
 
-				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Create group with generated inputs
 				group, err := service.CreateGroup(ctx, networkID, &network.GroupCreateRequest{
@@ -480,7 +543,8 @@ func TestProperty_PeerGroupAssociationPreservation(t *testing.T) {
 					Name: "test-peer",
 				}
 
-				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Add peer to group
 				err := service.AddPeerToGroup(ctx, networkID, groupID, peerID)
@@ -543,7 +607,8 @@ func TestProperty_PeerRemovalNonDestructiveness(t *testing.T) {
 					Name: "test-peer",
 				}
 
-				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Remove peer from group
 				err := service.RemovePeerFromGroup(ctx, networkID, groupID, peerID)
@@ -614,7 +679,8 @@ func TestProperty_GroupDeletionPeerPreservation(t *testing.T) {
 					}
 				}
 
-				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Delete group
 				err := service.DeleteGroup(ctx, networkID, groupID)
@@ -678,7 +744,8 @@ func TestProperty_GroupListingCompleteness(t *testing.T) {
 					Name: "test-network",
 				}
 
-				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Create multiple groups
 				createdGroups := make(map[string]int) // groupID -> expected peer count
@@ -747,7 +814,8 @@ func TestProperty_GroupOperationAuthorization(t *testing.T) {
 					Name: "test-network",
 				}
 
-				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Verify that operations succeed when called
 				// (authorization is enforced at API layer, not service layer)

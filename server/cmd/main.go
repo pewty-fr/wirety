@@ -129,8 +129,8 @@ func main() {
 
 	// Initialize group service
 	var groupService *appgroup.Service
-	if groupRepo != nil {
-		groupService = appgroup.NewService(groupRepo, networkRepo)
+	if groupRepo != nil && routeRepo != nil {
+		groupService = appgroup.NewService(groupRepo, networkRepo, routeRepo)
 	}
 
 	// Initialize policy service
