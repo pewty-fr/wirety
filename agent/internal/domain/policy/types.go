@@ -11,7 +11,8 @@ type PeerPolicy struct {
 
 // JumpPolicy delivered to jump agent to enforce isolation & ACL.
 type JumpPolicy struct {
-	IP         string       `json:"ip"`
-	Peers      []PeerPolicy `json:"peers"`
-	ACLBlocked []string     `json:"acl_blocked"`
+	IP            string       `json:"ip"`
+	IPTablesRules []string     `json:"iptables_rules"` // Generated iptables rules from policies
+	Peers         []PeerPolicy `json:"peers"`
+	ACLBlocked    []string     `json:"acl_blocked"` // Deprecated: kept for backward compatibility
 }

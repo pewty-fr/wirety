@@ -19,8 +19,6 @@ interface RegularPeerModalProps {
 export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId, networks = [], peer, users = [] }: RegularPeerModalProps) {
   const [formData, setFormData] = useState({
     name: '',
-    is_isolated: false,
-    full_encapsulation: false,
     use_agent: false,
     additional_allowed_ips: [] as string[],
     owner_id: '',
@@ -45,8 +43,6 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
     if (peer) {
       setFormData({
         name: peer.name,
-        is_isolated: peer.is_isolated,
-        full_encapsulation: peer.full_encapsulation,
         use_agent: peer.use_agent,
         additional_allowed_ips: peer.additional_allowed_ips || [],
         owner_id: peer.owner_id || '',
@@ -54,8 +50,6 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
     } else {
       setFormData({
         name: '',
-        is_isolated: false,
-        full_encapsulation: false,
         use_agent: false,
         additional_allowed_ips: [],
         owner_id: currentUser?.id || '',
@@ -76,8 +70,6 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const updateData: any = {
           name: formData.name,
-          is_isolated: formData.is_isolated,
-          full_encapsulation: formData.full_encapsulation,
           additional_allowed_ips: formData.additional_allowed_ips.length > 0 ? formData.additional_allowed_ips : undefined,
         };
         // Only include owner_id if admin and it changed
@@ -90,8 +82,6 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
         const createData: any = {
           name: formData.name,
           is_jump: false,
-          is_isolated: formData.is_isolated,
-          full_encapsulation: formData.full_encapsulation,
           use_agent: formData.use_agent,
           additional_allowed_ips: formData.additional_allowed_ips.length > 0 ? formData.additional_allowed_ips : undefined,
         };
@@ -185,39 +175,11 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
                 onChange={(e) => setFormData({ ...formData, use_agent: e.target.checked })}
                 className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
               />
-              <span className="text-sm font-medium text-gray-700">Use Agent (dynamic configuration)</span>
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Use Agent (dynamic configuration)</span>
             </label>
-            <p className="mt-1 text-sm text-gray-500 ml-6">Enable for automatic configuration via agent</p>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 ml-6">Enable for automatic configuration via agent</p>
           </div>
         )}
-
-        {/* Isolated */}
-        <div>
-          <label className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              checked={formData.is_isolated}
-              onChange={(e) => setFormData({ ...formData, is_isolated: e.target.checked })}
-              className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-            />
-            <span className="text-sm font-medium text-gray-700">Isolated</span>
-          </label>
-          <p className="mt-1 text-sm text-gray-500 ml-6">Prevent this peer from communicating with other regular peers</p>
-        </div>
-
-        {/* Full Encapsulation */}
-        <div>
-          <label className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              checked={formData.full_encapsulation}
-              onChange={(e) => setFormData({ ...formData, full_encapsulation: e.target.checked })}
-              className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-            />
-            <span className="text-sm font-medium text-gray-700">Full Encapsulation</span>
-          </label>
-          <p className="mt-1 text-sm text-gray-500 ml-6">Route all traffic (0.0.0.0/0) through jump peer</p>
-        </div>
 
         {/* Owner (admin only, edit mode only) */}
         {isAdmin && isEditMode && (

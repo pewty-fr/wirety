@@ -12,13 +12,13 @@ func TestSanitizeInterfaceName(t *testing.T) {
 		{"simple-peer", "simple-peer"},
 		{"Peer_123", "peer_123"},
 		{"peer@home", "peer_home"},
-		{"peer with spaces", "peer_with_spaces"},
-		{"peer/with/slashes", "peer_with_slashes"},
+		{"peer with spaces", "peer_with_space"},       // truncated to 15 chars
+		{"peer/with/slashes", "peer_with_slash"},      // truncated to 15 chars
 		{"verylongpeernametotest", "verylongpeernam"}, // truncated to 15 chars
 		{"", "wg0"}, // default if empty
-		{"peer-name-with.dots", "peer-name-with_dots"},
-		{"123peer", "123peer"}, // numbers are allowed
-		{"特殊字符", "__________"}, // unicode chars replaced with underscores
+		{"peer-name-with.dots", "peer-name-with"}, // truncated to 15 chars (trailing _ removed)
+		{"123peer", "123peer"},                    // numbers are allowed
+		{"特殊字符", "____"},                          // unicode chars replaced with underscores (4 chars)
 	}
 
 	for _, tt := range tests {

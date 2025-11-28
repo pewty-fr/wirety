@@ -289,19 +289,16 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
             </div>
           )}
 
-          {/* Regular Peer Specific */}
-          {!displayPeer.is_jump && (
+          {/* Group Memberships */}
+          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
             <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Peer Configuration</h4>
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Group Memberships</h4>
               <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600 dark:text-gray-300">Isolated</span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{displayPeer.is_isolated ? 'Yes' : 'No'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600 dark:text-gray-300">Full Encapsulation</span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{displayPeer.full_encapsulation ? 'Yes' : 'No'}</span>
-                </div>
+                {displayPeer.group_ids.map((groupId) => (
+                  <div key={groupId} className="bg-white dark:bg-gray-700 px-3 py-2 rounded text-sm text-gray-900 dark:text-gray-100">
+                    {groupId}
+                  </div>
+                ))}
               </div>
             </div>
           )}

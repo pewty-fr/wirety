@@ -25,7 +25,9 @@ func NewServer(domain string, peers []dom.DNSPeer) *Server {
 }
 
 func (s *Server) Start(addr string) error {
-	dns.HandleFunc(s.domain+".", s.handleDNS)
+	// Register handler for all DNS queries (not just s.domain)
+	// This allows us to handle both peer domains and route domains with different suffixes
+	dns.HandleFunc(".", s.handleDNS)
 	server := &dns.Server{Addr: addr, Net: "udp"}
 	log.Info().Str("addr", addr).Str("domain", s.domain).Int("peer_count", len(s.peers)).Msg("starting DNS server")
 	return server.ListenAndServe()
@@ -50,9 +52,21 @@ func (s *Server) lookupPeerIP(name string) string {
 	defer s.mu.RUnlock()
 
 	for _, p := range s.peers {
-		fqdn := fmt.Sprintf("%s.%s", p.Name, s.domain)
-		if name == fqdn {
-			return p.IP
+		// Check if this is a route DNS mapping (contains full FQDN in Name field)
+		// Route DNS mappings have format: name.route_name.domain_suffix
+		// and are stored with the full FQDN in the Name field
+		if strings.Contains(p.Name, ".") {
+			// This is a route DNS mapping with full FQDN
+			fqdn := p.Name
+			if name == fqdn {
+				return p.IP
+			}
+		} else {
+			// This is a peer DNS record, construct FQDN
+			fqdn := fmt.Sprintf("%s.%s", p.Name, s.domain)
+			if name == fqdn {
+				return p.IP
+			}
 		}
 	}
 	return ""

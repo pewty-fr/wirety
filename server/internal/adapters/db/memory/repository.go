@@ -208,40 +208,18 @@ func (r *Repository) CreateACL(ctx context.Context, networkID string, acl *netwo
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	net, exists := r.networks[networkID]
-	if !exists {
-		return fmt.Errorf("network not found")
-	}
-
-	net.ACL = acl
-	return nil
+	// ACL methods removed - legacy system no longer supported
+	return fmt.Errorf("ACL system has been removed")
 }
 
-// GetACL retrieves the ACL for a network
+// GetACL retrieves the ACL for a network (legacy - removed)
 func (r *Repository) GetACL(ctx context.Context, networkID string) (*network.ACL, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	net, exists := r.networks[networkID]
-	if !exists {
-		return nil, fmt.Errorf("network not found")
-	}
-
-	return net.ACL, nil
+	return nil, fmt.Errorf("ACL system has been removed")
 }
 
-// UpdateACL updates the ACL for a network
+// UpdateACL updates the ACL for a network (legacy - removed)
 func (r *Repository) UpdateACL(ctx context.Context, networkID string, acl *network.ACL) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	net, exists := r.networks[networkID]
-	if !exists {
-		return fmt.Errorf("network not found")
-	}
-
-	net.ACL = acl
-	return nil
+	return fmt.Errorf("ACL system has been removed")
 }
 
 // PeerConnection operations
