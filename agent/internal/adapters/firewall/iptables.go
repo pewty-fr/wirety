@@ -55,6 +55,16 @@ func (a *Adapter) run(args ...string) error {
 	return nil
 }
 
+// runIPv6 runs an ip6tables command
+func (a *Adapter) runIPv6(args ...string) error {
+	cmd := exec.Command("ip6tables", args...) // #nosec G204
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ip6tables %v failed: %v output=%s", args, err, string(out))
+	}
+	return nil
+}
+
 // ruleExists checks if an iptables rule exists by parsing the rule arguments
 func (a *Adapter) ruleExists(args ...string) bool {
 	// Extract table, chain, and target from args
@@ -219,6 +229,15 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	if err := exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1").Run(); err != nil {
 		log.Warn().Err(err).Msg("failed enabling ip_forward")
 	}
+
+	// Enable IPv6 forwarding for dual-stack support
+	if err := exec.Command("sysctl", "-w", "net.ipv6.conf.all.forwarding=1").Run(); err != nil {
+		log.Warn().Err(err).Msg("failed enabling ipv6 forwarding")
+	}
+
+	// TODO: Apply IPv6 firewall rules (ip6tables) based on policies
+	// For now, IPv6 traffic is allowed but not filtered by policies
+	// This should be implemented as part of full dual-stack support
 	// Create custom chain if it doesn't exist, then flush it
 	chain := "WIRETY_JUMP"
 	// Try to create the chain (will fail silently if it already exists)
@@ -350,6 +369,9 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	// NAT (MASQUERADE) if needed (only add if not already present)
 	if a.natInterface != "" {
 		_ = a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", a.natInterface, "-j", "MASQUERADE")
+
+		// TODO: Add IPv6 NAT (MASQUERADE) support
+		// IPv6 NAT requires ip6tables -t nat which may not be available on all systems
 	}
 	return nil
 }

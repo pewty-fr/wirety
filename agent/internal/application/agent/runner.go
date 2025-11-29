@@ -242,7 +242,6 @@ func (r *Runner) Start(stop <-chan struct{}) {
 
 			if payload.Policy != nil && r.fwAdapter != nil {
 				log.Info().
-					Int("peer_count", len(payload.Policy.Peers)).
 					Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
 					Msg("applying firewall policy update")
 
