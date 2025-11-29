@@ -613,7 +613,6 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 		}
 
 		// Generate iptables rules from policies attached to groups
-		log.Error().Interface("policyserver", s.policyService).Msg("debug 10")
 		if s.policyService != nil {
 			iptablesRules, err := s.policyService.GenerateIPTablesRules(ctx, networkID, peerID)
 			if err != nil {
@@ -624,7 +623,6 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 					Str("peer_id", peerID).
 					Msg("failed to generate iptables rules for jump peer")
 			} else {
-				log.Error().Err(err).Msg("debug 7")
 				policy.IPTablesRules = iptablesRules
 			}
 		}
