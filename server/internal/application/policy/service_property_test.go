@@ -249,6 +249,66 @@ func (a *networkGetterAdapter) GetPeer(ctx context.Context, networkID, peerID st
 	return a.getter.GetPeer(ctx, networkID, peerID)
 }
 
+type mockRouteRepository struct {
+	routes map[string]*network.Route
+}
+
+func newMockRouteRepository() *mockRouteRepository {
+	return &mockRouteRepository{
+		routes: make(map[string]*network.Route),
+	}
+}
+
+func (m *mockRouteRepository) CreateRoute(ctx context.Context, networkID string, route *network.Route) error {
+	m.routes[route.ID] = route
+	return nil
+}
+
+func (m *mockRouteRepository) GetRoute(ctx context.Context, networkID, routeID string) (*network.Route, error) {
+	route, exists := m.routes[routeID]
+	if !exists || route.NetworkID != networkID {
+		return nil, network.ErrRouteNotFound
+	}
+	return route, nil
+}
+
+func (m *mockRouteRepository) UpdateRoute(ctx context.Context, networkID string, route *network.Route) error {
+	if _, exists := m.routes[route.ID]; !exists {
+		return network.ErrRouteNotFound
+	}
+	m.routes[route.ID] = route
+	return nil
+}
+
+func (m *mockRouteRepository) DeleteRoute(ctx context.Context, networkID, routeID string) error {
+	delete(m.routes, routeID)
+	return nil
+}
+
+func (m *mockRouteRepository) ListRoutes(ctx context.Context, networkID string) ([]*network.Route, error) {
+	routes := []*network.Route{}
+	for _, route := range m.routes {
+		if route.NetworkID == networkID {
+			routes = append(routes, route)
+		}
+	}
+	return routes, nil
+}
+
+func (m *mockRouteRepository) GetRoutesForGroup(ctx context.Context, networkID, groupID string) ([]*network.Route, error) {
+	return []*network.Route{}, nil
+}
+
+func (m *mockRouteRepository) GetRoutesByJumpPeer(ctx context.Context, networkID, jumpPeerID string) ([]*network.Route, error) {
+	routes := []*network.Route{}
+	for _, route := range m.routes {
+		if route.NetworkID == networkID && route.JumpPeerID == jumpPeerID {
+			routes = append(routes, route)
+		}
+	}
+	return routes, nil
+}
+
 // Implement minimal interface for Repository
 func (a *networkGetterAdapter) CreateNetwork(ctx context.Context, net *network.Network) error {
 	return nil
@@ -463,7 +523,8 @@ func TestProperty_PolicyCreationCompleteness(t *testing.T) {
 					Name: "test-network",
 				}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Create policy with generated inputs
 				policy, err := service.CreatePolicy(ctx, networkID, &network.PolicyCreateRequest{
@@ -539,7 +600,8 @@ func TestProperty_PolicyRuleAddition(t *testing.T) {
 				}
 				policyRepo.policyRules[policyID] = []network.PolicyRule{}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Get initial rule count
 				initialPolicy, _ := policyRepo.GetPolicy(ctx, networkID, policyID)
@@ -601,7 +663,8 @@ func TestProperty_PolicyRuleRemoval(t *testing.T) {
 				}
 				policyRepo.policyRules[policyID] = []network.PolicyRule{rule}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Get initial rule count
 				initialPolicy, _ := policyRepo.GetPolicy(ctx, networkID, policyID)
@@ -663,7 +726,8 @@ func TestProperty_PolicyUpdatePropagation(t *testing.T) {
 				}
 				policyRepo.policyRules[policyID] = []network.PolicyRule{}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Update policy
 				updatedPolicy, err := service.UpdatePolicy(ctx, networkID, policyID, &network.PolicyUpdateRequest{
@@ -706,7 +770,8 @@ func TestProperty_PolicyDeletionCleanup(t *testing.T) {
 				}
 				policyRepo.policyRules[policyID] = []network.PolicyRule{}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Delete policy
 				err := service.DeletePolicy(ctx, networkID, policyID)
@@ -744,7 +809,8 @@ func TestProperty_TemplatePolicyIndependence(t *testing.T) {
 					Name: "test-network",
 				}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Get templates
 				templates := service.GetDefaultTemplates()
@@ -814,7 +880,8 @@ func TestProperty_PolicyAttachmentApplication(t *testing.T) {
 					IsJump: true,
 				}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Generate iptables rules for jump peer
 				rules, err := service.GenerateIPTablesRules(ctx, networkID, jumpPeerID)
@@ -850,7 +917,8 @@ func TestProperty_MultiplePolicyOrdering(t *testing.T) {
 					Name: "test-network",
 				}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Create multiple policies
 				createdPolicies := make(map[string]bool)
@@ -909,7 +977,8 @@ func TestProperty_PolicyDetachmentCleanup(t *testing.T) {
 				}
 				policyRepo.policyRules[policyID] = []network.PolicyRule{}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Delete policy (cleanup)
 				err := service.DeletePolicy(ctx, networkID, policyID)
@@ -955,7 +1024,8 @@ func TestProperty_AutomaticPolicyApplicationOnJoin(t *testing.T) {
 				}
 				policyRepo.policyRules[policyID] = []network.PolicyRule{}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Verify policy can be retrieved (available for application)
 				policy, err := service.GetPolicy(ctx, networkID, policyID)
@@ -995,7 +1065,8 @@ func TestProperty_AutomaticPolicyRemovalOnLeave(t *testing.T) {
 				}
 				policyRepo.policyRules[policyID] = []network.PolicyRule{}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Verify policy exists and can be used for removal logic
 				policy, err := service.GetPolicy(ctx, networkID, policyID)
@@ -1034,7 +1105,8 @@ func TestProperty_PolicyOnlyAccessControl(t *testing.T) {
 					IsJump: true,
 				}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Generate iptables rules (should only use policy rules)
 				rules, err := service.GenerateIPTablesRules(ctx, networkID, jumpPeerID)
@@ -1093,7 +1165,8 @@ func TestProperty_DenyRuleEnforcement(t *testing.T) {
 				}
 				policyRepo.policyRules[policyID] = []network.PolicyRule{denyRule}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Get policy and verify deny rule is present
 				policy, err := service.GetPolicy(ctx, networkID, policyID)
@@ -1153,7 +1226,8 @@ func TestProperty_AllowRuleEnforcement(t *testing.T) {
 				}
 				policyRepo.policyRules[policyID] = []network.PolicyRule{allowRule}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Get policy and verify allow rule is present
 				policy, err := service.GetPolicy(ctx, networkID, policyID)
@@ -1204,7 +1278,8 @@ func TestProperty_DefaultDenyBehavior(t *testing.T) {
 					IsJump: true,
 				}
 
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter})
+				routeRepo := newMockRouteRepository()
+				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
 
 				// Generate iptables rules (should have default deny)
 				rules, err := service.GenerateIPTablesRules(ctx, networkID, jumpPeerID)

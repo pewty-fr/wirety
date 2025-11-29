@@ -152,10 +152,10 @@ export default function SecurityPage() {
 
       <div className="p-8">
         {/* Filters */}
-        <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-200 dark:border-gray-700 p-6 mb-6 shadow-sm">
+        <div className="relative z-20 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-200 dark:border-gray-700 p-6 mb-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Network Filter */}
-            <div>
+            <div className="relative z-30">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Network</label>
               <SearchableSelect
                 options={networkOptions}
@@ -170,7 +170,7 @@ export default function SecurityPage() {
             </div>
 
             {/* Peer Filter */}
-            <div>
+            <div className="relative z-20">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Peer</label>
               <SearchableSelect
                 options={peerOptions}

@@ -20,15 +20,17 @@ type Service struct {
 	policyRepo network.PolicyRepository
 	groupRepo  network.GroupRepository
 	peerRepo   network.Repository
+	routeRepo  network.RouteRepository
 	wsNotifier WebSocketNotifier
 }
 
 // NewService creates a new policy service
-func NewService(policyRepo network.PolicyRepository, groupRepo network.GroupRepository, peerRepo network.Repository) *Service {
+func NewService(policyRepo network.PolicyRepository, groupRepo network.GroupRepository, peerRepo network.Repository, routeRepo network.RouteRepository) *Service {
 	return &Service{
 		policyRepo: policyRepo,
 		groupRepo:  groupRepo,
 		peerRepo:   peerRepo,
+		routeRepo:  routeRepo,
 	}
 }
 
@@ -293,6 +295,29 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		return nil, fmt.Errorf("failed to list peers: %w", err)
 	}
 
+	// Find all groups that use this jump peer (via routes)
+	groupsUsingJumpPeer := make(map[string]bool)
+	if s.routeRepo != nil {
+		// Get all routes that use this jump peer
+		routes, err := s.routeRepo.GetRoutesByJumpPeer(ctx, networkID, jumpPeerID)
+		if err == nil {
+			// For each route, find which groups it's attached to
+			allGroups, err := s.groupRepo.ListGroups(ctx, networkID)
+			if err == nil {
+				for _, group := range allGroups {
+					for _, routeID := range group.RouteIDs {
+						for _, route := range routes {
+							if route.ID == routeID {
+								groupsUsingJumpPeer[group.ID] = true
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Generate iptables rules
 	var rules []string
 
@@ -306,6 +331,20 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		groups, err := s.groupRepo.GetPeerGroups(ctx, networkID, peer.ID)
 		if err != nil {
 			// If we can't get groups, skip this peer
+			continue
+		}
+
+		// Check if any of this peer's groups use this jump peer
+		peerUsesJumpPeer := false
+		for _, group := range groups {
+			if groupsUsingJumpPeer[group.ID] {
+				peerUsesJumpPeer = true
+				break
+			}
+		}
+
+		// Only generate rules for peers that use this jump peer
+		if !peerUsesJumpPeer {
 			continue
 		}
 
