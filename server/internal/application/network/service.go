@@ -613,6 +613,7 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 		}
 
 		// Generate iptables rules from policies attached to groups
+		log.Error().Interface("policyserver", s.policyService).Msg("debug 10")
 		if s.policyService != nil {
 			iptablesRules, err := s.policyService.GenerateIPTablesRules(ctx, networkID, peerID)
 			if err != nil {

@@ -281,10 +281,12 @@ func (s *Service) GetDefaultTemplates() []PolicyTemplate {
 // Rules are generated per-peer for the FORWARD chain since the jump peer routes traffic
 func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
 	// Verify jump peer exists
+	log.Info().Msg("debug 8")
 	jumpPeer, err := s.peerRepo.GetPeer(ctx, networkID, jumpPeerID)
 	if err != nil {
 		return nil, fmt.Errorf("jump peer not found: %w", err)
 	}
+	log.Info().Interface("jumppeer", jumpPeer).Msg("debug 8")
 
 	if !jumpPeer.IsJump {
 		return nil, fmt.Errorf("peer is not a jump peer")
@@ -295,6 +297,7 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 	if err != nil {
 		return nil, fmt.Errorf("failed to list peers: %w", err)
 	}
+	log.Info().Interface("allpeers", allPeers).Msg("debug 8")
 
 	// Find all groups that use this jump peer (via routes)
 	groupsUsingJumpPeer := make(map[string]bool)
