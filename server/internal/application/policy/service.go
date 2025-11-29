@@ -382,6 +382,20 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		}
 	}
 
+	// Add DNS rules to allow DNS queries/responses between jump server and all peers
+	// The jump server runs a DNS server, so we need to allow DNS traffic
+	for _, peer := range allPeers {
+		if peer.IsJump {
+			continue // Skip jump peers
+		}
+
+		// Allow DNS queries from peer to jump server (UDP port 53)
+		rules = append(rules, fmt.Sprintf("iptables -A INPUT -s %s -p udp --dport 53 -j ACCEPT", peer.Address))
+
+		// Allow DNS responses from jump server to peer (UDP port 53)
+		rules = append(rules, fmt.Sprintf("iptables -A OUTPUT -d %s -p udp --sport 53 -j ACCEPT", peer.Address))
+	}
+
 	// Add default deny rule at the end for FORWARD chain
 	rules = append(rules, "iptables -A FORWARD -j DROP")
 
