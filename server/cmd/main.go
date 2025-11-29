@@ -135,8 +135,8 @@ func main() {
 
 	// Initialize policy service
 	var policyService api.PolicyService
-	if policyRepo != nil {
-		policyServiceImpl := apppolicy.NewService(policyRepo, groupRepo, networkRepo)
+	if policyRepo != nil && routeRepo != nil {
+		policyServiceImpl := apppolicy.NewService(policyRepo, groupRepo, networkRepo, routeRepo)
 		policyService = api.NewPolicyServiceAdapter(policyServiceImpl)
 	}
 

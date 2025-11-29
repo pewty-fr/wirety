@@ -420,7 +420,22 @@ function GroupDetailModal({
       const allPeers = await api.getAllNetworkPeers(networkId);
       const groupPeerIds = new Set(updatedGroup.peer_ids || []);
       setPeers(allPeers.filter(p => groupPeerIds.has(p.id)));
-      setAvailablePeers(allPeers.filter(p => !groupPeerIds.has(p.id)));
+      
+      // Load group routes first to filter out jump peers used by routes
+      const [groupRoutes, allRoutes] = await Promise.all([
+        api.getGroupRoutes(networkId, updatedGroup.id),
+        api.getRoutes(networkId),
+      ]);
+      setRoutes(groupRoutes);
+      
+      // Get jump peer IDs used by routes in this group
+      const jumpPeerIdsInRoutes = new Set(groupRoutes.map(r => r.jump_peer_id));
+      
+      // Filter available peers: exclude group members and jump peers used by group routes
+      setAvailablePeers(allPeers.filter(p => 
+        !groupPeerIds.has(p.id) && 
+        !(p.is_jump && jumpPeerIdsInRoutes.has(p.id))
+      ));
 
       // Load group policies and all network policies
       const [groupPolicies, allPolicies] = await Promise.all([
@@ -431,14 +446,13 @@ function GroupDetailModal({
       const groupPolicyIds = new Set(groupPolicies.map(p => p.id));
       setAvailablePolicies(allPolicies.filter(p => !groupPolicyIds.has(p.id)));
 
-      // Load group routes and all network routes
-      const [groupRoutes, allRoutes] = await Promise.all([
-        api.getGroupRoutes(networkId, updatedGroup.id),
-        api.getRoutes(networkId),
-      ]);
-      setRoutes(groupRoutes);
+      // Available routes (already loaded above)
+      // Filter out routes that are already attached or whose jump peer is in the group
       const groupRouteIds = new Set(groupRoutes.map(r => r.id));
-      setAvailableRoutes(allRoutes.filter(r => !groupRouteIds.has(r.id)));
+      setAvailableRoutes(allRoutes.filter(r => 
+        !groupRouteIds.has(r.id) && 
+        !groupPeerIds.has(r.jump_peer_id)
+      ));
     } catch (error) {
       console.error('Failed to load group details:', error);
     } finally {
@@ -448,13 +462,31 @@ function GroupDetailModal({
 
   const handleAddPeer = async (peerId: string) => {
     if (!group || !networkId) return;
+    
+    // Check if the peer is a jump peer
+    const peer = availablePeers.find(p => p.id === peerId);
+    if (peer && peer.is_jump) {
+      // Check if any routes in this group use this jump peer
+      const conflictingRoutes = routes.filter(route => route.jump_peer_id === peerId);
+      if (conflictingRoutes.length > 0) {
+        const routeNames = conflictingRoutes.map(r => r.name).join(', ');
+        alert(`Cannot add jump peer "${peer.name}" to this group because it is the gateway for the following routes attached to this group: ${routeNames}`);
+        return;
+      }
+    }
+    
     try {
       await api.addPeerToGroup(networkId, group.id, peerId);
       await loadGroupDetails();
       onUpdate();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to add peer:', error);
-      alert('Failed to add peer to group');
+      // Check if it's a circular routing error from the backend
+      if (error.response?.data?.error) {
+        alert(error.response.data.error);
+      } else {
+        alert('Failed to add peer to group');
+      }
     }
   };
 
@@ -496,13 +528,29 @@ function GroupDetailModal({
 
   const handleAttachRoute = async (routeId: string) => {
     if (!group || !networkId) return;
+    
+    // Check if the route's jump peer is a member of this group
+    const route = availableRoutes.find(r => r.id === routeId);
+    if (route) {
+      const jumpPeerInGroup = peers.find(p => p.id === route.jump_peer_id);
+      if (jumpPeerInGroup) {
+        alert(`Cannot attach route "${route.name}" to this group because its jump peer "${jumpPeerInGroup.name}" is a member of this group. This would create a circular routing configuration.`);
+        return;
+      }
+    }
+    
     try {
       await api.attachRouteToGroup(networkId, group.id, routeId);
       await loadGroupDetails();
       onUpdate();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to attach route:', error);
-      alert('Failed to attach route to group');
+      // Check if it's a circular routing error from the backend
+      if (error.response?.data?.error) {
+        alert(error.response.data.error);
+      } else {
+        alert('Failed to attach route to group');
+      }
     }
   };
 

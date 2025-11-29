@@ -374,44 +374,56 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
           )}
 
           {/* Effective Policies */}
-          {policies.length > 0 && (
+          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
             <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
               <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Effective Policies</h4>
-              <div className="space-y-2">
-                {policies.map((policy) => (
-                  <div key={policy.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
-                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{policy.name}</div>
-                    {policy.description && (
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{policy.description}</div>
-                    )}
-                    {policy.rules && policy.rules.length > 0 && (
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        {policy.rules.length} rule{policy.rules.length !== 1 ? 's' : ''}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+              {loadingDetails ? (
+                <div className="text-sm text-gray-500">Loading policies...</div>
+              ) : policies.length > 0 ? (
+                <div className="space-y-2">
+                  {policies.map((policy) => (
+                    <div key={policy.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{policy.name}</div>
+                      {policy.description && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{policy.description}</div>
+                      )}
+                      {policy.rules && policy.rules.length > 0 && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          {policy.rules.length} rule{policy.rules.length !== 1 ? 's' : ''}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No policies attached to this peer's groups</div>
+              )}
             </div>
           )}
 
           {/* Effective Routes */}
-          {routes.length > 0 && (
+          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
             <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
               <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Effective Routes</h4>
-              <div className="space-y-2">
-                {routes.map((route) => (
-                  <div key={route.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
-                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{route.name}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      {route.destination_cidr}
+              {loadingDetails ? (
+                <div className="text-sm text-gray-500">Loading routes...</div>
+              ) : routes.length > 0 ? (
+                <div className="space-y-2">
+                  {routes.map((route) => (
+                    <div key={route.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{route.name}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {route.destination_cidr}
+                      </div>
+                      {route.description && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{route.description}</div>
+                      )}
                     </div>
-                    {route.description && (
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{route.description}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No routes attached to this peer's groups</div>
+              )}
             </div>
           )}
 
