@@ -583,11 +583,13 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 	if s.routeRepo != nil && s.groupRepo != nil {
 		// Get all groups this peer belongs to
 		groups, err := s.groupRepo.GetPeerGroups(ctx, networkID, peerID)
+		log.Info().Interface("groups", groups).Msg("debug 1")
 		if err == nil {
 			// Collect all routes from all groups
 			routeMap := make(map[string]*network.Route) // Use map to deduplicate routes
 			for _, group := range groups {
 				routes, err := s.groupRepo.GetGroupRoutes(ctx, networkID, group.ID)
+				log.Info().Str("group", group.ID).Interface("routes", routes).Msg("debug 2")
 				if err == nil {
 					for _, route := range routes {
 						routeMap[route.ID] = route

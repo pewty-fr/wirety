@@ -8,6 +8,7 @@ import (
 	"wirety/internal/domain/network"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 )
 
 // WebSocketNotifier is an interface for notifying peers about config updates
@@ -300,6 +301,7 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 	if s.routeRepo != nil {
 		// Get all routes that use this jump peer
 		routes, err := s.routeRepo.GetRoutesByJumpPeer(ctx, networkID, jumpPeerID)
+		log.Info().Str("jumpID", jumpPeerID).Interface("routes", routes).Msg("debug 3")
 		if err == nil {
 			// For each route, find which groups it's attached to
 			allGroups, err := s.groupRepo.ListGroups(ctx, networkID)
@@ -317,6 +319,8 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 			}
 		}
 	}
+
+	log.Info().Interface("groupsUsingJumpPeer", groupsUsingJumpPeer).Msg("debug 4")
 
 	// Generate iptables rules
 	var rules []string
@@ -352,6 +356,7 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		policyMap := make(map[string]*network.Policy)
 		for _, group := range groups {
 			policies, err := s.policyRepo.GetPoliciesForGroup(ctx, networkID, group.ID)
+			log.Info().Interface("policies", policies).Str("group", group.ID).Msg("debug 5")
 			if err != nil {
 				continue
 			}
@@ -368,6 +373,7 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		for _, policy := range policyMap {
 			for _, rule := range policy.Rules {
 				peerRules := s.generateIPTablesRulesForPeer(peer.Address, rule)
+				log.Info().Strs("rules", peerRules).Msg("debug 6")
 				rules = append(rules, peerRules...)
 			}
 		}
