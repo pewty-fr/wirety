@@ -8,7 +8,6 @@ import (
 	"wirety/internal/domain/network"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 )
 
 // WebSocketNotifier is an interface for notifying peers about config updates
@@ -281,12 +280,10 @@ func (s *Service) GetDefaultTemplates() []PolicyTemplate {
 // Rules are generated per-peer for the FORWARD chain since the jump peer routes traffic
 func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
 	// Verify jump peer exists
-	log.Info().Msg("debug 8")
 	jumpPeer, err := s.peerRepo.GetPeer(ctx, networkID, jumpPeerID)
 	if err != nil {
 		return nil, fmt.Errorf("jump peer not found: %w", err)
 	}
-	log.Info().Interface("jumppeer", jumpPeer).Msg("debug 8")
 
 	if !jumpPeer.IsJump {
 		return nil, fmt.Errorf("peer is not a jump peer")
@@ -297,14 +294,12 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 	if err != nil {
 		return nil, fmt.Errorf("failed to list peers: %w", err)
 	}
-	log.Info().Interface("allpeers", allPeers).Msg("debug 8")
 
 	// Find all groups that use this jump peer (via routes)
 	groupsUsingJumpPeer := make(map[string]bool)
 	if s.routeRepo != nil {
 		// Get all routes that use this jump peer
 		routes, err := s.routeRepo.GetRoutesByJumpPeer(ctx, networkID, jumpPeerID)
-		log.Info().Str("jumpID", jumpPeerID).Interface("routes", routes).Msg("debug 3")
 		if err == nil {
 			// For each route, find which groups it's attached to
 			allGroups, err := s.groupRepo.ListGroups(ctx, networkID)
@@ -322,8 +317,6 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 			}
 		}
 	}
-
-	log.Info().Interface("groupsUsingJumpPeer", groupsUsingJumpPeer).Msg("debug 4")
 
 	// Generate iptables rules
 	var rules []string
@@ -359,7 +352,6 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		policyMap := make(map[string]*network.Policy)
 		for _, group := range groups {
 			policies, err := s.policyRepo.GetPoliciesForGroup(ctx, networkID, group.ID)
-			log.Info().Interface("policies", policies).Str("group", group.ID).Msg("debug 5")
 			if err != nil {
 				continue
 			}
@@ -376,7 +368,6 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		for _, policy := range policyMap {
 			for _, rule := range policy.Rules {
 				peerRules := s.generateIPTablesRulesForPeer(peer.Address, rule)
-				log.Info().Strs("rules", peerRules).Msg("debug 6")
 				rules = append(rules, peerRules...)
 			}
 		}
