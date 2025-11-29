@@ -203,8 +203,18 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				r.dnsServerMu.Lock()
 				if r.dnsServer == nil {
 					// First time: create and start DNS server
-					log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("starting DNS server")
+					log.Info().
+						Str("domain", payload.DNS.Domain).
+						Int("peer_count", len(payload.DNS.Peers)).
+						Strs("upstream_servers", payload.DNS.UpstreamServers).
+						Msg("starting DNS server")
 					r.dnsServer = r.dnsFactory(payload.DNS.Domain, payload.DNS.Peers)
+
+					// Set upstream DNS servers for forwarding
+					if len(payload.DNS.UpstreamServers) > 0 {
+						r.dnsServer.SetUpstreamServers(payload.DNS.UpstreamServers)
+					}
+
 					go func() {
 						if err := r.dnsServer.Start(fmt.Sprintf("%s:53", payload.DNS.IP)); err != nil {
 							log.Error().Err(err).Msg("dns server exited")
@@ -212,8 +222,17 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					}()
 				} else {
 					// Subsequent times: update existing DNS server
-					log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("updating DNS server configuration")
+					log.Info().
+						Str("domain", payload.DNS.Domain).
+						Int("peer_count", len(payload.DNS.Peers)).
+						Strs("upstream_servers", payload.DNS.UpstreamServers).
+						Msg("updating DNS server configuration")
 					r.dnsServer.Update(payload.DNS.Domain, payload.DNS.Peers)
+
+					// Update upstream DNS servers
+					if len(payload.DNS.UpstreamServers) > 0 {
+						r.dnsServer.SetUpstreamServers(payload.DNS.UpstreamServers)
+					}
 				}
 				r.dnsServerMu.Unlock()
 			}

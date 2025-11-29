@@ -16,6 +16,7 @@ type ConfigWriterPort interface {
 type DNSStarterPort interface {
 	Start(addr string) error
 	Update(domain string, peers []dom.DNSPeer)
+	SetUpstreamServers(servers []string) // Set upstream DNS servers for forwarding
 }
 
 // WebSocketClientPort defines capability to connect and receive messages.

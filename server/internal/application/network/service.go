@@ -520,9 +520,10 @@ type DNSPeer struct {
 }
 
 type PeerDNSConfig struct {
-	IP     string    `json:"ip"`
-	Domain string    `json:"domain"`
-	Peers  []DNSPeer `json:"peers"`
+	IP              string    `json:"ip"`
+	Domain          string    `json:"domain"`
+	Peers           []DNSPeer `json:"peers"`
+	UpstreamServers []string  `json:"upstream_servers"` // Upstream DNS servers for forwarding
 }
 
 // sanitizeDNSLabel converts a peer name into a DNS-safe lowercase label.
@@ -679,9 +680,10 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 		}
 
 		dnsConfig = &PeerDNSConfig{
-			IP:     peer.Address,
-			Domain: fmt.Sprintf("%s.%s", net.Name, domainSuffix),
-			Peers:  peerList,
+			IP:              peer.Address,
+			Domain:          fmt.Sprintf("%s.%s", net.Name, domainSuffix),
+			Peers:           peerList,
+			UpstreamServers: net.DNS, // Use network's configured DNS servers for forwarding
 		}
 	} else {
 		// For non-jump peers using agent, send an empty policy to trigger firewall initialization
