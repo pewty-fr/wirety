@@ -4,14 +4,53 @@ on:
   pull_request:
     branches:
       - main
+    paths:
+      - 'agent/**'
+      - 'server/**'
+      - 'front/**'
+      - 'doc/**'
+      - 'helm/**'
   push:
     branches:
       - main
 
 jobs:
+  # Detect which paths changed
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      agent: ${{ steps.filter.outputs.agent }}
+      server: ${{ steps.filter.outputs.server }}
+      front: ${{ steps.filter.outputs.front }}
+      doc: ${{ steps.filter.outputs.doc }}
+      helm: ${{ steps.filter.outputs.helm }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            agent:
+              - 'agent/**'
+              - '.github/workflows/test.yml'
+            server:
+              - 'server/**'
+              - '.github/workflows/test.yml'
+            front:
+              - 'front/**'
+              - '.github/workflows/test.yml'
+            doc:
+              - 'doc/**'
+              - '.github/workflows/test.yml'
+            helm:
+              - 'helm/**'
+              - '.github/workflows/test.yml'
+
   test-agent:
     name: Test Agent
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ needs.changes.outputs.agent == 'true' }}
     defaults:
       run:
         working-directory: ./agent
@@ -44,6 +83,8 @@ jobs:
   test-server:
     name: Test Server
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ needs.changes.outputs.server == 'true' }}
     defaults:
       run:
         working-directory: ./server
@@ -76,6 +117,8 @@ jobs:
   test-front:
     name: Test Frontend
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ needs.changes.outputs.front == 'true' }}
     defaults:
       run:
         working-directory: ./front
@@ -97,9 +140,11 @@ jobs:
   test-doc:
     name: Test Documentation
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ needs.changes.outputs.doc == 'true' }}
     defaults:
       run:
-        working-directory: ./doc/website
+        working-directory: ./doc
     steps:
       - uses: actions/checkout@v6
       
@@ -118,6 +163,8 @@ jobs:
   lint-helm:
     name: Lint Helm Chart
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ needs.changes.outputs.helm == 'true' }}
     steps:
       - uses: actions/checkout@v6
       
