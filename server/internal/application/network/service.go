@@ -623,6 +623,7 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 					Str("peer_id", peerID).
 					Msg("failed to generate iptables rules for jump peer")
 			} else {
+				log.Error().Err(err).Msg("debug 7")
 				policy.IPTablesRules = iptablesRules
 			}
 		}
