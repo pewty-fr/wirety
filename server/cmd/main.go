@@ -138,6 +138,8 @@ func main() {
 	if policyRepo != nil && routeRepo != nil {
 		policyServiceImpl := apppolicy.NewService(policyRepo, groupRepo, networkRepo, routeRepo)
 		policyService = api.NewPolicyServiceAdapter(policyServiceImpl)
+		// Set policy service on network service for iptables rule generation
+		networkService.SetPolicyService(policyServiceImpl)
 	}
 
 	// Initialize route service
