@@ -697,6 +697,7 @@ function GroupModal({
 
         {/* Details Tab */}
         {activeTab === 'details' && (
+          <div className="p-6">
           <form onSubmit={handleSubmit}>
             <div className="space-y-4">
               <div>
@@ -765,10 +766,12 @@ function GroupModal({
               </button>
             </div>
           </form>
+          </div>
         )}
 
         {/* Peers Tab */}
         {activeTab === 'peers' && (
+          <div className="p-6">
           <div className="space-y-3">
             {peers.map((peer) => (
               <div key={peer.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
@@ -826,10 +829,12 @@ function GroupModal({
               </button>
             </div>
           </div>
+          </div>
         )}
 
         {/* Policies Tab */}
         {activeTab === 'policies' && (
+          <div className="p-6">
           <div className="space-y-3">
             {policies.length > 1 && (
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -931,10 +936,12 @@ function GroupModal({
               </button>
             </div>
           </div>
+          </div>
         )}
 
         {/* Routes Tab */}
         {activeTab === 'routes' && (
+          <div className="p-6">
           <div className="space-y-3">
             {routes.map((route) => (
               <div key={route.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
@@ -993,6 +1000,7 @@ function GroupModal({
                 Close
               </button>
             </div>
+          </div>
           </div>
         )}
         </div>

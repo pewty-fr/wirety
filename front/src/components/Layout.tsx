@@ -23,16 +23,38 @@ import ProfileModal from './ProfileModal';
 import FooterBanner from './FooterBanner';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
 
-const navigation: { name: string; href: string; icon: IconDefinition; adminOnly?: boolean }[] = [
-  { name: 'Dashboard', href: '/dashboard', icon: faChartLine },
-  { name: 'Networks', href: '/networks', icon: faNetworkWired },
-  { name: 'Peers', href: '/peers', icon: faServer },
-  { name: 'Groups', href: '/groups', icon: faUsersGear, adminOnly: true },
-  { name: 'Policies', href: '/policies', icon: faShieldAlt, adminOnly: true },
-  { name: 'Routes', href: '/routes', icon: faRoute, adminOnly: true },
-  { name: 'IPAM', href: '/ipam', icon: faMapMarkerAlt },
-  { name: 'Security', href: '/security', icon: faShieldAlt },
-  { name: 'Users', href: '/users', icon: faUsers, adminOnly: true },
+const navigationSections: { 
+  title?: string; 
+  items: { name: string; href: string; icon: IconDefinition; adminOnly?: boolean }[] 
+}[] = [
+  {
+    items: [
+      { name: 'Dashboard', href: '/dashboard', icon: faChartLine },
+    ]
+  },
+  {
+    title: 'Network',
+    items: [
+      { name: 'Networks', href: '/networks', icon: faNetworkWired },
+      { name: 'Peers', href: '/peers', icon: faServer },
+      { name: 'IPAM', href: '/ipam', icon: faMapMarkerAlt },
+    ]
+  },
+  {
+    title: 'Access Control',
+    items: [
+      { name: 'Groups', href: '/groups', icon: faUsersGear, adminOnly: true },
+      { name: 'Policies', href: '/policies', icon: faShieldAlt, adminOnly: true },
+      { name: 'Routes', href: '/routes', icon: faRoute, adminOnly: true },
+    ]
+  },
+  {
+    title: 'Administration',
+    items: [
+      { name: 'Security', href: '/security', icon: faShieldAlt },
+      { name: 'Users', href: '/users', icon: faUsers, adminOnly: true },
+    ]
+  },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -44,13 +66,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const isAdmin = user?.role === 'administrator';
 
-  // Filter navigation items based on user role
-  const visibleNavigation = navigation.filter(item => {
-    if (item.adminOnly && !isAdmin) {
-      return false;
-    }
-    return true;
-  });
+  // Filter navigation sections based on user role
+  const visibleNavigationSections = navigationSections.map(section => ({
+    ...section,
+    items: section.items.filter(item => {
+      if (item.adminOnly && !isAdmin) {
+        return false;
+      }
+      return true;
+    })
+  })).filter(section => section.items.length > 0);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-dark">
@@ -85,25 +110,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            {visibleNavigation.map((item) => {
-              const isActive = location.pathname.startsWith(item.href);
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  onClick={() => setIsSidebarOpen(false)}
-                  className={`flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-gradient-to-r from-primary-500 to-accent-blue text-white dark:from-primary-600 dark:to-accent-blue dark:text-white'
-                      : 'text-gray-700 dark:text-gray-300 hover:bg-gradient-to-r hover:from-primary-100 hover:to-accent-blue/10 dark:hover:from-gray-700 dark:hover:to-primary-900'
-                  }`}
-                >
-                  <FontAwesomeIcon icon={item.icon} className="mr-3 text-lg" />
-                  {item.name}
-                </Link>
-              );
-            })}
+          <nav className="flex-1 px-3 py-4 space-y-4 overflow-y-auto">
+            {visibleNavigationSections.map((section, sectionIndex) => (
+              <div key={sectionIndex}>
+                {section.title && (
+                  <div className="px-3 mb-2">
+                    <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      {section.title}
+                    </h3>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  {section.items.map((item) => {
+                    const isActive = location.pathname.startsWith(item.href);
+                    return (
+                      <Link
+                        key={item.name}
+                        to={item.href}
+                        onClick={() => setIsSidebarOpen(false)}
+                        className={`flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                          isActive
+                            ? 'bg-gradient-to-r from-primary-500 to-accent-blue text-white dark:from-primary-600 dark:to-accent-blue dark:text-white'
+                            : 'text-gray-700 dark:text-gray-300 hover:bg-gradient-to-r hover:from-primary-100 hover:to-accent-blue/10 dark:hover:from-gray-700 dark:hover:to-primary-900'
+                        }`}
+                      >
+                        <FontAwesomeIcon icon={item.icon} className="mr-3 text-lg" />
+                        {item.name}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
 
           {/* Footer */}

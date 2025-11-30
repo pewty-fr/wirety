@@ -547,6 +547,7 @@ function PolicyModal({
 
         {/* Details Tab */}
         {activeTab === 'details' && (
+          <div className="p-6">
           <form onSubmit={handleSubmit}>
             <div className="space-y-4">
               <div>
@@ -590,10 +591,12 @@ function PolicyModal({
               </button>
             </div>
           </form>
+          </div>
         )}
 
         {/* Rules Tab */}
         {activeTab === 'rules' && (
+          <div className="p-6">
           <div className="space-y-3">
             <div className="flex justify-between items-center mb-3">
               <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -658,10 +661,12 @@ function PolicyModal({
               </button>
             </div>
           </div>
+          </div>
         )}
 
         {/* Groups Tab */}
         {activeTab === 'groups' && (
+          <div className="p-6">
           <div className="space-y-3">
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
               Groups that have this policy attached
@@ -718,6 +723,7 @@ function PolicyModal({
                 Close
               </button>
             </div>
+          </div>
           </div>
         )}
 
