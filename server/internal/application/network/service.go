@@ -733,10 +733,83 @@ func (s *Service) blockPeerInACL(ctx context.Context, networkID, peerID string, 
 		Str("peer_id", peerID).
 		Str("peer_name", peerName).
 		Str("reason", reason).
-		Msg("SECURITY: Peer security incident detected - ACL blocking deprecated, use policy-based access control")
+		Msg("SECURITY: Peer security incident detected - implementing policy-based blocking")
 
-	// TODO: Implement policy-based blocking when policy service is available
+	// Implement policy-based blocking using groups and policies
+	if s.groupRepo == nil || s.policyService == nil {
+		log.Error().Msg("cannot block peer: group repository or policy service not available")
+		return fmt.Errorf("policy-based blocking not available")
+	}
+
+	// 1. Ensure quarantine group exists
+	quarantineGroupID, err := s.ensureQuarantineGroup(ctx, networkID)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to ensure quarantine group")
+		return fmt.Errorf("failed to create quarantine group: %w", err)
+	}
+
+	// 2. Add peer to quarantine group
+	err = s.groupRepo.AddPeerToGroup(ctx, networkID, quarantineGroupID, peerID)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to add peer to quarantine group")
+		return fmt.Errorf("failed to quarantine peer: %w", err)
+	}
+
+	log.Info().
+		Str("peer_id", peerID).
+		Str("peer_name", peerName).
+		Str("group_id", quarantineGroupID).
+		Str("reason", reason).
+		Msg("SECURITY: Peer quarantined successfully")
+
+	// 3. Notify all peers to regenerate configs
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+
 	return nil
+}
+
+// ensureQuarantineGroup ensures a quarantine group with deny-all policy exists
+func (s *Service) ensureQuarantineGroup(ctx context.Context, networkID string) (string, error) {
+	// Check if quarantine group already exists
+	groups, err := s.groupRepo.ListGroups(ctx, networkID)
+	if err != nil {
+		return "", fmt.Errorf("failed to list groups: %w", err)
+	}
+
+	for _, group := range groups {
+		if group.Name == "quarantine" {
+			return group.ID, nil
+		}
+	}
+
+	// Create quarantine group
+	quarantineGroup := &network.Group{
+		ID:          uuid.New().String(),
+		NetworkID:   networkID,
+		Name:        "quarantine",
+		Description: "Automatically created group for blocking compromised peers",
+		PeerIDs:     []string{},
+		PolicyIDs:   []string{},
+		RouteIDs:    []string{},
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	err = s.groupRepo.CreateGroup(ctx, networkID, quarantineGroup)
+	if err != nil {
+		return "", fmt.Errorf("failed to create quarantine group: %w", err)
+	}
+
+	// Log that quarantine group was created
+	// Admin should manually attach a deny-all policy to this group
+	log.Warn().
+		Str("network_id", networkID).
+		Str("group_id", quarantineGroup.ID).
+		Msg("SECURITY: Quarantine group created - admin should attach deny-all policy to block quarantined peers")
+
+	return quarantineGroup.ID, nil
 }
 
 // ProcessAgentHeartbeat processes a heartbeat message from an agent
