@@ -106,7 +106,7 @@ export default function DashboardPage() {
         security: {
           total: securityRes?.total || 0,
           unresolved: securityData.filter(i => !i.resolved).length,
-          recentIncidents: securityData.slice(0, 5),
+          recentIncidents: securityData.filter(i => !i.resolved).slice(0, 5),
         },
         users: {
           total: usersData.length,
@@ -311,10 +311,10 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Recent Security Incidents */}
+        {/* Active Security Incidents */}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Recent Security Incidents</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Active Security Incidents</h2>
             <Link to="/security" className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
               View all →
             </Link>
@@ -325,7 +325,7 @@ export default function DashboardPage() {
               <div className="text-4xl mb-2">
                 <FontAwesomeIcon icon={faCircleCheck} className="text-green-500" />
               </div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">No security incidents</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">No active security incidents</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -342,11 +342,9 @@ export default function DashboardPage() {
                     }`}>
                       {incident.incident_type.replace('_', ' ')}
                     </span>
-                    {!incident.resolved && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-                        Active
-                      </span>
-                    )}
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                      Active
+                    </span>
                   </div>
                   <div className="text-sm text-gray-900 dark:text-white">{incident.peer_name}</div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
