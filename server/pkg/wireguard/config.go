@@ -78,7 +78,7 @@ func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network
 	// For jump peers: include all peer addresses and all route CIDRs
 	if peer.IsJump {
 		// Include network CIDR for peer-to-peer communication
-		allowedIPs = []string{peer.Address}
+		allowedIPs = []string{fmt.Sprintf("%s/32", allowedPeer.Address)}
 
 		// Include all route destination CIDRs for external network access
 		for _, route := range routes {
