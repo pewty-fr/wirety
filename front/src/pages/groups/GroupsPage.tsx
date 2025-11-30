@@ -625,9 +625,26 @@ function GroupModal({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="p-6">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-          {group ? 'Edit Group' : 'Create Group'}
-        </h2>
+        {/* Header Info */}
+        {group && (
+          <div className="flex items-start justify-between mb-6">
+            <div className="flex items-start gap-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
+                <FontAwesomeIcon icon={faUsers} className="text-2xl text-white" />
+              </div>
+              <div>
+                <h3 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-gray-100 dark:to-gray-300 bg-clip-text text-transparent">{group.name}</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {group.id}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {!group && (
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+            Create Group
+          </h2>
+        )}
 
         {/* Tabs - available in both create and edit modes */}
         <div className="flex border-b border-gray-200 dark:border-gray-700 mb-4">
