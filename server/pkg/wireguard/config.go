@@ -62,6 +62,11 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 		if allowedPeer.Endpoint != "" {
 			sb.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", allowedPeer.Endpoint, allowedPeer.ListenPort))
 			sb.WriteString("PersistentKeepalive = 25\n")
+		} else if peer.IsJump && !allowedPeer.IsJump {
+			// Jump server connecting to regular peer (no endpoint)
+			// Add keepalive so jump server can initiate handshakes and maintain connection
+			// This is critical for mobile peers behind NAT
+			sb.WriteString("PersistentKeepalive = 25\n")
 		}
 
 		sb.WriteString("\n")
