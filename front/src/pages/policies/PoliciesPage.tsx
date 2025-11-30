@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faShieldAlt, faPencil, faTrash, faPlus, faCopy } from '@fortawesome/free-solid-svg-icons';
+import { faShieldAlt, faPencil, faTrash, faPlus, faCopy, faUsers, faList } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import SearchableSelect from '../../components/SearchableSelect';
 import api from '../../api/client';
@@ -13,7 +13,7 @@ export default function PoliciesPage() {
   const [selectedNetworkId, setSelectedNetworkId] = useState<string>('');
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isPolicyModalOpen, setIsPolicyModalOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<Policy | null>(null);
   const [selectedPolicy, setSelectedPolicy] = useState<Policy | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -66,25 +66,29 @@ export default function PoliciesPage() {
 
   const handleCreate = () => {
     setEditingPolicy(null);
-    setIsModalOpen(true);
+    setIsPolicyModalOpen(true);
   };
 
-  const handleEdit = (policy: Policy, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleEdit = (policy: Policy, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     setEditingPolicy(policy);
-    setIsModalOpen(true);
+    setIsPolicyModalOpen(true);
+  };
+
+  const handleDeletePolicy = async (policyId: string) => {
+    try {
+      await api.deletePolicy(selectedNetworkId, policyId);
+      loadPolicies();
+    } catch (error) {
+      console.error('Failed to delete policy:', error);
+      alert('Failed to delete policy');
+    }
   };
 
   const handleDelete = async (policy: Policy, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm(`Are you sure you want to delete policy "${policy.name}"?`)) {
-      try {
-        await api.deletePolicy(selectedNetworkId, policy.id);
-        loadPolicies();
-      } catch (error) {
-        console.error('Failed to delete policy:', error);
-        alert('Failed to delete policy');
-      }
+      await handleDeletePolicy(policy.id);
     }
   };
 
@@ -235,9 +239,9 @@ export default function PoliciesPage() {
       </div>
 
       <PolicyModal
-        isOpen={isModalOpen}
+        isOpen={isPolicyModalOpen}
         onClose={() => {
-          setIsModalOpen(false);
+          setIsPolicyModalOpen(false);
           setEditingPolicy(null);
         }}
         onSuccess={loadPolicies}
@@ -254,6 +258,9 @@ export default function PoliciesPage() {
         policy={selectedPolicy}
         networkId={selectedNetworkId}
         onUpdate={loadPolicies}
+        onEdit={handleEdit}
+        onDelete={handleDeletePolicy}
+        setIsPolicyModalOpen={setIsPolicyModalOpen}
       />
 
       <TemplateModal
@@ -280,19 +287,72 @@ function PolicyModal({
   networkId: string;
   policy: Policy | null;
 }) {
+  const [activeTab, setActiveTab] = useState<'details' | 'rules' | 'groups'>('details');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // Rules management
+  const [rules, setRules] = useState<PolicyRule[]>([]);
+  const [isAddRuleModalOpen, setIsAddRuleModalOpen] = useState(false);
+  
+  // Groups management
+  const [attachedGroups, setAttachedGroups] = useState<any[]>([]);
+  const [availableGroups, setAvailableGroups] = useState<any[]>([]);
+  
+  // Staged attachments for creation mode
+  const [stagedRules, setStagedRules] = useState<Omit<PolicyRule, 'id'>[]>([]);
+  const [stagedGroupIds, setStagedGroupIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (policy) {
       setName(policy.name);
       setDescription(policy.description || '');
+      setRules(policy.rules || []);
+      setStagedRules([]);
+      setStagedGroupIds([]);
+      loadAttachments();
     } else {
       setName('');
       setDescription('');
+      setRules([]);
+      setStagedRules([]);
+      setStagedGroupIds([]);
+      setAttachedGroups([]);
+      loadAvailableItems();
     }
-  }, [policy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policy, networkId, isOpen]);
+
+  const loadAvailableItems = async () => {
+    if (!networkId) return;
+
+    try {
+      const allGroups = await api.getGroups(networkId);
+      setAvailableGroups(allGroups);
+    } catch (error) {
+      console.error('Failed to load available items:', error);
+    }
+  };
+
+  const loadAttachments = async () => {
+    if (!policy || !networkId) return;
+
+    try {
+      // Load all groups in the network
+      const allGroups = await api.getGroups(networkId);
+      
+      // Filter groups that have this policy attached
+      const groupsWithPolicy = allGroups.filter(g => g.policy_ids?.includes(policy.id));
+      setAttachedGroups(groupsWithPolicy);
+      
+      // Available groups are those without this policy
+      const groupsWithoutPolicy = allGroups.filter(g => !g.policy_ids?.includes(policy.id));
+      setAvailableGroups(groupsWithoutPolicy);
+    } catch (error) {
+      console.error('Failed to load groups:', error);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -300,9 +360,29 @@ function PolicyModal({
 
     try {
       if (policy) {
+        // Update existing policy
         await api.updatePolicy(networkId, policy.id, { name, description });
       } else {
-        await api.createPolicy(networkId, { name, description });
+        // Create new policy
+        const newPolicy = await api.createPolicy(networkId, { name, description });
+        
+        // Attach staged items
+        const attachPromises = [];
+        
+        // Add staged rules
+        for (const rule of stagedRules) {
+          attachPromises.push(api.addRuleToPolicy(networkId, newPolicy.id, rule));
+        }
+        
+        // Attach to staged groups
+        for (const groupId of stagedGroupIds) {
+          attachPromises.push(api.attachPolicyToGroup(networkId, groupId, newPolicy.id));
+        }
+        
+        // Wait for all attachments to complete
+        if (attachPromises.length > 0) {
+          await Promise.all(attachPromises);
+        }
       }
       onSuccess();
       onClose();
@@ -311,6 +391,96 @@ function PolicyModal({
       alert('Failed to save policy');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAddRule = async (rule: Omit<PolicyRule, 'id'>) => {
+    if (rule.target_type === 'route') rule.target_type = 'cidr';
+    
+    if (policy && networkId) {
+      // Edit mode: add immediately
+      try {
+        await api.addRuleToPolicy(networkId, policy.id, rule);
+        const updatedPolicy = await api.getPolicy(networkId, policy.id);
+        setRules(updatedPolicy.rules || []);
+        onSuccess();
+        setIsAddRuleModalOpen(false);
+      } catch (error) {
+        console.error('Failed to add rule:', error);
+        alert('Failed to add rule to policy');
+      }
+    } else {
+      // Creation mode: stage for later
+      setStagedRules([...stagedRules, rule]);
+      // Add to rules with a temporary ID for display
+      setRules([...rules, { ...rule, id: `temp-${Date.now()}` } as PolicyRule]);
+      setIsAddRuleModalOpen(false);
+    }
+  };
+
+  const handleRemoveRule = async (ruleId: string) => {
+    if (policy && networkId) {
+      // Edit mode: remove immediately
+      try {
+        await api.removeRuleFromPolicy(networkId, policy.id, ruleId);
+        const updatedPolicy = await api.getPolicy(networkId, policy.id);
+        setRules(updatedPolicy.rules || []);
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to remove rule:', error);
+        alert('Failed to remove rule from policy');
+      }
+    } else {
+      // Creation mode: unstage
+      const ruleIndex = rules.findIndex(r => r.id === ruleId);
+      if (ruleIndex >= 0) {
+        setRules(rules.filter(r => r.id !== ruleId));
+        setStagedRules(stagedRules.filter((_, i) => i !== ruleIndex));
+      }
+    }
+  };
+
+  const handleAttachToGroup = async (groupId: string) => {
+    const group = availableGroups.find(g => g.id === groupId);
+    if (!group) return;
+    
+    if (policy && networkId) {
+      // Edit mode: attach immediately
+      try {
+        await api.attachPolicyToGroup(networkId, groupId, policy.id);
+        await loadAttachments();
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to attach policy to group:', error);
+        alert('Failed to attach policy to group');
+      }
+    } else {
+      // Creation mode: stage for later
+      setStagedGroupIds([...stagedGroupIds, groupId]);
+      setAttachedGroups([...attachedGroups, group]);
+      setAvailableGroups(availableGroups.filter(g => g.id !== groupId));
+    }
+  };
+
+  const handleDetachFromGroup = async (groupId: string) => {
+    if (policy && networkId) {
+      // Edit mode: detach immediately
+      try {
+        await api.detachPolicyFromGroup(networkId, groupId, policy.id);
+        await loadAttachments();
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to detach policy from group:', error);
+        alert('Failed to detach policy from group');
+      }
+    } else {
+      // Creation mode: unstage
+      const group = attachedGroups.find(g => g.id === groupId);
+      if (group) {
+        setStagedGroupIds(stagedGroupIds.filter(id => id !== groupId));
+        setAttachedGroups(attachedGroups.filter(g => g.id !== groupId));
+        setAvailableGroups([...availableGroups, group]);
+      }
     }
   };
 
@@ -327,57 +497,237 @@ function PolicyModal({
       {/* Modal */}
       <div className="flex min-h-full items-center justify-center p-4">
         <div 
-          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all border-2 border-primary-300 dark:border-primary-700"
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-4xl transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="p-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
           {policy ? 'Edit Policy' : 'Create Policy'}
         </h2>
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Name *
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Description
-              </label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-            </div>
-          </div>
-          <div className="mt-6 flex justify-end gap-3">
+
+        {/* Tabs - available in both create and edit modes */}
+        <div className="flex border-b border-gray-200 dark:border-gray-700 mb-4">
             <button
               type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+              onClick={() => setActiveTab('details')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'details'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
             >
-              Cancel
+              Details
             </button>
             <button
-              type="submit"
-              disabled={loading}
-              className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+              type="button"
+              onClick={() => setActiveTab('rules')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'rules'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
             >
-              {loading ? 'Saving...' : policy ? 'Update' : 'Create'}
+              <FontAwesomeIcon icon={faList} className="mr-1" />
+              Rules ({rules.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('groups')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'groups'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              <FontAwesomeIcon icon={faUsers} className="mr-1" />
+              Groups ({attachedGroups.length})
             </button>
           </div>
-        </form>
         </div>
+
+        {/* Details Tab */}
+        {activeTab === 'details' && (
+          <form onSubmit={handleSubmit}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Name *
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Description
+                </label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Saving...' : policy ? 'Update' : 'Create'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Rules Tab */}
+        {activeTab === 'rules' && (
+          <div className="space-y-3">
+            <div className="flex justify-between items-center mb-3">
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Manage firewall rules for this policy
+              </p>
+              <button
+                onClick={() => setIsAddRuleModalOpen(true)}
+                className="px-3 py-1.5 text-sm bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-lg hover:scale-105"
+              >
+                <FontAwesomeIcon icon={faPlus} className="mr-2" />
+                Add Rule
+              </button>
+            </div>
+            {rules.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                No rules defined. Add rules to control traffic.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {rules.map((rule) => (
+                  <div key={rule.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-1">
+                        <span className={`px-2 py-1 text-xs font-semibold rounded ${
+                          rule.action === 'allow' 
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                            : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                        }`}>
+                          {rule.action.toUpperCase()}
+                        </span>
+                        <span className="px-2 py-1 text-xs font-semibold rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                          {rule.direction.toUpperCase()}
+                        </span>
+                        <span className="text-sm font-mono text-gray-900 dark:text-white">
+                          {rule.target_type}: {rule.target}
+                        </span>
+                      </div>
+                      {rule.description && (
+                        <p className="text-sm text-gray-600 dark:text-gray-400">{rule.description}</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (confirm('Remove this rule?')) {
+                          handleRemoveRule(rule.id);
+                        }
+                      }}
+                      className="p-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded ml-4"
+                    >
+                      <FontAwesomeIcon icon={faTrash} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Groups Tab */}
+        {activeTab === 'groups' && (
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+              Groups that have this policy attached
+            </p>
+            {attachedGroups.map((group) => (
+              <div key={group.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <div>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">{group.name}</span>
+                  {group.description && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.description}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    if (confirm(`Detach this policy from group "${group.name}"?`)) {
+                      handleDetachFromGroup(group.id);
+                    }
+                  }}
+                  className="p-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                >
+                  <FontAwesomeIcon icon={faTrash} />
+                </button>
+              </div>
+            ))}
+            {availableGroups.length > 0 ? (
+              <div className="border-t border-gray-200 dark:border-gray-600 pt-3">
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleAttachToGroup(e.target.value);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="">Attach to group...</option>
+                  {availableGroups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                This policy is attached to all groups in the network
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Add Rule Modal */}
+        <AddRuleModal
+          isOpen={isAddRuleModalOpen}
+          onClose={() => setIsAddRuleModalOpen(false)}
+          onAdd={handleAddRule}
+          networkId={networkId}
+        />
       </div>
       </div>
     </div>
@@ -391,12 +741,18 @@ function PolicyDetailModal({
   policy,
   networkId,
   onUpdate,
+  onEdit,
+  onDelete,
+  setIsPolicyModalOpen,
 }: {
   isOpen: boolean;
   onClose: () => void;
   policy: Policy | null;
   networkId: string;
   onUpdate: () => void;
+  onEdit: (policy: Policy) => void;
+  onDelete: (policyId: string) => void;
+  setIsPolicyModalOpen: (open: boolean) => void;
 }) {
   const [rules, setRules] = useState<PolicyRule[]>([]);
   const [isAddRuleModalOpen, setIsAddRuleModalOpen] = useState(false);
@@ -454,16 +810,45 @@ function PolicyDetailModal({
           onClick={(e) => e.stopPropagation()}
         >
         <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-start gap-4">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
-              <FontAwesomeIcon icon={faShieldAlt} className="text-2xl text-white" />
+          <div className="flex items-start justify-between">
+            <div className="flex items-start gap-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
+                <FontAwesomeIcon icon={faShieldAlt} className="text-2xl text-white" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{policy.name}</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {policy.id}</p>
+                {policy.description && (
+                  <p className="text-gray-600 dark:text-gray-400 mt-1">{policy.description}</p>
+                )}
+              </div>
             </div>
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{policy.name}</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {policy.id}</p>
-              {policy.description && (
-                <p className="text-gray-600 dark:text-gray-400 mt-1">{policy.description}</p>
-              )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  onEdit(policy);
+                  setIsPolicyModalOpen(true);
+                  onClose();
+                }}
+                className="px-3 py-2 text-sm font-medium text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 bg-primary-50 dark:bg-primary-900/20 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/30 transition-colors"
+                title="Edit policy"
+              >
+                <FontAwesomeIcon icon={faPencil} className="mr-2" />
+                Edit
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`Are you sure you want to delete policy "${policy.name}"?`)) {
+                    onDelete(policy.id);
+                    onClose();
+                  }
+                }}
+                className="px-3 py-2 text-sm font-medium text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 bg-red-50 dark:bg-red-900/20 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                title="Delete policy"
+              >
+                <FontAwesomeIcon icon={faTrash} className="mr-2" />
+                Delete
+              </button>
             </div>
           </div>
         </div>
