@@ -546,23 +546,25 @@ function RouteDetailModal({
           onClick={(e) => e.stopPropagation()}
         >
         <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-start gap-4">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
-              <FontAwesomeIcon icon={faRoute} className="text-2xl text-white" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{route.name}</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {route.id}</p>
-              {route.description && (
-                <p className="text-gray-600 dark:text-gray-400 mt-1">{route.description}</p>
-              )}
-              <div className="mt-3 space-y-1">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  <span className="font-medium">Destination:</span> <span className="font-mono">{route.destination_cidr}</span>
-                </p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  <span className="font-medium">Domain Suffix:</span> {route.domain_suffix || 'internal'}
-                </p>
+          <div className="flex items-start justify-between">
+            <div className="flex items-start gap-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
+                <FontAwesomeIcon icon={faRoute} className="text-2xl text-white" />
+              </div>
+              <div>
+                <h3 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-gray-100 dark:to-gray-300 bg-clip-text text-transparent">{route.name}</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {route.id}</p>
+                {route.description && (
+                  <p className="text-gray-600 dark:text-gray-400 mt-2">{route.description}</p>
+                )}
+                <div className="mt-3 space-y-1">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    <span className="font-medium">Destination:</span> <span className="font-mono">{route.destination_cidr}</span>
+                  </p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    <span className="font-medium">Domain Suffix:</span> {route.domain_suffix || 'internal'}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
