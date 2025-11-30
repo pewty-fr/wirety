@@ -1173,13 +1173,17 @@ func (s *Service) ResolveSecurityIncident(ctx context.Context, incidentID, resol
 				}
 			}
 		}
+
+		if err := s.reconnectPeer(ctx, incident.NetworkID, incident.PeerID); err != nil {
+			return fmt.Errorf("can't remove peer from quarantine: %w", err)
+		}
 	}
 
 	return nil
 }
 
 // ReconnectPeer removes a peer from the quarantine group to restore network access
-func (s *Service) ReconnectPeer(ctx context.Context, networkID, peerID string) error {
+func (s *Service) reconnectPeer(ctx context.Context, networkID, peerID string) error {
 	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
 	if err != nil {
 		return fmt.Errorf("peer not found: %w", err)
