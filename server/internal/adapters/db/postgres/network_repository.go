@@ -157,6 +157,14 @@ func (r *NetworkRepository) GetPeer(ctx context.Context, networkID, peerID strin
 		return nil, fmt.Errorf("get peer: %w", err)
 	}
 	p.AdditionalAllowedIPs = addrs
+
+	// Load group IDs for this peer
+	groupIDs, err := r.loadPeerGroupIDs(ctx, peerID)
+	if err != nil {
+		return nil, fmt.Errorf("load peer group IDs: %w", err)
+	}
+	p.GroupIDs = groupIDs
+
 	return &p, nil
 }
 
@@ -223,9 +231,42 @@ func (r *NetworkRepository) ListPeers(ctx context.Context, networkID string) ([]
 			return nil, err
 		}
 		p.AdditionalAllowedIPs = addrs
+
+		// Load group IDs for this peer
+		groupIDs, err := r.loadPeerGroupIDs(ctx, p.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load peer group IDs: %w", err)
+		}
+		p.GroupIDs = groupIDs
+
 		out = append(out, &p)
 	}
 	return out, rows.Err()
+}
+
+// loadPeerGroupIDs loads all group IDs that a peer belongs to
+func (r *NetworkRepository) loadPeerGroupIDs(ctx context.Context, peerID string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT group_id 
+		FROM group_peers 
+		WHERE peer_id = $1
+		ORDER BY added_at ASC
+	`, peerID)
+	if err != nil {
+		return nil, fmt.Errorf("query group IDs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	groupIDs := make([]string, 0)
+	for rows.Next() {
+		var groupID string
+		if err := rows.Scan(&groupID); err != nil {
+			return nil, fmt.Errorf("scan group ID: %w", err)
+		}
+		groupIDs = append(groupIDs, groupID)
+	}
+
+	return groupIDs, rows.Err()
 }
 
 // ACL operations (ephemeral)

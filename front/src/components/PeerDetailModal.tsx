@@ -107,7 +107,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     };
 
     void loadPeerDetails();
-  }, [isOpen, peer?.network_id, displayPeer?.group_ids]);
+  }, [isOpen, peer?.network_id, displayPeer?.id, JSON.stringify(displayPeer?.group_ids)]);
 
   const handleClose = () => {
     // Reset state before closing
