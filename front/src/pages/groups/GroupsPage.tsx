@@ -307,6 +307,11 @@ function GroupModal({
   const [availablePolicies, setAvailablePolicies] = useState<Policy[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
   const [availableRoutes, setAvailableRoutes] = useState<Route[]>([]);
+  
+  // Staged attachments for creation mode (IDs to attach after group is created)
+  const [stagedPeerIds, setStagedPeerIds] = useState<string[]>([]);
+  const [stagedPolicyIds, setStagedPolicyIds] = useState<string[]>([]);
+  const [stagedRouteIds, setStagedRouteIds] = useState<string[]>([]);
 
   const isQuarantineGroup = group?.name.toLowerCase() === 'quarantine';
 
@@ -315,6 +320,9 @@ function GroupModal({
       setName(group.name);
       setDescription(group.description || '');
       setPriority(group.priority);
+      setStagedPeerIds([]);
+      setStagedPolicyIds([]);
+      setStagedRouteIds([]);
       // Load attachments when editing
       loadAttachments();
     } else {
@@ -322,14 +330,32 @@ function GroupModal({
       setDescription('');
       setPriority(100);
       setPeers([]);
-      setAvailablePeers([]);
-      setPolicies([]);
-      setAvailablePolicies([]);
-      setRoutes([]);
-      setAvailableRoutes([]);
+      setStagedPeerIds([]);
+      setStagedPolicyIds([]);
+      setStagedRouteIds([]);
+      // Load available items for creation mode
+      loadAvailableItems();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [group, networkId]);
+  }, [group, networkId, isOpen]);
+
+  const loadAvailableItems = async () => {
+    if (!networkId) return;
+
+    try {
+      const [allPeers, allPolicies, allRoutes] = await Promise.all([
+        api.getAllNetworkPeers(networkId),
+        api.getPolicies(networkId),
+        api.getRoutes(networkId),
+      ]);
+      
+      setAvailablePeers(allPeers);
+      setAvailablePolicies(allPolicies);
+      setAvailableRoutes(allRoutes);
+    } catch (error) {
+      console.error('Failed to load available items:', error);
+    }
+  };
 
   const loadAttachments = async () => {
     if (!group || !networkId) return;
@@ -382,9 +408,31 @@ function GroupModal({
 
     try {
       if (group) {
+        // Update existing group
         await api.updateGroup(networkId, group.id, { name, description, priority: isQuarantineGroup ? undefined : priority });
       } else {
-        await api.createGroup(networkId, { name, description, priority });
+        // Create new group
+        const newGroup = await api.createGroup(networkId, { name, description, priority });
+        
+        // Attach staged items
+        const attachPromises = [];
+        
+        for (const peerId of stagedPeerIds) {
+          attachPromises.push(api.addPeerToGroup(networkId, newGroup.id, peerId));
+        }
+        
+        for (const policyId of stagedPolicyIds) {
+          attachPromises.push(api.attachPolicyToGroup(networkId, newGroup.id, policyId));
+        }
+        
+        for (const routeId of stagedRouteIds) {
+          attachPromises.push(api.attachRouteToGroup(networkId, newGroup.id, routeId));
+        }
+        
+        // Wait for all attachments to complete
+        if (attachPromises.length > 0) {
+          await Promise.all(attachPromises);
+        }
       }
       onSuccess();
       onClose();
@@ -397,11 +445,11 @@ function GroupModal({
   };
 
   const handleAddPeer = async (peerId: string) => {
-    if (!group || !networkId) return;
-    
     const peer = availablePeers.find(p => p.id === peerId);
-    if (peer && peer.is_jump) {
-      const conflictingRoutes = routes.filter(route => route.jump_peer_id === peerId);
+    if (!peer) return;
+    
+    if (peer.is_jump) {
+      const conflictingRoutes = (group ? routes : availableRoutes.filter(r => stagedRouteIds.includes(r.id))).filter(route => route.jump_peer_id === peerId);
       if (conflictingRoutes.length > 0) {
         const routeNames = conflictingRoutes.map(r => r.name).join(', ');
         alert(`Cannot add jump peer "${peer.name}" to this group because it is the gateway for the following routes attached to this group: ${routeNames}`);
@@ -409,111 +457,169 @@ function GroupModal({
       }
     }
     
-    try {
-      await api.addPeerToGroup(networkId, group.id, peerId);
-      await loadAttachments();
-      onSuccess();
-    } catch (error: any) {
-      console.error('Failed to add peer:', error);
-      if (error.response?.data?.error) {
-        alert(error.response.data.error);
-      } else {
-        alert('Failed to add peer to group');
+    if (group && networkId) {
+      // Edit mode: attach immediately
+      try {
+        await api.addPeerToGroup(networkId, group.id, peerId);
+        await loadAttachments();
+        onSuccess();
+      } catch (error: any) {
+        console.error('Failed to add peer:', error);
+        if (error.response?.data?.error) {
+          alert(error.response.data.error);
+        } else {
+          alert('Failed to add peer to group');
+        }
       }
+    } else {
+      // Creation mode: stage for later
+      setStagedPeerIds([...stagedPeerIds, peerId]);
+      setPeers([...peers, peer]);
+      setAvailablePeers(availablePeers.filter(p => p.id !== peerId));
     }
   };
 
   const handleRemovePeer = async (peerId: string) => {
-    if (!group || !networkId) return;
-    try {
-      await api.removePeerFromGroup(networkId, group.id, peerId);
-      await loadAttachments();
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to remove peer:', error);
-      alert('Failed to remove peer from group');
+    if (group && networkId) {
+      // Edit mode: remove immediately
+      try {
+        await api.removePeerFromGroup(networkId, group.id, peerId);
+        await loadAttachments();
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to remove peer:', error);
+        alert('Failed to remove peer from group');
+      }
+    } else {
+      // Creation mode: unstage
+      const peer = peers.find(p => p.id === peerId);
+      if (peer) {
+        setStagedPeerIds(stagedPeerIds.filter(id => id !== peerId));
+        setPeers(peers.filter(p => p.id !== peerId));
+        setAvailablePeers([...availablePeers, peer]);
+      }
     }
   };
 
   const handleAttachPolicy = async (policyId: string) => {
-    if (!group || !networkId) return;
-    try {
-      await api.attachPolicyToGroup(networkId, group.id, policyId);
-      await loadAttachments();
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to attach policy:', error);
-      alert('Failed to attach policy to group');
+    const policy = availablePolicies.find(p => p.id === policyId);
+    if (!policy) return;
+    
+    if (group && networkId) {
+      // Edit mode: attach immediately
+      try {
+        await api.attachPolicyToGroup(networkId, group.id, policyId);
+        await loadAttachments();
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to attach policy:', error);
+        alert('Failed to attach policy to group');
+      }
+    } else {
+      // Creation mode: stage for later
+      setStagedPolicyIds([...stagedPolicyIds, policyId]);
+      setPolicies([...policies, policy]);
+      setAvailablePolicies(availablePolicies.filter(p => p.id !== policyId));
     }
   };
 
   const handleDetachPolicy = async (policyId: string) => {
-    if (!group || !networkId) return;
-    try {
-      await api.detachPolicyFromGroup(networkId, group.id, policyId);
-      await loadAttachments();
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to detach policy:', error);
-      alert('Failed to detach policy from group');
+    if (group && networkId) {
+      // Edit mode: detach immediately
+      try {
+        await api.detachPolicyFromGroup(networkId, group.id, policyId);
+        await loadAttachments();
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to detach policy:', error);
+        alert('Failed to detach policy from group');
+      }
+    } else {
+      // Creation mode: unstage
+      const policy = policies.find(p => p.id === policyId);
+      if (policy) {
+        setStagedPolicyIds(stagedPolicyIds.filter(id => id !== policyId));
+        setPolicies(policies.filter(p => p.id !== policyId));
+        setAvailablePolicies([...availablePolicies, policy]);
+      }
     }
   };
 
   const handleReorderPolicies = async (fromIndex: number, toIndex: number) => {
-    if (!group || !networkId) return;
-    
     const reorderedPolicies = [...policies];
     const [movedPolicy] = reorderedPolicies.splice(fromIndex, 1);
     reorderedPolicies.splice(toIndex, 0, movedPolicy);
     
     setPolicies(reorderedPolicies);
     
-    try {
-      const policyIds = reorderedPolicies.map(p => p.id);
-      await api.reorderGroupPolicies(networkId, group.id, policyIds);
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to reorder policies:', error);
-      alert('Failed to reorder policies');
-      await loadAttachments();
+    if (group && networkId) {
+      // Edit mode: reorder on server
+      try {
+        const policyIds = reorderedPolicies.map(p => p.id);
+        await api.reorderGroupPolicies(networkId, group.id, policyIds);
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to reorder policies:', error);
+        alert('Failed to reorder policies');
+        await loadAttachments();
+      }
+    } else {
+      // Creation mode: just update staged order
+      setStagedPolicyIds(reorderedPolicies.map(p => p.id));
     }
   };
 
   const handleAttachRoute = async (routeId: string) => {
-    if (!group || !networkId) return;
-    
     const route = availableRoutes.find(r => r.id === routeId);
-    if (route) {
-      const jumpPeerInGroup = peers.find(p => p.id === route.jump_peer_id);
-      if (jumpPeerInGroup) {
-        alert(`Cannot attach route "${route.name}" to this group because its jump peer "${jumpPeerInGroup.name}" is a member of this group. This would create a circular routing configuration.`);
-        return;
-      }
+    if (!route) return;
+    
+    const jumpPeerInGroup = peers.find(p => p.id === route.jump_peer_id);
+    if (jumpPeerInGroup) {
+      alert(`Cannot attach route "${route.name}" to this group because its jump peer "${jumpPeerInGroup.name}" is a member of this group. This would create a circular routing configuration.`);
+      return;
     }
     
-    try {
-      await api.attachRouteToGroup(networkId, group.id, routeId);
-      await loadAttachments();
-      onSuccess();
-    } catch (error: any) {
-      console.error('Failed to attach route:', error);
-      if (error.response?.data?.error) {
-        alert(error.response.data.error);
-      } else {
-        alert('Failed to attach route to group');
+    if (group && networkId) {
+      // Edit mode: attach immediately
+      try {
+        await api.attachRouteToGroup(networkId, group.id, routeId);
+        await loadAttachments();
+        onSuccess();
+      } catch (error: any) {
+        console.error('Failed to attach route:', error);
+        if (error.response?.data?.error) {
+          alert(error.response.data.error);
+        } else {
+          alert('Failed to attach route to group');
+        }
       }
+    } else {
+      // Creation mode: stage for later
+      setStagedRouteIds([...stagedRouteIds, routeId]);
+      setRoutes([...routes, route]);
+      setAvailableRoutes(availableRoutes.filter(r => r.id !== routeId));
     }
   };
 
   const handleDetachRoute = async (routeId: string) => {
-    if (!group || !networkId) return;
-    try {
-      await api.detachRouteFromGroup(networkId, group.id, routeId);
-      await loadAttachments();
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to detach route:', error);
-      alert('Failed to detach route from group');
+    if (group && networkId) {
+      // Edit mode: detach immediately
+      try {
+        await api.detachRouteFromGroup(networkId, group.id, routeId);
+        await loadAttachments();
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to detach route:', error);
+        alert('Failed to detach route from group');
+      }
+    } else {
+      // Creation mode: unstage
+      const route = routes.find(r => r.id === routeId);
+      if (route) {
+        setStagedRouteIds(stagedRouteIds.filter(id => id !== routeId));
+        setRoutes(routes.filter(r => r.id !== routeId));
+        setAvailableRoutes([...availableRoutes, route]);
+      }
     }
   };
 
@@ -530,7 +636,7 @@ function GroupModal({
       {/* Modal */}
       <div className="flex min-h-full items-center justify-center p-4">
         <div 
-          className={`relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full ${group ? 'max-w-4xl' : 'max-w-md'} transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto`}
+          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-4xl transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="p-6">
@@ -538,9 +644,8 @@ function GroupModal({
           {group ? 'Edit Group' : 'Create Group'}
         </h2>
 
-        {/* Tabs for editing mode */}
-        {group && (
-          <div className="flex border-b border-gray-200 dark:border-gray-700 mb-4">
+        {/* Tabs - available in both create and edit modes */}
+        <div className="flex border-b border-gray-200 dark:border-gray-700 mb-4">
             <button
               type="button"
               onClick={() => setActiveTab('details')}
@@ -589,10 +694,9 @@ function GroupModal({
               Routes ({routes.length})
             </button>
           </div>
-        )}
 
-        {/* Details Tab / Create Form */}
-        {(!group || activeTab === 'details') && (
+        {/* Details Tab */}
+        {activeTab === 'details' && (
           <form onSubmit={handleSubmit}>
             <div className="space-y-4">
               <div>
@@ -664,7 +768,7 @@ function GroupModal({
         )}
 
         {/* Peers Tab */}
-        {group && activeTab === 'peers' && (
+        {activeTab === 'peers' && (
           <div className="space-y-3">
             {peers.map((peer) => (
               <div key={peer.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
@@ -725,7 +829,7 @@ function GroupModal({
         )}
 
         {/* Policies Tab */}
-        {group && activeTab === 'policies' && (
+        {activeTab === 'policies' && (
           <div className="space-y-3">
             {policies.length > 1 && (
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -830,7 +934,7 @@ function GroupModal({
         )}
 
         {/* Routes Tab */}
-        {group && activeTab === 'routes' && (
+        {activeTab === 'routes' && (
           <div className="space-y-3">
             {routes.map((route) => (
               <div key={route.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
