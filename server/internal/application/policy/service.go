@@ -348,7 +348,9 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 			continue
 		}
 
-		// Collect all policies from peer's groups
+		// Collect all policies from peer's groups (groups are ordered by priority)
+		// Lower priority number = higher priority (applied first)
+		// Quarantine groups have priority 0, user groups default to 100
 		policyMap := make(map[string]*network.Policy)
 		for _, group := range groups {
 			policies, err := s.policyRepo.GetPoliciesForGroup(ctx, networkID, group.ID)
@@ -357,7 +359,7 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 			}
 
 			for _, policy := range policies {
-				// Avoid duplicates
+				// Avoid duplicates - first occurrence wins (highest priority group)
 				if _, exists := policyMap[policy.ID]; !exists {
 					policyMap[policy.ID] = policy
 				}

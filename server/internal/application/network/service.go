@@ -784,12 +784,13 @@ func (s *Service) ensureQuarantineGroup(ctx context.Context, networkID string) (
 		}
 	}
 
-	// Create quarantine group
+	// Create quarantine group with priority 0 (highest priority)
 	quarantineGroup := &network.Group{
 		ID:          uuid.New().String(),
 		NetworkID:   networkID,
 		Name:        "quarantine",
 		Description: "Automatically created group for blocking compromised peers",
+		Priority:    0, // Highest priority - quarantine policies apply first
 		PeerIDs:     []string{},
 		PolicyIDs:   []string{},
 		RouteIDs:    []string{},

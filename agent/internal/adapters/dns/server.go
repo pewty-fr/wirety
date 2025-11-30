@@ -51,7 +51,7 @@ func (s *Server) Start(addr string) error {
 	// This allows us to handle both peer domains and route domains with different suffixes
 	dns.HandleFunc(".", s.handleDNS)
 	server := &dns.Server{Addr: addr, Net: "udp"}
-	log.Info().Str("addr", addr).Str("domain", s.domain).Int("peer_count", len(s.peers)).Msg("starting DNS server")
+	log.Info().Str("addr", addr).Strs("upstream", s.upstreamServers).Str("domain", s.domain).Int("peer_count", len(s.peers)).Msg("starting DNS server")
 	return server.ListenAndServe()
 }
 

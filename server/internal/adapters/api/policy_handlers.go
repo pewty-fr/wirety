@@ -303,3 +303,42 @@ func (h *Handler) GetGroupPolicies(c *gin.Context) {
 
 	c.JSON(http.StatusOK, policies)
 }
+
+// ReorderGroupPoliciesRequest represents the request to reorder policies
+type ReorderGroupPoliciesRequest struct {
+	PolicyIDs []string `json:"policy_ids" binding:"required"`
+}
+
+// ReorderGroupPolicies godoc
+//
+//	@Summary		Reorder group policies
+//	@Description	Reorder policies within a group (admin only)
+//	@Tags			policies
+//	@Accept			json
+//	@Produce		json
+//	@Param			networkId	path		string							true	"Network ID"
+//	@Param			groupId		path		string							true	"Group ID"
+//	@Param			order		body		ReorderGroupPoliciesRequest		true	"Policy order"
+//	@Success		200			{object}	map[string]string
+//	@Failure		400			{object}	map[string]string
+//	@Failure		403			{object}	map[string]string
+//	@Failure		404			{object}	map[string]string
+//	@Router			/networks/{networkId}/groups/{groupId}/policies/order [put]
+//	@Security		BearerAuth
+func (h *Handler) ReorderGroupPolicies(c *gin.Context) {
+	networkID := c.Param("networkId")
+	groupID := c.Param("groupId")
+
+	var req ReorderGroupPoliciesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.groupService.ReorderGroupPolicies(c.Request.Context(), networkID, groupID, req.PolicyIDs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Policies reordered successfully"})
+}

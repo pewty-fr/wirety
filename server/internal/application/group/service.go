@@ -51,11 +51,19 @@ func (s *Service) CreateGroup(ctx context.Context, networkID string, req *networ
 	}
 
 	now := time.Now()
+
+	// Set default priority if not provided
+	priority := 100 // Default priority for user-defined groups
+	if req.Priority != nil {
+		priority = *req.Priority
+	}
+
 	group := &network.Group{
 		ID:          uuid.New().String(),
 		NetworkID:   networkID,
 		Name:        req.Name,
 		Description: req.Description,
+		Priority:    priority,
 		PeerIDs:     []string{},
 		PolicyIDs:   []string{},
 		RouteIDs:    []string{},
@@ -98,6 +106,9 @@ func (s *Service) UpdateGroup(ctx context.Context, networkID, groupID string, re
 	}
 	if req.Description != "" {
 		group.Description = req.Description
+	}
+	if req.Priority != nil {
+		group.Priority = *req.Priority
 	}
 	group.UpdatedAt = time.Now()
 
@@ -328,4 +339,25 @@ func (s *Service) GetGroupPolicies(ctx context.Context, networkID, groupID strin
 	}
 
 	return policies, nil
+}
+
+// ReorderGroupPolicies reorders policies within a group
+func (s *Service) ReorderGroupPolicies(ctx context.Context, networkID, groupID string, policyIDs []string) error {
+	// Verify group exists
+	_, err := s.groupRepo.GetGroup(ctx, networkID, groupID)
+	if err != nil {
+		return fmt.Errorf("group not found: %w", err)
+	}
+
+	// Reorder policies
+	if err := s.groupRepo.ReorderGroupPolicies(ctx, networkID, groupID, policyIDs); err != nil {
+		return fmt.Errorf("failed to reorder policies: %w", err)
+	}
+
+	// Notify all peers in the network about the policy order change
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+
+	return nil
 }
