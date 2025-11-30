@@ -558,15 +558,24 @@ function AddRuleModal({
 }) {
   const [direction, setDirection] = useState<'input' | 'output'>('input');
   const [action, setAction] = useState<'allow' | 'deny'>('allow');
-  const [targetType, setTargetType] = useState<'cidr' | 'peer' | 'group' | 'route'>('cidr');
+  const [targetType, setTargetType] = useState<'cidr' | 'peer' | 'group' | 'route' | 'network'>('network');
   const [target, setTarget] = useState('');
   const [description, setDescription] = useState('');
   const [routes, setRoutes] = useState<Route[]>([]);
   const [loadingRoutes, setLoadingRoutes] = useState(false);
+  const [networkCIDR, setNetworkCIDR] = useState<string>('');
 
-  // Load routes when target type is 'route'
+  // Load network CIDR and routes when modal opens
   useEffect(() => {
-    if (targetType === 'route' && networkId && isOpen) {
+    if (!isOpen || !networkId) return;
+    
+    // Load network CIDR
+    api.getNetwork(networkId)
+      .then((network) => setNetworkCIDR(network.cidr))
+      .catch((error) => console.error('Failed to load network:', error));
+    
+    // Load routes if needed
+    if (targetType === 'route') {
       setLoadingRoutes(true);
       api.getRoutes(networkId)
         .then(setRoutes)
@@ -577,7 +586,9 @@ function AddRuleModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onAdd({ direction, action, target_type: targetType, target, description });
+    // Convert "network" and "route" to "cidr" for backend (they're just frontend helpers)
+    const actualTargetType = (targetType === 'network' || targetType === 'route') ? 'cidr' : targetType;
+    onAdd({ direction, action, target_type: actualTargetType, target, description });
     setDirection('input');
     setAction('allow');
     setTargetType('cidr');
@@ -614,8 +625,8 @@ function AddRuleModal({
                 onChange={(e) => setDirection(e.target.value as 'input' | 'output')}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               >
-                <option value="input">Input</option>
-                <option value="output">Output</option>
+                <option value="output">Output (from peer to target)</option>
+                <option value="input">Input (from target to peer)</option>
               </select>
             </div>
             <div>
@@ -638,15 +649,22 @@ function AddRuleModal({
               <select
                 value={targetType}
                 onChange={(e) => {
-                  setTargetType(e.target.value as 'cidr' | 'peer' | 'group' | 'route');
-                  setTarget(''); // Reset target when type changes
+                  const newType = e.target.value as 'cidr' | 'peer' | 'group' | 'route' | 'network';
+                  setTargetType(newType);
+                  // Auto-fill network CIDR when "network" is selected
+                  if (newType === 'network') {
+                    setTarget(networkCIDR);
+                  } else {
+                    setTarget(''); // Reset target when type changes
+                  }
                 }}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               >
                 <option value="cidr">CIDR</option>
+                <option value="network">Network CIDR</option>
                 <option value="peer">Peer</option>
                 <option value="group">Group</option>
-                <option value="route">Route (CIDR helper)</option>
+                <option value="route">Route</option>
               </select>
             </div>
             <div>
@@ -668,6 +686,15 @@ function AddRuleModal({
                     </option>
                   ))}
                 </select>
+              ) : targetType === 'network' ? (
+                <input
+                  type="text"
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  placeholder="Network CIDR"
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
               ) : (
                 <input
                   type="text"
@@ -677,6 +704,11 @@ function AddRuleModal({
                   required
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 />
+              )}
+              {targetType === 'network' && (
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  This will be sent as CIDR type to the backend
+                </p>
               )}
             </div>
             <div>
