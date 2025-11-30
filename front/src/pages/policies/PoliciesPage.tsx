@@ -15,8 +15,6 @@ export default function PoliciesPage() {
   const [loading, setLoading] = useState(true);
   const [isPolicyModalOpen, setIsPolicyModalOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<Policy | null>(null);
-  const [selectedPolicy, setSelectedPolicy] = useState<Policy | null>(null);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
 
   const isAdmin = user?.role === 'administrator';
@@ -60,8 +58,9 @@ export default function PoliciesPage() {
   }, [loadPolicies]);
 
   const handlePolicyClick = (policy: Policy) => {
-    setSelectedPolicy(policy);
-    setIsDetailModalOpen(true);
+    // Open the edit modal directly (which has all the tabs and functionality)
+    setEditingPolicy(policy);
+    setIsPolicyModalOpen(true);
   };
 
   const handleCreate = () => {
@@ -247,20 +246,6 @@ export default function PoliciesPage() {
         onSuccess={loadPolicies}
         networkId={selectedNetworkId}
         policy={editingPolicy}
-      />
-
-      <PolicyDetailModal
-        isOpen={isDetailModalOpen}
-        onClose={() => {
-          setIsDetailModalOpen(false);
-          setSelectedPolicy(null);
-        }}
-        policy={selectedPolicy}
-        networkId={selectedNetworkId}
-        onUpdate={loadPolicies}
-        onEdit={handleEdit}
-        onDelete={handleDeletePolicy}
-        setIsPolicyModalOpen={setIsPolicyModalOpen}
       />
 
       <TemplateModal
@@ -740,200 +725,7 @@ function PolicyModal({
   );
 }
 
-// Policy Detail Modal Component
-function PolicyDetailModal({
-  isOpen,
-  onClose,
-  policy,
-  networkId,
-  onUpdate,
-  onEdit,
-  onDelete,
-  setIsPolicyModalOpen,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  policy: Policy | null;
-  networkId: string;
-  onUpdate: () => void;
-  onEdit: (policy: Policy) => void;
-  onDelete: (policyId: string) => void;
-  setIsPolicyModalOpen: (open: boolean) => void;
-}) {
-  const [rules, setRules] = useState<PolicyRule[]>([]);
-  const [isAddRuleModalOpen, setIsAddRuleModalOpen] = useState(false);
-
-  useEffect(() => {
-    if (policy) {
-      // Sync rules state when policy changes
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setRules(policy.rules || []);
-    }
-  }, [policy]);
-
-  const handleRemoveRule = async (ruleId: string) => {
-    if (!policy || !networkId) return;
-    try {
-      await api.removeRuleFromPolicy(networkId, policy.id, ruleId);
-      const updatedPolicy = await api.getPolicy(networkId, policy.id);
-      setRules(updatedPolicy.rules || []);
-      onUpdate();
-    } catch (error) {
-      console.error('Failed to remove rule:', error);
-      alert('Failed to remove rule from policy');
-    }
-  };
-
-  const handleAddRule = async (rule: Omit<PolicyRule, 'id'>) => {
-    if (!policy || !networkId) return;
-    if(rule.target_type=='route') rule.target_type = 'cidr';
-    try {
-      await api.addRuleToPolicy(networkId, policy.id, rule);
-      const updatedPolicy = await api.getPolicy(networkId, policy.id);
-      setRules(updatedPolicy.rules || []);
-      onUpdate();
-      setIsAddRuleModalOpen(false);
-    } catch (error) {
-      console.error('Failed to add rule:', error);
-      alert('Failed to add rule to policy');
-    }
-  };
-
-  if (!isOpen || !policy) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      {/* Backdrop with blur */}
-      <div 
-        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
-        onClick={onClose}
-      />
-      
-      {/* Modal */}
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div 
-          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-4xl transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto"
-          onClick={(e) => e.stopPropagation()}
-        >
-        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-start justify-between">
-            <div className="flex items-start gap-4">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
-                <FontAwesomeIcon icon={faShieldAlt} className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{policy.name}</h2>
-                <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {policy.id}</p>
-                {policy.description && (
-                  <p className="text-gray-600 dark:text-gray-400 mt-1">{policy.description}</p>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  onEdit(policy);
-                  setIsPolicyModalOpen(true);
-                  onClose();
-                }}
-                className="px-3 py-2 text-sm font-medium text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 bg-primary-50 dark:bg-primary-900/20 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/30 transition-colors"
-                title="Edit policy"
-              >
-                <FontAwesomeIcon icon={faPencil} className="mr-2" />
-                Edit
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm(`Are you sure you want to delete policy "${policy.name}"?`)) {
-                    onDelete(policy.id);
-                    onClose();
-                  }
-                }}
-                className="px-3 py-2 text-sm font-medium text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 bg-red-50 dark:bg-red-900/20 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
-                title="Delete policy"
-              >
-                <FontAwesomeIcon icon={faTrash} className="mr-2" />
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Rules ({rules.length})
-            </h3>
-            <button
-              onClick={() => setIsAddRuleModalOpen(true)}
-              className="px-3 py-1.5 text-sm bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-lg hover:scale-105"
-            >
-              <FontAwesomeIcon icon={faPlus} className="mr-2" />
-              Add Rule
-            </button>
-          </div>
-
-          {rules.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              No rules defined. Add rules to control traffic.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {rules.map((rule) => (
-                <div key={rule.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-1">
-                      <span className={`px-2 py-1 text-xs font-semibold rounded ${
-                        rule.action === 'allow' 
-                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                          : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                      }`}>
-                        {rule.action.toUpperCase()}
-                      </span>
-                      <span className="px-2 py-1 text-xs font-semibold rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                        {rule.direction.toUpperCase()}
-                      </span>
-                      <span className="text-sm font-mono text-gray-900 dark:text-white">
-                        {rule.target_type}: {rule.target}
-                      </span>
-                    </div>
-                    {rule.description && (
-                      <p className="text-sm text-gray-600 dark:text-gray-400">{rule.description}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => handleRemoveRule(rule.id)}
-                    className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 ml-4"
-                    title="Remove rule"
-                  >
-                    <FontAwesomeIcon icon={faTrash} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-
-      <AddRuleModal
-        isOpen={isAddRuleModalOpen}
-        onClose={() => setIsAddRuleModalOpen(false)}
-        onAdd={handleAddRule}
-        networkId={networkId}
-      />
-      </div>
-    </div>
-  );
-}
+// PolicyDetailModal removed - clicking on a policy now opens the PolicyModal directly with all tabs
 
 // Add Rule Modal Component
 function AddRuleModal({
