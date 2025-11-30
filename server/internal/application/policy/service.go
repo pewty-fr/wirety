@@ -387,6 +387,25 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		rules = append(rules, fmt.Sprintf("iptables -A OUTPUT -d %s -p udp --sport 53 -j ACCEPT", peer.Address))
 	}
 
+	// Add WireGuard handshake rules to allow tunnel establishment
+	// WireGuard uses UDP for handshakes and keepalives, which must be allowed in both directions
+	// Without these rules, the tunnel cannot establish or maintain connection
+	jumpPeer, err = s.peerRepo.GetPeer(ctx, networkID, jumpPeerID)
+	if err == nil && jumpPeer.ListenPort > 0 {
+		for _, peer := range allPeers {
+			if peer.IsJump {
+				continue // Skip jump peers
+			}
+
+			// Allow WireGuard handshake packets FROM jump server TO peer
+			// These are NEW connections (not RELATED/ESTABLISHED) so must be explicitly allowed
+			rules = append(rules, fmt.Sprintf("iptables -A OUTPUT -d %s -p udp --sport %d -j ACCEPT", peer.Address, jumpPeer.ListenPort))
+
+			// Allow WireGuard handshake packets FROM peer TO jump server
+			rules = append(rules, fmt.Sprintf("iptables -A INPUT -s %s -p udp --dport %d -j ACCEPT", peer.Address, jumpPeer.ListenPort))
+		}
+	}
+
 	// Add default deny rule at the end for FORWARD chain
 	rules = append(rules, "iptables -A FORWARD -j DROP")
 
