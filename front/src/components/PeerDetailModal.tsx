@@ -18,6 +18,7 @@ interface PeerDetailModalProps {
 }
 
 export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users = [] }: PeerDetailModalProps) {
+  const [activeTab, setActiveTab] = useState<'configuration' | 'access'>('configuration');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
@@ -137,6 +138,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
 
   const handleClose = () => {
     // Reset state before closing
+    setActiveTab('configuration');
     setIsEditModalOpen(false);
     setConfigText(null);
     setConfigError(null);
@@ -194,12 +196,41 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                 <FontAwesomeIcon icon={displayPeer.is_jump ? faRocket : (displayPeer.use_agent ? faServer : faLaptop)} className="text-2xl text-white" />
               </div>
               <div>
-                <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{displayPeer.name}</h3>
+                <h3 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-gray-100 dark:to-gray-300 bg-clip-text text-transparent">{displayPeer.name}</h3>
                 <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {displayPeer.id}</p>
               </div>
             </div>
           </div>
 
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200 dark:border-gray-700">
+            <button
+              type="button"
+              onClick={() => setActiveTab('configuration')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'configuration'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              Configuration
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('access')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'access'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              Access Control
+            </button>
+          </div>
+
+          {/* Configuration Tab */}
+          {activeTab === 'configuration' && (
+          <div className="space-y-6">
           {/* Network Info */}
           <div>
             <p className="text-lg text-gray-900 dark:text-gray-100">{displayPeer.network_name || displayPeer.network_id}</p>
@@ -376,6 +407,81 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
             </div>
           )}
 
+          {/* Agent Token (if uses agent) */}
+          {displayPeer.use_agent && displayPeer.token && (
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300">Agent Token</label>
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(displayPeer.token!);
+                      setTokenCopied(true);
+                      setTimeout(() => setTokenCopied(false), 3000);
+                    } catch (error) {
+                      console.error('Failed to copy token:', error);
+                    }
+                  }}
+                  className={`px-3 py-1.5 text-sm font-semibold rounded-lg flex items-center gap-2 transition-all shadow-lg hover:shadow-xl ${
+                    tokenCopied 
+                      ? 'bg-green-600 text-white' 
+                      : 'bg-gradient-to-r from-primary-600 to-accent-blue text-white hover:scale-105 active:scale-95'
+                  }`}
+                  title="Copy token to clipboard"
+                >
+                  <FontAwesomeIcon icon={faCopy} className="w-3 h-3" />
+                  {tokenCopied ? 'Copied ✓' : 'Copy Token'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Timestamps */}
+          <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+            <div className="grid grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Created</label>
+                <p className="text-sm text-gray-900 dark:text-gray-100">
+                  {new Date(displayPeer.created_at).toLocaleString()}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Last Updated</label>
+                <p className="text-sm text-gray-900 dark:text-gray-100">
+                  {new Date(displayPeer.updated_at).toLocaleString()}
+                </p>
+              </div>
+            </div>
+          </div>
+          </div>
+          )}
+
+          {/* Access Control Tab */}
+          {activeTab === 'access' && (
+          <div className="space-y-6">
+          {/* Group Memberships */}
+          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
+            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Group Memberships</h4>
+              {loadingDetails ? (
+                <div className="text-sm text-gray-500">Loading groups...</div>
+              ) : groups.length > 0 ? (
+                <div className="space-y-2">
+                  {groups.map((group) => (
+                    <div key={group.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{group.name}</div>
+                      {group.description && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.description}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No groups found</div>
+              )}
+            </div>
+          )}
+
           {/* Effective Rules */}
           {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
             <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
@@ -455,76 +561,8 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
               )}
             </div>
           )}
-
-          {/* Group Memberships */}
-          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
-            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Group Memberships</h4>
-              {loadingDetails ? (
-                <div className="text-sm text-gray-500">Loading groups...</div>
-              ) : groups.length > 0 ? (
-                <div className="space-y-2">
-                  {groups.map((group) => (
-                    <div key={group.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
-                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{group.name}</div>
-                      {group.description && (
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.description}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-sm text-gray-500">No groups found</div>
-              )}
-            </div>
-          )}
-
-          {/* Agent Token (if uses agent) */}
-          {displayPeer.use_agent && displayPeer.token && (
-            <div>
-              <div className="flex items-center justify-between">
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300">Agent Token</label>
-                <button
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(displayPeer.token!);
-                      setTokenCopied(true);
-                      setTimeout(() => setTokenCopied(false), 3000);
-                    } catch (error) {
-                      console.error('Failed to copy token:', error);
-                    }
-                  }}
-                  className={`px-3 py-1.5 text-sm font-semibold rounded-lg flex items-center gap-2 transition-all shadow-lg hover:shadow-xl ${
-                    tokenCopied 
-                      ? 'bg-green-600 text-white' 
-                      : 'bg-gradient-to-r from-primary-600 to-accent-blue text-white hover:scale-105 active:scale-95'
-                  }`}
-                  title="Copy token to clipboard"
-                >
-                  <FontAwesomeIcon icon={faCopy} className="w-3 h-3" />
-                  {tokenCopied ? 'Copied ✓' : 'Copy Token'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Timestamps */}
-          <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Created</label>
-                <p className="text-sm text-gray-900 dark:text-gray-100">
-                  {new Date(displayPeer.created_at).toLocaleString()}
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Last Updated</label>
-                <p className="text-sm text-gray-900 dark:text-gray-100">
-                  {new Date(displayPeer.updated_at).toLocaleString()}
-                </p>
-              </div>
-            </div>
           </div>
+          )}
 
           {/* Actions */}
           <div className="flex justify-between gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">

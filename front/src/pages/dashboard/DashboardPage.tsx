@@ -56,7 +56,7 @@ export default function DashboardPage() {
         api.getNetworks(1, 5).catch(() => null),
         api.getAllPeers(1, 1000).catch(() => null),
         api.getIPAMAllocations(1, 1000).catch(() => null),
-        api.getSecurityIncidents(1, 5).catch(() => null),
+        api.getSecurityIncidents(1, 5, false).catch(() => null),
         api.getUsers(1, 100).catch(() => null),
       ]);
 
@@ -105,8 +105,8 @@ export default function DashboardPage() {
         },
         security: {
           total: securityRes?.total || 0,
-          unresolved: securityData.filter(i => !i.resolved).length,
-          recentIncidents: securityData.filter(i => !i.resolved).slice(0, 5),
+          unresolved: securityRes?.total || 0,
+          recentIncidents: securityData.slice(0, 5),
         },
         users: {
           total: usersData.length,

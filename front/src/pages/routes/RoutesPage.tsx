@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRoute, faPencil, faTrash, faGlobe } from '@fortawesome/free-solid-svg-icons';
+import { faRoute, faPencil, faTrash, faGlobe, faUsers } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import SearchableSelect from '../../components/SearchableSelect';
 import api from '../../api/client';
@@ -268,7 +268,7 @@ function RouteModal({
   networkId: string;
   route: Route | null;
 }) {
-  const [activeTab, setActiveTab] = useState<'details' | 'dns'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'dns' | 'groups'>('details');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [destinationCidr, setDestinationCidr] = useState('');
@@ -281,6 +281,11 @@ function RouteModal({
   const [dnsMappings, setDnsMappings] = useState<DNSMapping[]>([]);
   const [stagedDnsMappings, setStagedDnsMappings] = useState<Array<{ name: string; ip_address: string }>>([]);
   const [isAddDNSModalOpen, setIsAddDNSModalOpen] = useState(false);
+  
+  // Groups management
+  const [attachedGroups, setAttachedGroups] = useState<any[]>([]);
+  const [availableGroups, setAvailableGroups] = useState<any[]>([]);
+  const [stagedGroupIds, setStagedGroupIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (isOpen && networkId) {
@@ -297,7 +302,9 @@ function RouteModal({
       setJumpPeerId(route.jump_peer_id);
       setDomainSuffix(route.domain_suffix || 'internal');
       setStagedDnsMappings([]);
+      setStagedGroupIds([]);
       loadDNSMappings();
+      loadAttachments();
     } else {
       setName('');
       setDescription('');
@@ -306,6 +313,9 @@ function RouteModal({
       setDomainSuffix('internal');
       setDnsMappings([]);
       setStagedDnsMappings([]);
+      setAttachedGroups([]);
+      setStagedGroupIds([]);
+      loadAvailableItems();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, isOpen]);
@@ -327,6 +337,36 @@ function RouteModal({
       setDnsMappings(data || []);
     } catch (error) {
       console.error('Failed to load DNS mappings:', error);
+    }
+  };
+
+  const loadAvailableItems = async () => {
+    if (!networkId) return;
+
+    try {
+      const allGroups = await api.getGroups(networkId);
+      setAvailableGroups(allGroups);
+    } catch (error) {
+      console.error('Failed to load available items:', error);
+    }
+  };
+
+  const loadAttachments = async () => {
+    if (!route || !networkId) return;
+
+    try {
+      // Load all groups in the network
+      const allGroups = await api.getGroups(networkId);
+      
+      // Filter groups that have this route attached
+      const groupsWithRoute = allGroups.filter(g => g.route_ids?.includes(route.id));
+      setAttachedGroups(groupsWithRoute);
+      
+      // Available groups are those without this route
+      const groupsWithoutRoute = allGroups.filter(g => !g.route_ids?.includes(route.id));
+      setAvailableGroups(groupsWithoutRoute);
+    } catch (error) {
+      console.error('Failed to load groups:', error);
     }
   };
 
@@ -354,14 +394,19 @@ function RouteModal({
           domain_suffix: domainSuffix,
         });
         
-        // Add staged DNS mappings
-        const dnsPromises = [];
+        // Add staged DNS mappings and attach to groups
+        const attachPromises = [];
+        
         for (const dns of stagedDnsMappings) {
-          dnsPromises.push(api.createDNSMapping(networkId, newRoute.id, dns));
+          attachPromises.push(api.createDNSMapping(networkId, newRoute.id, dns));
         }
         
-        if (dnsPromises.length > 0) {
-          await Promise.all(dnsPromises);
+        for (const groupId of stagedGroupIds) {
+          attachPromises.push(api.attachRouteToGroup(networkId, groupId, newRoute.id));
+        }
+        
+        if (attachPromises.length > 0) {
+          await Promise.all(attachPromises);
         }
       }
       onSuccess();
@@ -410,6 +455,50 @@ function RouteModal({
   const handleRemoveStagedDNS = (index: number) => {
     // Creation mode: remove from staged list
     setStagedDnsMappings(stagedDnsMappings.filter((_, i) => i !== index));
+  };
+
+  const handleAttachToGroup = async (groupId: string) => {
+    const group = availableGroups.find(g => g.id === groupId);
+    if (!group) return;
+    
+    if (route && networkId) {
+      // Edit mode: attach immediately
+      try {
+        await api.attachRouteToGroup(networkId, groupId, route.id);
+        await loadAttachments();
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to attach route to group:', error);
+        alert('Failed to attach route to group');
+      }
+    } else {
+      // Creation mode: stage for later
+      setStagedGroupIds([...stagedGroupIds, groupId]);
+      setAttachedGroups([...attachedGroups, group]);
+      setAvailableGroups(availableGroups.filter(g => g.id !== groupId));
+    }
+  };
+
+  const handleDetachFromGroup = async (groupId: string) => {
+    if (route && networkId) {
+      // Edit mode: detach immediately
+      try {
+        await api.detachRouteFromGroup(networkId, groupId, route.id);
+        await loadAttachments();
+        onSuccess();
+      } catch (error) {
+        console.error('Failed to detach route from group:', error);
+        alert('Failed to detach route from group');
+      }
+    } else {
+      // Creation mode: unstage
+      const group = attachedGroups.find(g => g.id === groupId);
+      if (group) {
+        setStagedGroupIds(stagedGroupIds.filter(id => id !== groupId));
+        setAttachedGroups(attachedGroups.filter(g => g.id !== groupId));
+        setAvailableGroups([...availableGroups, group]);
+      }
+    }
   };
 
   if (!isOpen) return null;
@@ -481,6 +570,18 @@ function RouteModal({
           >
             <FontAwesomeIcon icon={faGlobe} className="mr-1" />
             DNS Mappings ({allDnsMappings.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('groups')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'groups'
+                ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+            }`}
+          >
+            <FontAwesomeIcon icon={faUsers} className="mr-1" />
+            Groups ({attachedGroups.length})
           </button>
         </div>
 
@@ -624,6 +725,69 @@ function RouteModal({
                       </button>
                     </div>
                   ))}
+                </div>
+              )}
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Groups Tab */}
+        {activeTab === 'groups' && (
+          <div className="p-6">
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Groups that have this route attached
+              </p>
+              {attachedGroups.map((group) => (
+                <div key={group.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                  <div>
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">{group.name}</span>
+                    {group.description && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.description}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (confirm(`Detach this route from group "${group.name}"?`)) {
+                        handleDetachFromGroup(group.id);
+                      }
+                    }}
+                    className="p-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                  >
+                    <FontAwesomeIcon icon={faTrash} />
+                  </button>
+                </div>
+              ))}
+              {availableGroups.length > 0 ? (
+                <div className="border-t border-gray-200 dark:border-gray-600 pt-3">
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleAttachToGroup(e.target.value);
+                        e.target.value = '';
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  >
+                    <option value="">Attach to group...</option>
+                    {availableGroups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                  This route is attached to all groups in the network
                 </div>
               )}
               <div className="mt-4 flex justify-end">
