@@ -69,27 +69,53 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
         // Fetch all groups for the network
         const allGroups = await api.getGroups(peer.network_id);
         
-        // Filter to only groups this peer belongs to
-        const peerGroups = allGroups.filter((g: any) => displayPeer.group_ids?.includes(g.id));
+        // Filter to only groups this peer belongs to and sort by priority (lower = higher priority)
+        const peerGroups = allGroups
+          .filter((g: any) => displayPeer.group_ids?.includes(g.id))
+          .sort((a: any, b: any) => a.priority - b.priority);
         setGroups(peerGroups);
 
-        // Collect all unique policy IDs and route IDs from peer's groups
-        const policyIds = new Set<string>();
+        // Collect route IDs from peer's groups
         const routeIds = new Set<string>();
-        
         peerGroups.forEach((group: any) => {
-          group.policy_ids?.forEach((id: string) => policyIds.add(id));
           group.route_ids?.forEach((id: string) => routeIds.add(id));
         });
 
-        // Fetch policies
-        if (policyIds.size > 0) {
-          const allPolicies = await api.getPolicies(peer.network_id);
-          const peerPolicies = allPolicies.filter((p: any) => policyIds.has(p.id));
-          setPolicies(peerPolicies);
-        } else {
-          setPolicies([]);
+        // Fetch all policies for the network
+        const allPolicies = await api.getPolicies(peer.network_id);
+        
+        // Collect effective rules in the correct order:
+        // 1. Groups are already sorted by priority (lower number = higher priority)
+        // 2. Within each group, policies are in their defined order
+        // 3. Within each policy, rules are in their defined order
+        const effectiveRules: any[] = [];
+        const seenPolicyIds = new Set<string>();
+        
+        for (const group of peerGroups) {
+          if (!group.policy_ids || group.policy_ids.length === 0) continue;
+          
+          // Get policies for this group in order
+          for (const policyId of group.policy_ids) {
+            // Skip if we've already processed this policy from a higher priority group
+            if (seenPolicyIds.has(policyId)) continue;
+            seenPolicyIds.add(policyId);
+            
+            const policy = allPolicies.find((p: any) => p.id === policyId);
+            if (policy && policy.rules) {
+              // Add each rule with metadata about which group/policy it comes from
+              policy.rules.forEach((rule: any) => {
+                effectiveRules.push({
+                  ...rule,
+                  _policyName: policy.name,
+                  _groupName: group.name,
+                  _groupPriority: group.priority,
+                });
+              });
+            }
+          }
         }
+        
+        setPolicies(effectiveRules);
 
         // Fetch routes
         if (routeIds.size > 0) {
@@ -350,53 +376,56 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
             </div>
           )}
 
-          {/* Group Memberships */}
+          {/* Effective Rules */}
           {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
             <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Group Memberships</h4>
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">
+                Effective Rules ({policies.length})
+                {policies.length > 0 && (
+                  <span className="text-xs font-normal text-gray-500 dark:text-gray-400 ml-2">
+                    (Applied in order by jump server)
+                  </span>
+                )}
+              </h4>
               {loadingDetails ? (
-                <div className="text-sm text-gray-500">Loading groups...</div>
-              ) : groups.length > 0 ? (
-                <div className="space-y-2">
-                  {groups.map((group) => (
-                    <div key={group.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
-                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{group.name}</div>
-                      {group.description && (
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.description}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-sm text-gray-500">No groups found</div>
-              )}
-            </div>
-          )}
-
-          {/* Effective Policies */}
-          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
-            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Effective Policies</h4>
-              {loadingDetails ? (
-                <div className="text-sm text-gray-500">Loading policies...</div>
+                <div className="text-sm text-gray-500">Loading rules...</div>
               ) : policies.length > 0 ? (
                 <div className="space-y-2">
-                  {policies.map((policy) => (
-                    <div key={policy.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
-                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{policy.name}</div>
-                      {policy.description && (
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{policy.description}</div>
-                      )}
-                      {policy.rules && policy.rules.length > 0 && (
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          {policy.rules.length} rule{policy.rules.length !== 1 ? 's' : ''}
+                  {policies.map((rule, index) => (
+                    <div key={`${rule._policyName}-${rule.id}-${index}`} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                      <div className="flex items-start gap-2">
+                        <span className="text-xs font-mono text-gray-400 dark:text-gray-500 mt-0.5">#{index + 1}</span>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`px-2 py-0.5 text-xs font-semibold rounded ${
+                              rule.action === 'allow' 
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                            }`}>
+                              {rule.action.toUpperCase()}
+                            </span>
+                            <span className="px-2 py-0.5 text-xs font-semibold rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                              {rule.direction.toUpperCase()}
+                            </span>
+                            <span className="text-xs font-mono text-gray-900 dark:text-gray-100">
+                              {rule.target_type}: {rule.target}
+                            </span>
+                          </div>
+                          {rule.description && (
+                            <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">{rule.description}</div>
+                          )}
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            From: <span className="font-medium">{rule._policyName}</span>
+                            {' '} in <span className="font-medium">{rule._groupName}</span>
+                            {' '}(priority: {rule._groupPriority})
+                          </div>
                         </div>
-                      )}
+                      </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-sm text-gray-500">No policies attached to this peer's groups</div>
+                <div className="text-sm text-gray-500">No rules attached to this peer's groups</div>
               )}
             </div>
           )}
@@ -423,6 +452,29 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                 </div>
               ) : (
                 <div className="text-sm text-gray-500">No routes attached to this peer's groups</div>
+              )}
+            </div>
+          )}
+
+          {/* Group Memberships */}
+          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
+            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Group Memberships</h4>
+              {loadingDetails ? (
+                <div className="text-sm text-gray-500">Loading groups...</div>
+              ) : groups.length > 0 ? (
+                <div className="space-y-2">
+                  {groups.map((group) => (
+                    <div key={group.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{group.name}</div>
+                      {group.description && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.description}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No groups found</div>
               )}
             </div>
           )}
