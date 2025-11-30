@@ -47,6 +47,7 @@ type GroupService interface {
 	AttachPolicyToGroup(ctx context.Context, networkID, groupID, policyID string) error
 	DetachPolicyFromGroup(ctx context.Context, networkID, groupID, policyID string) error
 	GetGroupPolicies(ctx context.Context, networkID, groupID string) ([]*domain.Policy, error)
+	ReorderGroupPolicies(ctx context.Context, networkID, groupID string, policyIDs []string) error
 	AttachRouteToGroup(ctx context.Context, networkID, groupID, routeID string) error
 	DetachRouteFromGroup(ctx context.Context, networkID, groupID, routeID string) error
 }
@@ -238,6 +239,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 					groups.POST("/:groupId/policies/:policyId", h.AttachPolicyToGroup)
 					groups.DELETE("/:groupId/policies/:policyId", h.DetachPolicyFromGroup)
 					groups.GET("/:groupId/policies", h.GetGroupPolicies)
+					groups.PUT("/:groupId/policies/order", h.ReorderGroupPolicies)
 				}
 
 				// Policy routes (admin only)

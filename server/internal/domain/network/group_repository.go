@@ -20,6 +20,7 @@ type GroupRepository interface {
 	AttachPolicyToGroup(ctx context.Context, networkID, groupID, policyID string) error
 	DetachPolicyFromGroup(ctx context.Context, networkID, groupID, policyID string) error
 	GetGroupPolicies(ctx context.Context, networkID, groupID string) ([]*Policy, error)
+	ReorderGroupPolicies(ctx context.Context, networkID, groupID string, policyIDs []string) error
 
 	// Route attachment operations
 	AttachRouteToGroup(ctx context.Context, networkID, groupID, routeID string) error

@@ -259,12 +259,12 @@ class ApiClient {
     return response.data;
   }
 
-  async createGroup(networkId: string, data: { name: string; description?: string }): Promise<Group> {
+  async createGroup(networkId: string, data: { name: string; description?: string; priority?: number }): Promise<Group> {
     const response = await this.client.post(`/networks/${networkId}/groups`, data);
     return response.data;
   }
 
-  async updateGroup(networkId: string, groupId: string, data: { name?: string; description?: string }): Promise<Group> {
+  async updateGroup(networkId: string, groupId: string, data: { name?: string; description?: string; priority?: number }): Promise<Group> {
     const response = await this.client.put(`/networks/${networkId}/groups/${groupId}`, data);
     return response.data;
   }
@@ -292,6 +292,10 @@ class ApiClient {
 
   async detachPolicyFromGroup(networkId: string, groupId: string, policyId: string): Promise<void> {
     await this.client.delete(`/networks/${networkId}/groups/${groupId}/policies/${policyId}`);
+  }
+
+  async reorderGroupPolicies(networkId: string, groupId: string, policyIds: string[]): Promise<void> {
+    await this.client.put(`/networks/${networkId}/groups/${groupId}/policies/order`, { policy_ids: policyIds });
   }
 
   async getGroupRoutes(networkId: string, groupId: string): Promise<Route[]> {

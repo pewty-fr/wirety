@@ -12,6 +12,7 @@ type Group struct {
 	NetworkID   string    `json:"network_id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
+	Priority    int       `json:"priority"`   // Priority for policy application order (0-999, lower = higher priority)
 	PeerIDs     []string  `json:"peer_ids"`   // Member peer identifiers
 	PolicyIDs   []string  `json:"policy_ids"` // Attached policy identifiers
 	RouteIDs    []string  `json:"route_ids"`  // Attached route identifiers
@@ -23,18 +24,25 @@ type Group struct {
 type GroupCreateRequest struct {
 	Name        string `json:"name" binding:"required"`
 	Description string `json:"description"`
+	Priority    *int   `json:"priority,omitempty"` // Optional priority (1-999), defaults to 100
 }
 
 // GroupUpdateRequest represents the data that can be updated for a group
 type GroupUpdateRequest struct {
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
+	Priority    *int   `json:"priority,omitempty"` // Optional priority (1-999)
 }
 
-// Validate validates the group name
+// Validate validates the group name and priority
 func (r *GroupCreateRequest) Validate() error {
 	if err := validateGroupName(r.Name); err != nil {
 		return err
+	}
+	if r.Priority != nil {
+		if *r.Priority < 1 || *r.Priority > 999 {
+			return errors.New("priority must be between 1 and 999")
+		}
 	}
 	return nil
 }
@@ -44,6 +52,11 @@ func (r *GroupUpdateRequest) Validate() error {
 	if r.Name != "" {
 		if err := validateGroupName(r.Name); err != nil {
 			return err
+		}
+	}
+	if r.Priority != nil {
+		if *r.Priority < 1 || *r.Priority > 999 {
+			return errors.New("priority must be between 1 and 999")
 		}
 	}
 	return nil

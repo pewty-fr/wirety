@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUsers, faPencil, faTrash, faUserPlus, faUserMinus, faShieldAlt, faRoute } from '@fortawesome/free-solid-svg-icons';
+import { faUsers, faPencil, faTrash, faUserPlus, faUserMinus, faShieldAlt, faRoute, faGripVertical, faArrowUp, faArrowDown } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import SearchableSelect from '../../components/SearchableSelect';
 import api from '../../api/client';
@@ -171,6 +171,7 @@ export default function GroupsPage() {
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Priority</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Peers</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Policies</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Routes</th>
@@ -195,6 +196,17 @@ export default function GroupsPage() {
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
                       {group.description || '-'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                        group.priority === 0 
+                          ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                          : group.priority < 100
+                          ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                          : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
+                      }`}>
+                        {group.priority}
+                      </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                       {group.peer_ids?.length || 0}
@@ -277,15 +289,20 @@ function GroupModal({
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [priority, setPriority] = useState<number>(100);
   const [loading, setLoading] = useState(false);
+
+  const isQuarantineGroup = group?.name.toLowerCase() === 'quarantine';
 
   useEffect(() => {
     if (group) {
       setName(group.name);
       setDescription(group.description || '');
+      setPriority(group.priority);
     } else {
       setName('');
       setDescription('');
+      setPriority(100);
     }
   }, [group]);
 
@@ -295,9 +312,9 @@ function GroupModal({
 
     try {
       if (group) {
-        await api.updateGroup(networkId, group.id, { name, description });
+        await api.updateGroup(networkId, group.id, { name, description, priority: isQuarantineGroup ? undefined : priority });
       } else {
-        await api.createGroup(networkId, { name, description });
+        await api.createGroup(networkId, { name, description, priority });
       }
       onSuccess();
       onClose();
@@ -354,6 +371,31 @@ function GroupModal({
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               />
             </div>
+            {!isQuarantineGroup && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Priority (1-999)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="999"
+                  value={priority}
+                  onChange={(e) => setPriority(parseInt(e.target.value) || 100)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Lower number = higher priority. Default is 100. Quarantine groups use 0.
+                </p>
+              </div>
+            )}
+            {isQuarantineGroup && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                  Quarantine groups have priority 0 (highest) and cannot be changed.
+                </p>
+              </div>
+            )}
           </div>
           <div className="mt-6 flex justify-end gap-3">
             <button
@@ -526,6 +568,30 @@ function GroupDetailModal({
     }
   };
 
+  const handleReorderPolicies = async (fromIndex: number, toIndex: number) => {
+    if (!group || !networkId) return;
+    
+    // Create a new array with the reordered policies
+    const reorderedPolicies = [...policies];
+    const [movedPolicy] = reorderedPolicies.splice(fromIndex, 1);
+    reorderedPolicies.splice(toIndex, 0, movedPolicy);
+    
+    // Optimistically update the UI
+    setPolicies(reorderedPolicies);
+    
+    try {
+      // Send the new order to the backend
+      const policyIds = reorderedPolicies.map(p => p.id);
+      await api.reorderGroupPolicies(networkId, group.id, policyIds);
+      onUpdate();
+    } catch (error) {
+      console.error('Failed to reorder policies:', error);
+      alert('Failed to reorder policies');
+      // Reload to get the correct order from the server
+      await loadGroupDetails();
+    }
+  };
+
   const handleAttachRoute = async (routeId: string) => {
     if (!group || !networkId) return;
     
@@ -644,21 +710,73 @@ function GroupDetailModal({
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
                 <FontAwesomeIcon icon={faShieldAlt} />
                 Policies ({policies.length})
+                {policies.length > 1 && (
+                  <span className="text-xs text-gray-500 dark:text-gray-400 font-normal ml-2">
+                    (Order matters - first to last)
+                  </span>
+                )}
               </h3>
               <div className="space-y-2">
-                {policies.map((policy) => (
-                  <div key={policy.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <div>
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">{policy.name}</span>
-                      <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">({policy.rules?.length || 0} rules)</span>
+                {policies.map((policy, index) => (
+                  <div
+                    key={policy.id}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('policyIndex', index.toString());
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const fromIndex = parseInt(e.dataTransfer.getData('policyIndex'));
+                      if (fromIndex !== index) {
+                        handleReorderPolicies(fromIndex, index);
+                      }
+                    }}
+                    className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg cursor-move hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                  >
+                    <FontAwesomeIcon 
+                      icon={faGripVertical} 
+                      className="text-gray-400 dark:text-gray-500 cursor-grab active:cursor-grabbing"
+                      title="Drag to reorder"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-gray-500 dark:text-gray-400">#{index + 1}</span>
+                        <span className="text-sm font-medium text-gray-900 dark:text-white">{policy.name}</span>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">({policy.rules?.length || 0} rules)</span>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => handleDetachPolicy(policy.id)}
-                      className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-                      title="Detach policy"
-                    >
-                      <FontAwesomeIcon icon={faTrash} />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {index > 0 && (
+                        <button
+                          onClick={() => handleReorderPolicies(index, index - 1)}
+                          className="p-1.5 text-gray-600 hover:text-primary-600 dark:text-gray-400 dark:hover:text-primary-400 transition-colors"
+                          title="Move up"
+                        >
+                          <FontAwesomeIcon icon={faArrowUp} className="text-sm" />
+                        </button>
+                      )}
+                      {index < policies.length - 1 && (
+                        <button
+                          onClick={() => handleReorderPolicies(index, index + 1)}
+                          className="p-1.5 text-gray-600 hover:text-primary-600 dark:text-gray-400 dark:hover:text-primary-400 transition-colors"
+                          title="Move down"
+                        >
+                          <FontAwesomeIcon icon={faArrowDown} className="text-sm" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDetachPolicy(policy.id)}
+                        className="p-1.5 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 transition-colors ml-1"
+                        title="Detach policy"
+                      >
+                        <FontAwesomeIcon icon={faTrash} className="text-sm" />
+                      </button>
+                    </div>
                   </div>
                 ))}
                 {availablePolicies.length > 0 && (

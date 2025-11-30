@@ -141,6 +141,7 @@ export interface Group {
   network_id: string;
   name: string;
   description: string;
+  priority: number; // 0-999, lower = higher priority (0 for quarantine, 100 default)
   peer_ids: string[];
   policy_ids: string[];
   route_ids: string[];

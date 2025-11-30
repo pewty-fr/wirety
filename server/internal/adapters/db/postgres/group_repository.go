@@ -40,9 +40,9 @@ func (r *GroupRepository) CreateGroup(ctx context.Context, networkID string, gro
 	}
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO groups (id, network_id, name, description, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, group.ID, networkID, group.Name, group.Description, group.CreatedAt, group.UpdatedAt)
+		INSERT INTO groups (id, network_id, name, description, priority, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, group.ID, networkID, group.Name, group.Description, group.Priority, group.CreatedAt, group.UpdatedAt)
 	if err != nil {
 		// Check for unique constraint violation
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
@@ -58,10 +58,10 @@ func (r *GroupRepository) CreateGroup(ctx context.Context, networkID string, gro
 func (r *GroupRepository) GetGroup(ctx context.Context, networkID, groupID string) (*network.Group, error) {
 	var g network.Group
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, network_id, name, description, created_at, updated_at
+		SELECT id, network_id, name, description, priority, created_at, updated_at
 		FROM groups
 		WHERE id = $1 AND network_id = $2
-	`, groupID, networkID).Scan(&g.ID, &g.NetworkID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt)
+	`, groupID, networkID).Scan(&g.ID, &g.NetworkID, &g.Name, &g.Description, &g.Priority, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("group not found")
@@ -99,9 +99,9 @@ func (r *GroupRepository) UpdateGroup(ctx context.Context, networkID string, gro
 
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE groups
-		SET name = $3, description = $4, updated_at = $5
+		SET name = $3, description = $4, priority = $5, updated_at = $6
 		WHERE id = $1 AND network_id = $2
-	`, group.ID, networkID, group.Name, group.Description, group.UpdatedAt)
+	`, group.ID, networkID, group.Name, group.Description, group.Priority, group.UpdatedAt)
 	if err != nil {
 		// Check for unique constraint violation
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
@@ -139,8 +139,8 @@ func (r *GroupRepository) DeleteGroup(ctx context.Context, networkID, groupID st
 // ListGroups lists all groups in a network
 func (r *GroupRepository) ListGroups(ctx context.Context, networkID string) ([]*network.Group, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT g.id, g.network_id, g.name, g.description, g.created_at, g.updated_at,
-		       COALESCE(p.peer_count, 0) AS peert
+		SELECT g.id, g.network_id, g.name, g.description, g.priority, g.created_at, g.updated_at,
+		       COALESCE(p.peer_count, 0) AS peer_count
 		FROM groups g
 		LEFT JOIN (
 			SELECT group_id, COUNT(*) AS peer_count
@@ -148,7 +148,7 @@ func (r *GroupRepository) ListGroups(ctx context.Context, networkID string) ([]*
 			GROUP BY group_id
 		) p ON p.group_id = g.id
 		WHERE g.network_id = $1
-		ORDER BY g.created_at ASC
+		ORDER BY g.priority ASC, g.created_at ASC
 	`, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("list groups: %w", err)
@@ -159,7 +159,7 @@ func (r *GroupRepository) ListGroups(ctx context.Context, networkID string) ([]*
 	for rows.Next() {
 		var g network.Group
 		var peerCount int
-		err = rows.Scan(&g.ID, &g.NetworkID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt, &peerCount)
+		err = rows.Scan(&g.ID, &g.NetworkID, &g.Name, &g.Description, &g.Priority, &g.CreatedAt, &g.UpdatedAt, &peerCount)
 		if err != nil {
 			return nil, fmt.Errorf("scan group: %w", err)
 		}
@@ -285,11 +285,11 @@ func (r *GroupRepository) RemovePeerFromGroup(ctx context.Context, networkID, gr
 // GetPeerGroups retrieves all groups a peer belongs to
 func (r *GroupRepository) GetPeerGroups(ctx context.Context, networkID, peerID string) ([]*network.Group, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT g.id, g.network_id, g.name, g.description, g.created_at, g.updated_at
+		SELECT g.id, g.network_id, g.name, g.description, g.priority, g.created_at, g.updated_at
 		FROM groups g
 		INNER JOIN group_peers gp ON g.id = gp.group_id
 		WHERE gp.peer_id = $1 AND g.network_id = $2
-		ORDER BY g.created_at ASC
+		ORDER BY g.priority ASC, g.created_at ASC
 	`, peerID, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("get peer groups: %w", err)
@@ -299,7 +299,7 @@ func (r *GroupRepository) GetPeerGroups(ctx context.Context, networkID, peerID s
 	groups := make([]*network.Group, 0)
 	for rows.Next() {
 		var g network.Group
-		err = rows.Scan(&g.ID, &g.NetworkID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt)
+		err = rows.Scan(&g.ID, &g.NetworkID, &g.Name, &g.Description, &g.Priority, &g.CreatedAt, &g.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan group: %w", err)
 		}
@@ -427,6 +427,62 @@ func (r *GroupRepository) DetachPolicyFromGroup(ctx context.Context, networkID, 
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
 		return fmt.Errorf("policy not attached to group")
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// ReorderGroupPolicies reorders policies within a group
+func (r *GroupRepository) ReorderGroupPolicies(ctx context.Context, networkID, groupID string, policyIDs []string) error {
+	// Start a transaction
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Verify group exists and belongs to network
+	var exists bool
+	err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM groups WHERE id = $1 AND network_id = $2)
+	`, groupID, networkID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check group exists: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("group not found")
+	}
+
+	// Verify all policies are attached to the group
+	for _, policyID := range policyIDs {
+		err = tx.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM group_policies 
+				WHERE group_id = $1 AND policy_id = $2
+			)
+		`, groupID, policyID).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("check policy attached: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf("policy %s not attached to group", policyID)
+		}
+	}
+
+	// Update policy order for each policy
+	for i, policyID := range policyIDs {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE group_policies
+			SET policy_order = $1
+			WHERE group_id = $2 AND policy_id = $3
+		`, i, groupID, policyID)
+		if err != nil {
+			return fmt.Errorf("update policy order: %w", err)
+		}
 	}
 
 	if err = tx.Commit(); err != nil {
