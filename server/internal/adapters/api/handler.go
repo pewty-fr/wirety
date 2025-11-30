@@ -204,7 +204,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 					peers.DELETE("/:peerId", h.DeletePeer)
 					peers.GET("/:peerId/config", h.GetPeerConfig)
 					peers.GET("/:peerId/session", h.GetPeerSessionStatus)
-					peers.POST("/:peerId/reconnect", h.ReconnectPeer)
+					// peers.POST("/:peerId/reconnect", h.ReconnectPeer)
 				}
 
 				// Network session management (admin only)
