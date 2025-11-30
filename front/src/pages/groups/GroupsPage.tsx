@@ -13,7 +13,7 @@ export default function GroupsPage() {
   const [selectedNetworkId, setSelectedNetworkId] = useState<string>('');
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -66,25 +66,29 @@ export default function GroupsPage() {
 
   const handleCreate = () => {
     setEditingGroup(null);
-    setIsModalOpen(true);
+    setIsGroupModalOpen(true);
   };
 
-  const handleEdit = (group: Group, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleEdit = (group: Group, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     setEditingGroup(group);
-    setIsModalOpen(true);
+    setIsGroupModalOpen(true);
+  };
+
+  const handleDeleteGroup = async (groupId: string) => {
+    try {
+      await api.deleteGroup(selectedNetworkId, groupId);
+      loadGroups();
+    } catch (error) {
+      console.error('Failed to delete group:', error);
+      alert('Failed to delete group');
+    }
   };
 
   const handleDelete = async (group: Group, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm(`Are you sure you want to delete group "${group.name}"? This will remove all peer associations.`)) {
-      try {
-        await api.deleteGroup(selectedNetworkId, group.id);
-        loadGroups();
-      } catch (error) {
-        console.error('Failed to delete group:', error);
-        alert('Failed to delete group');
-      }
+      await handleDeleteGroup(group.id);
     }
   };
 
@@ -248,9 +252,9 @@ export default function GroupsPage() {
 
       {/* Create/Edit Modal */}
       <GroupModal
-        isOpen={isModalOpen}
+        isOpen={isGroupModalOpen}
         onClose={() => {
-          setIsModalOpen(false);
+          setIsGroupModalOpen(false);
           setEditingGroup(null);
         }}
         onSuccess={loadGroups}
@@ -268,6 +272,9 @@ export default function GroupsPage() {
         group={selectedGroup}
         networkId={selectedNetworkId}
         onUpdate={loadGroups}
+        onEdit={handleEdit}
+        onDelete={handleDeleteGroup}
+        setIsGroupModalOpen={setIsGroupModalOpen}
       />
     </div>
   );
@@ -287,10 +294,19 @@ function GroupModal({
   networkId: string;
   group: Group | null;
 }) {
+  const [activeTab, setActiveTab] = useState<'details' | 'peers' | 'policies' | 'routes'>('details');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<number>(100);
   const [loading, setLoading] = useState(false);
+  
+  // Attachment management state
+  const [peers, setPeers] = useState<Peer[]>([]);
+  const [availablePeers, setAvailablePeers] = useState<Peer[]>([]);
+  const [policies, setPolicies] = useState<Policy[]>([]);
+  const [availablePolicies, setAvailablePolicies] = useState<Policy[]>([]);
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [availableRoutes, setAvailableRoutes] = useState<Route[]>([]);
 
   const isQuarantineGroup = group?.name.toLowerCase() === 'quarantine';
 
@@ -299,12 +315,66 @@ function GroupModal({
       setName(group.name);
       setDescription(group.description || '');
       setPriority(group.priority);
+      // Load attachments when editing
+      loadAttachments();
     } else {
       setName('');
       setDescription('');
       setPriority(100);
+      setPeers([]);
+      setAvailablePeers([]);
+      setPolicies([]);
+      setAvailablePolicies([]);
+      setRoutes([]);
+      setAvailableRoutes([]);
     }
-  }, [group]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group, networkId]);
+
+  const loadAttachments = async () => {
+    if (!group || !networkId) return;
+
+    try {
+      // Load all network peers
+      const allPeers = await api.getAllNetworkPeers(networkId);
+      const groupPeerIds = new Set(group.peer_ids || []);
+      setPeers(allPeers.filter(p => groupPeerIds.has(p.id)));
+      
+      // Load group routes first to filter out jump peers used by routes
+      const [groupRoutes, allRoutes] = await Promise.all([
+        api.getGroupRoutes(networkId, group.id),
+        api.getRoutes(networkId),
+      ]);
+      setRoutes(groupRoutes);
+      
+      // Get jump peer IDs used by routes in this group
+      const jumpPeerIdsInRoutes = new Set(groupRoutes.map(r => r.jump_peer_id));
+      
+      // Filter available peers: exclude group members and jump peers used by group routes
+      setAvailablePeers(allPeers.filter(p => 
+        !groupPeerIds.has(p.id) && 
+        !(p.is_jump && jumpPeerIdsInRoutes.has(p.id))
+      ));
+
+      // Load group policies and all network policies
+      const [groupPolicies, allPolicies] = await Promise.all([
+        api.getGroupPolicies(networkId, group.id),
+        api.getPolicies(networkId),
+      ]);
+      setPolicies(groupPolicies);
+      const groupPolicyIds = new Set(groupPolicies.map(p => p.id));
+      setAvailablePolicies(allPolicies.filter(p => !groupPolicyIds.has(p.id)));
+
+      // Available routes
+      const groupRouteIds = new Set(groupRoutes.map(r => r.id));
+      setAvailableRoutes(allRoutes.filter(r => 
+        !groupRouteIds.has(r.id) && 
+        !groupPeerIds.has(r.jump_peer_id)
+      ));
+    } catch (error) {
+      console.error('Failed to load attachments:', error);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -326,6 +396,127 @@ function GroupModal({
     }
   };
 
+  const handleAddPeer = async (peerId: string) => {
+    if (!group || !networkId) return;
+    
+    const peer = availablePeers.find(p => p.id === peerId);
+    if (peer && peer.is_jump) {
+      const conflictingRoutes = routes.filter(route => route.jump_peer_id === peerId);
+      if (conflictingRoutes.length > 0) {
+        const routeNames = conflictingRoutes.map(r => r.name).join(', ');
+        alert(`Cannot add jump peer "${peer.name}" to this group because it is the gateway for the following routes attached to this group: ${routeNames}`);
+        return;
+      }
+    }
+    
+    try {
+      await api.addPeerToGroup(networkId, group.id, peerId);
+      await loadAttachments();
+      onSuccess();
+    } catch (error: any) {
+      console.error('Failed to add peer:', error);
+      if (error.response?.data?.error) {
+        alert(error.response.data.error);
+      } else {
+        alert('Failed to add peer to group');
+      }
+    }
+  };
+
+  const handleRemovePeer = async (peerId: string) => {
+    if (!group || !networkId) return;
+    try {
+      await api.removePeerFromGroup(networkId, group.id, peerId);
+      await loadAttachments();
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to remove peer:', error);
+      alert('Failed to remove peer from group');
+    }
+  };
+
+  const handleAttachPolicy = async (policyId: string) => {
+    if (!group || !networkId) return;
+    try {
+      await api.attachPolicyToGroup(networkId, group.id, policyId);
+      await loadAttachments();
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to attach policy:', error);
+      alert('Failed to attach policy to group');
+    }
+  };
+
+  const handleDetachPolicy = async (policyId: string) => {
+    if (!group || !networkId) return;
+    try {
+      await api.detachPolicyFromGroup(networkId, group.id, policyId);
+      await loadAttachments();
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to detach policy:', error);
+      alert('Failed to detach policy from group');
+    }
+  };
+
+  const handleReorderPolicies = async (fromIndex: number, toIndex: number) => {
+    if (!group || !networkId) return;
+    
+    const reorderedPolicies = [...policies];
+    const [movedPolicy] = reorderedPolicies.splice(fromIndex, 1);
+    reorderedPolicies.splice(toIndex, 0, movedPolicy);
+    
+    setPolicies(reorderedPolicies);
+    
+    try {
+      const policyIds = reorderedPolicies.map(p => p.id);
+      await api.reorderGroupPolicies(networkId, group.id, policyIds);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to reorder policies:', error);
+      alert('Failed to reorder policies');
+      await loadAttachments();
+    }
+  };
+
+  const handleAttachRoute = async (routeId: string) => {
+    if (!group || !networkId) return;
+    
+    const route = availableRoutes.find(r => r.id === routeId);
+    if (route) {
+      const jumpPeerInGroup = peers.find(p => p.id === route.jump_peer_id);
+      if (jumpPeerInGroup) {
+        alert(`Cannot attach route "${route.name}" to this group because its jump peer "${jumpPeerInGroup.name}" is a member of this group. This would create a circular routing configuration.`);
+        return;
+      }
+    }
+    
+    try {
+      await api.attachRouteToGroup(networkId, group.id, routeId);
+      await loadAttachments();
+      onSuccess();
+    } catch (error: any) {
+      console.error('Failed to attach route:', error);
+      if (error.response?.data?.error) {
+        alert(error.response.data.error);
+      } else {
+        alert('Failed to attach route to group');
+      }
+    }
+  };
+
+  const handleDetachRoute = async (routeId: string) => {
+    if (!group || !networkId) return;
+    try {
+      await api.detachRouteFromGroup(networkId, group.id, routeId);
+      await loadAttachments();
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to detach route:', error);
+      alert('Failed to detach route from group');
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -339,81 +530,367 @@ function GroupModal({
       {/* Modal */}
       <div className="flex min-h-full items-center justify-center p-4">
         <div 
-          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all border-2 border-primary-300 dark:border-primary-700"
+          className={`relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full ${group ? 'max-w-4xl' : 'max-w-md'} transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto`}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="p-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
           {group ? 'Edit Group' : 'Create Group'}
         </h2>
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Name *
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Description
-              </label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-            </div>
-            {!isQuarantineGroup && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Priority (1-999)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="999"
-                  value={priority}
-                  onChange={(e) => setPriority(parseInt(e.target.value) || 100)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Lower number = higher priority. Default is 100. Quarantine groups use 0.
-                </p>
-              </div>
-            )}
-            {isQuarantineGroup && (
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
-                <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                  Quarantine groups have priority 0 (highest) and cannot be changed.
-                </p>
-              </div>
-            )}
-          </div>
-          <div className="mt-6 flex justify-end gap-3">
+
+        {/* Tabs for editing mode */}
+        {group && (
+          <div className="flex border-b border-gray-200 dark:border-gray-700 mb-4">
             <button
               type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+              onClick={() => setActiveTab('details')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'details'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
             >
-              Cancel
+              Details
             </button>
             <button
-              type="submit"
-              disabled={loading}
-              className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+              type="button"
+              onClick={() => setActiveTab('peers')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'peers'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
             >
-              {loading ? 'Saving...' : group ? 'Update' : 'Create'}
+              <FontAwesomeIcon icon={faUserPlus} className="mr-1" />
+              Peers ({peers.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('policies')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'policies'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              <FontAwesomeIcon icon={faShieldAlt} className="mr-1" />
+              Policies ({policies.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('routes')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'routes'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              <FontAwesomeIcon icon={faRoute} className="mr-1" />
+              Routes ({routes.length})
             </button>
           </div>
-        </form>
+        )}
+
+        {/* Details Tab / Create Form */}
+        {(!group || activeTab === 'details') && (
+          <form onSubmit={handleSubmit}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Name *
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Description
+                </label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+              {!isQuarantineGroup && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Priority (1-999)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="999"
+                    value={priority}
+                    onChange={(e) => setPriority(parseInt(e.target.value) || 100)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Lower number = higher priority. Default is 100. Quarantine groups use 0.
+                  </p>
+                </div>
+              )}
+              {isQuarantineGroup && (
+                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                  <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                    Quarantine groups have priority 0 (highest) and cannot be changed.
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Saving...' : group ? 'Update' : 'Create'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Peers Tab */}
+        {group && activeTab === 'peers' && (
+          <div className="space-y-3">
+            {peers.map((peer) => (
+              <div key={peer.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className={`w-3 h-3 rounded-full ${peer.is_jump ? 'bg-blue-500' : 'bg-green-500'}`} />
+                  <div>
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">{peer.name}</span>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      {peer.address} • {peer.is_jump ? 'Jump Peer' : 'Regular Peer'}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (confirm(`Remove "${peer.name}" from this group?`)) {
+                      handleRemovePeer(peer.id);
+                    }
+                  }}
+                  className="p-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                >
+                  <FontAwesomeIcon icon={faUserMinus} />
+                </button>
+              </div>
+            ))}
+            {availablePeers.length > 0 ? (
+              <div className="border-t border-gray-200 dark:border-gray-600 pt-3">
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleAddPeer(e.target.value);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="">Add peer to group...</option>
+                  {availablePeers.map((peer) => (
+                    <option key={peer.id} value={peer.id}>
+                      {peer.name} ({peer.address}) - {peer.is_jump ? 'Jump' : 'Regular'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                All peers in this network are already in this group
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Policies Tab */}
+        {group && activeTab === 'policies' && (
+          <div className="space-y-3">
+            {policies.length > 1 && (
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                Order matters - policies are applied from first to last
+              </div>
+            )}
+            {policies.map((policy, index) => (
+              <div
+                key={policy.id}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('policyIndex', index.toString());
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const fromIndex = parseInt(e.dataTransfer.getData('policyIndex'));
+                  if (fromIndex !== index) {
+                    handleReorderPolicies(fromIndex, index);
+                  }
+                }}
+                className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg cursor-move hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+              >
+                <FontAwesomeIcon icon={faGripVertical} className="text-gray-400 dark:text-gray-500" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-gray-500 dark:text-gray-400">#{index + 1}</span>
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">{policy.name}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">({policy.rules?.length || 0} rules)</span>
+                  </div>
+                  {policy.description && (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{policy.description}</div>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  {index > 0 && (
+                    <button
+                      onClick={() => handleReorderPolicies(index, index - 1)}
+                      className="p-1.5 text-gray-600 hover:text-primary-600 dark:text-gray-400 dark:hover:text-primary-400"
+                    >
+                      <FontAwesomeIcon icon={faArrowUp} className="text-sm" />
+                    </button>
+                  )}
+                  {index < policies.length - 1 && (
+                    <button
+                      onClick={() => handleReorderPolicies(index, index + 1)}
+                      className="p-1.5 text-gray-600 hover:text-primary-600 dark:text-gray-400 dark:hover:text-primary-400"
+                    >
+                      <FontAwesomeIcon icon={faArrowDown} className="text-sm" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      if (confirm(`Detach policy "${policy.name}" from this group?`)) {
+                        handleDetachPolicy(policy.id);
+                      }
+                    }}
+                    className="p-1.5 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded ml-1"
+                  >
+                    <FontAwesomeIcon icon={faTrash} className="text-sm" />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {availablePolicies.length > 0 ? (
+              <div className="border-t border-gray-200 dark:border-gray-600 pt-3">
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleAttachPolicy(e.target.value);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="">Attach policy to group...</option>
+                  {availablePolicies.map((policy) => (
+                    <option key={policy.id} value={policy.id}>
+                      {policy.name} ({policy.rules?.length || 0} rules)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                All policies in this network are already attached to this group
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Routes Tab */}
+        {group && activeTab === 'routes' && (
+          <div className="space-y-3">
+            {routes.map((route) => (
+              <div key={route.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">{route.name}</span>
+                    <span className="text-xs font-mono bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-2 py-0.5 rounded">
+                      {route.destination_cidr}
+                    </span>
+                  </div>
+                  {route.description && (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{route.description}</div>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    if (confirm(`Detach route "${route.name}" from this group?`)) {
+                      handleDetachRoute(route.id);
+                    }
+                  }}
+                  className="p-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                >
+                  <FontAwesomeIcon icon={faTrash} />
+                </button>
+              </div>
+            ))}
+            {availableRoutes.length > 0 ? (
+              <div className="border-t border-gray-200 dark:border-gray-600 pt-3">
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleAttachRoute(e.target.value);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="">Attach route to group...</option>
+                  {availableRoutes.map((route) => (
+                    <option key={route.id} value={route.id}>
+                      {route.name} ({route.destination_cidr})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                All routes in this network are already attached to this group
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
         </div>
       </div>
       </div>
@@ -428,12 +905,18 @@ function GroupDetailModal({
   group,
   networkId,
   onUpdate,
+  onEdit,
+  onDelete,
+  setIsGroupModalOpen,
 }: {
   isOpen: boolean;
   onClose: () => void;
   group: Group | null;
   networkId: string;
   onUpdate: () => void;
+  onEdit: (group: Group) => void;
+  onDelete: (groupId: string) => void;
+  setIsGroupModalOpen: (open: boolean) => void;
 }) {
   const [peers, setPeers] = useState<Peer[]>([]);
   const [availablePeers, setAvailablePeers] = useState<Peer[]>([]);
@@ -649,15 +1132,57 @@ function GroupDetailModal({
           onClick={(e) => e.stopPropagation()}
         >
         <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-start gap-4">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
-              <FontAwesomeIcon icon={faUsers} className="text-2xl text-white" />
+          <div className="flex items-start justify-between">
+            <div className="flex items-start gap-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
+                <FontAwesomeIcon icon={faUsers} className="text-2xl text-white" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{group.name}</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {group.id}</p>
+                {group.description && (
+                  <p className="text-gray-600 dark:text-gray-400 mt-1">{group.description}</p>
+                )}
+                <div className="flex items-center gap-2 mt-2">
+                  <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                    group.priority === 0 
+                      ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                      : group.priority < 100
+                      ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                      : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
+                  }`}>
+                    Priority: {group.priority}
+                  </span>
+                </div>
+              </div>
             </div>
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{group.name}</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {group.id}</p>
-              {group.description && (
-                <p className="text-gray-600 dark:text-gray-400 mt-1">{group.description}</p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  onEdit(group);
+                  setIsGroupModalOpen(true);
+                  onClose();
+                }}
+                className="px-3 py-2 text-sm font-medium text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 bg-primary-50 dark:bg-primary-900/20 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/30 transition-colors"
+                title="Edit group"
+              >
+                <FontAwesomeIcon icon={faPencil} className="mr-2" />
+                Edit
+              </button>
+              {group.name.toLowerCase() !== 'quarantine' && (
+                <button
+                  onClick={() => {
+                    if (confirm(`Are you sure you want to delete group "${group.name}"? This will not delete the peers.`)) {
+                      onDelete(group.id);
+                      onClose();
+                    }
+                  }}
+                  className="px-3 py-2 text-sm font-medium text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 bg-red-50 dark:bg-red-900/20 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                  title="Delete group"
+                >
+                  <FontAwesomeIcon icon={faTrash} className="mr-2" />
+                  Delete
+                </button>
               )}
             </div>
           </div>
