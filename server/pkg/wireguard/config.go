@@ -9,7 +9,7 @@ import (
 )
 
 // GenerateConfig generates a WireGuard configuration file for a peer
-func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *domain.Network, presharedKeys map[string]string) string {
+func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *domain.Network, presharedKeys map[string]string, routes []*domain.Route) string {
 	var sb strings.Builder
 
 	// [Interface] section
@@ -21,14 +21,22 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 		sb.WriteString(fmt.Sprintf("ListenPort = %d\n", peer.ListenPort))
 	}
 
-	// Add DNS if domain is configured
+	// Add DNS configuration
+	// For peers with internal domain support, use jump server DNS only
+	// The jump server will forward external queries to upstream DNS servers
 	domain := network.GetDomain()
-	dns := network.DNS
+	var dns []string
 	if domain != "" {
-		dns = append([]string{extractDNSServer(network.CIDR)}, dns...)
+		// Use jump server as DNS (it will forward to upstream servers)
+		dns = []string{extractDNSServer(network.CIDR)}
+	} else {
+		// No internal domain, use network's external DNS servers directly
+		dns = network.DNS
 	}
-	sb.WriteString(fmt.Sprintf("DNS = %s\n", strings.Join(dns, ", ")))
 
+	if len(dns) > 0 {
+		sb.WriteString(fmt.Sprintf("DNS = %s\n", strings.Join(dns, ", ")))
+	}
 
 	// Jump server packet filtering & forwarding now handled dynamically by agent firewall adapter.
 	// (No PostUp/PostDown iptables rules embedded in config.)
@@ -46,13 +54,18 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 			sb.WriteString(fmt.Sprintf("PresharedKey = %s\n", psk))
 		}
 
-		// Determine AllowedIPs
-		allowedIPs := determineAllowedIPs(peer, allowedPeer, network)
+		// Determine AllowedIPs based on peer type and routes
+		allowedIPs := determineAllowedIPs(peer, allowedPeer, network, routes)
 		sb.WriteString(fmt.Sprintf("AllowedIPs = %s\n", strings.Join(allowedIPs, ", ")))
 
 		// Add endpoint if the allowed peer is a jump server or has an endpoint
 		if allowedPeer.Endpoint != "" {
 			sb.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", allowedPeer.Endpoint, allowedPeer.ListenPort))
+			sb.WriteString("PersistentKeepalive = 25\n")
+		} else if peer.IsJump && !allowedPeer.IsJump {
+			// Jump server connecting to regular peer (no endpoint)
+			// Add keepalive so jump server can initiate handshakes and maintain connection
+			// This is critical for mobile peers behind NAT
 			sb.WriteString("PersistentKeepalive = 25\n")
 		}
 
@@ -63,21 +76,42 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 }
 
 // determineAllowedIPs determines the AllowedIPs for a peer connection
-func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network) []string {
+// Implements policy-based routing with group routes
+func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network, routes []*domain.Route) []string {
 	var allowedIPs []string
 
-	// If the peer wants full encapsulation and the allowed peer is a jump server
-	if peer.FullEncapsulation && allowedPeer.IsJump {
-		// Route all traffic through jump server
-		return []string{"0.0.0.0/0", "::/0"}
+	// For jump peers: include all peer addresses and all route CIDRs
+	if peer.IsJump {
+		// Include network CIDR for peer-to-peer communication
+		allowedIPs = []string{fmt.Sprintf("%s/32", allowedPeer.Address)}
+
+		// Include all route destination CIDRs for external network access
+		for _, route := range routes {
+			allowedIPs = append(allowedIPs, route.DestinationCIDR)
+		}
+
+		// Include any additional allowed IPs configured for this peer
+		allowedIPs = append(allowedIPs, peer.AdditionalAllowedIPs...)
+
+		return allowedIPs
 	}
 
-	// If the allowed peer is a jump server, route the entire network through it
+	// For regular peers connecting to a jump peer
 	if allowedPeer.IsJump {
+		// Include network CIDR for peer-to-peer communication
 		allowedIPs = []string{network.CIDR}
+
+		// Include route CIDRs that use this jump peer as gateway
+		for _, route := range routes {
+			if route.JumpPeerID == allowedPeer.ID {
+				allowedIPs = append(allowedIPs, route.DestinationCIDR)
+			}
+		}
+
+		// Include any additional allowed IPs configured for the jump peer
 		allowedIPs = append(allowedIPs, allowedPeer.AdditionalAllowedIPs...)
 	} else {
-		// Otherwise, use the peer's address
+		// Regular peer to regular peer: just the peer's address
 		allowedIPs = []string{allowedPeer.Address + "/32"}
 	}
 

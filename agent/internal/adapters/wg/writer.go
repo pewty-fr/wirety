@@ -203,7 +203,22 @@ func (w *Writer) FindOldWiretyConfigs() ([]string, error) {
 	searchDirs := []string{
 		"/etc/wireguard",
 		"/opt/wireguard",
-		".", // Current directory for testing
+	}
+
+	// If we have a config path, also search in its directory
+	if w.Path != "" {
+		configDir := filepath.Dir(w.Path)
+		// Add to search dirs if not already present
+		found := false
+		for _, dir := range searchDirs {
+			if dir == configDir {
+				found = true
+				break
+			}
+		}
+		if !found {
+			searchDirs = append(searchDirs, configDir)
+		}
 	}
 
 	for _, dir := range searchDirs {

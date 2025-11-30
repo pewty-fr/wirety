@@ -16,6 +16,8 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
     name: '',
     cidr: '',
     dns: [] as string[],
+    domain_suffix: 'internal',
+    default_group_ids: [] as string[],
   });
   const [dnsInput, setDnsInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -34,12 +36,16 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
         name: network.name,
         cidr: network.cidr,
         dns: network.dns,
+        domain_suffix: network.domain_suffix || 'internal',
+        default_group_ids: network.default_group_ids || [],
       });
     } else {
       setFormData({
         name: '',
         cidr: '',
         dns: [],
+        domain_suffix: 'internal',
+        default_group_ids: [],
       });
     }
     setError(null);
@@ -81,12 +87,16 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
           name: formData.name,
           cidr: formData.cidr,
           dns: formData.dns,
+          domain_suffix: formData.domain_suffix,
+          default_group_ids: formData.default_group_ids,
         });
       } else {
         await api.createNetwork({
           name: formData.name,
           cidr: formData.cidr,
           dns: formData.dns.length > 0 ? formData.dns : undefined,
+          domain_suffix: formData.domain_suffix,
+          default_group_ids: formData.default_group_ids.length > 0 ? formData.default_group_ids : undefined,
         });
       }
       onSuccess();
@@ -223,7 +233,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
 
         {/* DNS Servers */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             DNS Servers (optional)
           </label>
           <div className="flex gap-2 mb-2">
@@ -259,6 +269,21 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
               ))}
             </div>
           )}
+        </div>
+
+        {/* Domain Suffix */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Domain Suffix
+          </label>
+          <input
+            type="text"
+            value={formData.domain_suffix}
+            onChange={(e) => setFormData({ ...formData, domain_suffix: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
+            placeholder="internal"
+          />
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Custom domain suffix for internal DNS (default: internal)</p>
         </div>
 
         {/* Actions */}

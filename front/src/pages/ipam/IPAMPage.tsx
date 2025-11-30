@@ -36,8 +36,6 @@ export default function IPAMPage() {
   }, [page, debouncedFilter]);
 
   const totalPages = Math.ceil(total / pageSize);
-  const allocatedCount = allocations.filter(a => a.allocated).length;
-  const availableCount = allocations.filter(a => !a.allocated).length;
 
   return (
     <div>
@@ -47,21 +45,6 @@ export default function IPAMPage() {
       />
 
       <div className="p-8">
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-200 dark:border-gray-700 p-6 shadow-sm hover:shadow-md transition-shadow">
-            <div className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">Total IPs</div>
-            <div className="text-4xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-gray-100 dark:to-gray-300 bg-clip-text text-transparent">{total}</div>
-          </div>
-          <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-200 dark:border-gray-700 p-6 shadow-sm hover:shadow-md transition-shadow">
-            <div className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">Allocated</div>
-            <div className="text-4xl font-bold bg-gradient-to-r from-green-600 to-accent-green dark:from-green-400 dark:to-green-300 bg-clip-text text-transparent">{allocatedCount}</div>
-          </div>
-          <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-200 dark:border-gray-700 p-6 shadow-sm hover:shadow-md transition-shadow">
-            <div className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">Available</div>
-            <div className="text-4xl font-bold bg-gradient-to-r from-primary-600 to-accent-blue dark:from-primary-400 dark:to-accent-blue bg-clip-text text-transparent">{availableCount}</div>
-          </div>
-        </div>
 
         {/* Search */}
         <div className="mb-6">

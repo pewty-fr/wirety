@@ -175,14 +175,14 @@ func (h *Handler) ResolveSecurityIncident(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /networks/{networkId}/peers/{peerId}/reconnect [post]
 // @Security     BearerAuth
-func (h *Handler) ReconnectPeer(c *gin.Context) {
-	networkID := c.Param("networkId")
-	peerID := c.Param("peerId")
+// func (h *Handler) ReconnectPeer(c *gin.Context) {
+// 	networkID := c.Param("networkId")
+// 	peerID := c.Param("peerId")
 
-	if err := h.service.ReconnectPeer(c.Request.Context(), networkID, peerID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+// 	if err := h.service.ReconnectPeer(c.Request.Context(), networkID, peerID); err != nil {
+// 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+// 		return
+// 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Peer reconnected successfully"})
-}
+// 	c.JSON(http.StatusOK, gin.H{"message": "Peer reconnected successfully"})
+// }

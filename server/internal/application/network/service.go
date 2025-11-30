@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"wirety/internal/domain/auth"
 	"wirety/internal/domain/ipam"
 	"wirety/internal/domain/network"
 	"wirety/internal/infrastructure/validation"
@@ -21,15 +22,36 @@ type WebSocketNotifier interface {
 	NotifyNetworkPeers(networkID string)
 }
 
+// WebSocketConnectionChecker is an interface for checking if a peer has an active WebSocket connection
+type WebSocketConnectionChecker interface {
+	IsConnected(networkID, peerID string) bool
+}
+
+// PolicyService interface for generating iptables rules
+type PolicyService interface {
+	GenerateIPTablesRules(ctx context.Context, networkID, jumpPeerID string) ([]string, error)
+}
+
 // Service implements the business logic for network management
 type Service struct {
-	repo       FullRepository
-	wsNotifier WebSocketNotifier
+	repo                FullRepository
+	authRepo            auth.Repository
+	groupRepo           network.GroupRepository
+	routeRepo           network.RouteRepository
+	dnsRepo             network.DNSRepository
+	policyService       PolicyService
+	wsNotifier          WebSocketNotifier
+	wsConnectionChecker WebSocketConnectionChecker
 }
 
 // SetWebSocketNotifier sets the WebSocket notifier for the service
 func (s *Service) SetWebSocketNotifier(notifier WebSocketNotifier) {
 	s.wsNotifier = notifier
+}
+
+// SetWebSocketConnectionChecker sets the WebSocket connection checker for the service
+func (s *Service) SetWebSocketConnectionChecker(checker WebSocketConnectionChecker) {
+	s.wsConnectionChecker = checker
 }
 
 // ResolveAgentToken returns networkID, peer for a given enrollment token.
@@ -38,10 +60,19 @@ func (s *Service) ResolveAgentToken(ctx context.Context, token string) (string, 
 }
 
 // NewService creates a new network service
-func NewService(networkRepo network.Repository, ipamRepo ipam.Repository) *Service {
+func NewService(networkRepo network.Repository, ipamRepo ipam.Repository, authRepo auth.Repository, groupRepo network.GroupRepository, routeRepo network.RouteRepository, dnsRepo network.DNSRepository) *Service {
 	return &Service{
-		repo: NewCombinedRepository(networkRepo, ipamRepo),
+		repo:      NewCombinedRepository(networkRepo, ipamRepo),
+		authRepo:  authRepo,
+		groupRepo: groupRepo,
+		routeRepo: routeRepo,
+		dnsRepo:   dnsRepo,
 	}
+}
+
+// SetPolicyService sets the policy service for iptables rule generation
+func (s *Service) SetPolicyService(policyService PolicyService) {
+	s.policyService = policyService
 }
 
 // CreateNetwork creates a new WireGuard network
@@ -51,17 +82,29 @@ func (s *Service) CreateNetwork(ctx context.Context, req *network.NetworkCreateR
 		return nil, fmt.Errorf("invalid network name: %w", err)
 	}
 
+	// Set default domain suffix if not provided
+	domainSuffix := req.DomainSuffix
+	if domainSuffix == "" {
+		domainSuffix = "internal"
+	}
+
+	// Validate domain suffix format (must be valid DNS name)
+	if err := validation.ValidateDNSName(domainSuffix); err != nil {
+		return nil, fmt.Errorf("invalid domain suffix: %w", err)
+	}
+
 	now := time.Now()
 
 	net := &network.Network{
-		ID:        uuid.New().String(),
-		Name:      req.Name,
-		CIDR:      req.CIDR,
-		Peers:     make(map[string]*network.Peer),
-		ACL:       &network.ACL{Enabled: false, BlockedPeers: make(map[string]bool)},
-		CreatedAt: now,
-		UpdatedAt: now,
-		DNS:       req.DNS,
+		ID:              uuid.New().String(),
+		Name:            req.Name,
+		CIDR:            req.CIDR,
+		Peers:           make(map[string]*network.Peer),
+		DomainSuffix:    domainSuffix,
+		DefaultGroupIDs: []string{}, // Initialize empty default groups
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		DNS:             req.DNS,
 	}
 
 	if err := s.repo.CreateNetwork(ctx, net); err != nil {
@@ -230,11 +273,10 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 		Endpoint:             req.Endpoint,
 		ListenPort:           req.ListenPort,
 		IsJump:               req.IsJump,
-		IsIsolated:           req.IsIsolated,
-		FullEncapsulation:    req.FullEncapsulation,
 		UseAgent:             req.UseAgent,  // Track if peer uses agent or static config
 		AdditionalAllowedIPs: additionalIPs, // Ensure never nil to avoid DB constraint violation
 		OwnerID:              ownerID,       // Set the owner of the peer
+		GroupIDs:             []string{},    // Initialize empty group list
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
@@ -258,6 +300,27 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 
 	if err := s.repo.CreatePeer(ctx, networkID, peer); err != nil {
 		return nil, fmt.Errorf("failed to create peer: %w", err)
+	}
+
+	// Check if user is admin or non-admin and handle default groups
+	if ownerID != "" && s.authRepo != nil && s.groupRepo != nil {
+		user, err := s.authRepo.GetUser(ownerID)
+		if err == nil && user != nil {
+			// For non-admin users, automatically add peer to network's default groups
+			if !user.IsAdministrator() && len(net.DefaultGroupIDs) > 0 {
+				for _, groupID := range net.DefaultGroupIDs {
+					// Add peer to each default group
+					if err := s.groupRepo.AddPeerToGroup(ctx, networkID, groupID, peer.ID); err != nil {
+						// Log error but don't fail peer creation
+						log.Warn().
+							Err(err).
+							Str("peer_id", peer.ID).
+							Str("group_id", groupID).
+							Msg("failed to add peer to default group")
+					}
+				}
+			}
+		}
 	}
 
 	// Create preshared key connections with all existing peers
@@ -324,8 +387,6 @@ func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req 
 	if req.Endpoint != "" {
 		peer.Endpoint = req.Endpoint
 	}
-	peer.IsIsolated = req.IsIsolated
-	peer.FullEncapsulation = req.FullEncapsulation
 	if req.AdditionalAllowedIPs != nil {
 		peer.AdditionalAllowedIPs = req.AdditionalAllowedIPs
 	}
@@ -421,7 +482,30 @@ func (s *Service) GeneratePeerConfig(ctx context.Context, networkID, peerID stri
 		}
 	}
 
-	config := wireguard.GenerateConfig(peer, allowedPeers, net, presharedKeys)
+	// Get routes for this peer based on group membership
+	var peerRoutes []*network.Route
+	if s.routeRepo != nil && s.groupRepo != nil {
+		// Get all groups this peer belongs to
+		groups, err := s.groupRepo.GetPeerGroups(ctx, networkID, peerID)
+		if err == nil {
+			// Collect all routes from all groups
+			routeMap := make(map[string]*network.Route) // Use map to deduplicate routes
+			for _, group := range groups {
+				routes, err := s.groupRepo.GetGroupRoutes(ctx, networkID, group.ID)
+				if err == nil {
+					for _, route := range routes {
+						routeMap[route.ID] = route
+					}
+				}
+			}
+			// Convert map to slice
+			for _, route := range routeMap {
+				peerRoutes = append(peerRoutes, route)
+			}
+		}
+	}
+
+	config := wireguard.GenerateConfig(peer, allowedPeers, net, presharedKeys, peerRoutes)
 
 	return config, nil
 }
@@ -436,9 +520,10 @@ type DNSPeer struct {
 }
 
 type PeerDNSConfig struct {
-	IP     string    `json:"ip"`
-	Domain string    `json:"domain"`
-	Peers  []DNSPeer `json:"peers"`
+	IP              string    `json:"ip"`
+	Domain          string    `json:"domain"`
+	Peers           []DNSPeer `json:"peers"`
+	UpstreamServers []string  `json:"upstream_servers"` // Upstream DNS servers for forwarding
 }
 
 // sanitizeDNSLabel converts a peer name into a DNS-safe lowercase label.
@@ -463,17 +548,16 @@ func sanitizeDNSLabel(s string) string {
 	return string(out)
 }
 
-// JumpPolicy contains isolation & ACL data for jump agent filtering
+// JumpPolicy contains policy data for jump agent filtering
 type JumpPolicy struct {
-	IP    string `json:"ip"`
-	Peers []struct {
+	IP            string   `json:"ip"`
+	IPTablesRules []string `json:"iptables_rules"` // Generated iptables rules from policies
+	Peers         []struct {
 		ID       string `json:"id"`
 		Name     string `json:"name"`
 		IP       string `json:"ip"`
-		Isolated bool   `json:"isolated"`
 		UseAgent bool   `json:"use_agent"`
 	} `json:"peers"`
-	ACLBlocked []string `json:"acl_blocked"`
 }
 
 // GeneratePeerConfigWithDNS returns WireGuard config, DNS config & jump policy (for jump peers)
@@ -494,7 +578,31 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 			presharedKeys[allowedPeer.ID] = conn.PresharedKey
 		}
 	}
-	config := wireguard.GenerateConfig(peer, allowedPeers, net, presharedKeys)
+
+	// Get routes for this peer based on group membership
+	var peerRoutes []*network.Route
+	if s.routeRepo != nil && s.groupRepo != nil {
+		// Get all groups this peer belongs to
+		groups, err := s.groupRepo.GetPeerGroups(ctx, networkID, peerID)
+		if err == nil {
+			// Collect all routes from all groups
+			routeMap := make(map[string]*network.Route) // Use map to deduplicate routes
+			for _, group := range groups {
+				routes, err := s.groupRepo.GetGroupRoutes(ctx, networkID, group.ID)
+				if err == nil {
+					for _, route := range routes {
+						routeMap[route.ID] = route
+					}
+				}
+			}
+			// Convert map to slice
+			for _, route := range routeMap {
+				peerRoutes = append(peerRoutes, route)
+			}
+		}
+	}
+
+	config := wireguard.GenerateConfig(peer, allowedPeers, net, presharedKeys, peerRoutes)
 	var dnsConfig *PeerDNSConfig
 	var policy *JumpPolicy
 	if peer.IsJump {
@@ -502,27 +610,80 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 		policy = &JumpPolicy{
 			IP: peer.Address,
 		}
+
+		// Generate iptables rules from policies attached to groups
+		if s.policyService != nil {
+			iptablesRules, err := s.policyService.GenerateIPTablesRules(ctx, networkID, peerID)
+			if err != nil {
+				// Log error but don't fail - jump peer can still function without policy rules
+				log.Warn().
+					Err(err).
+					Str("network_id", networkID).
+					Str("peer_id", peerID).
+					Msg("failed to generate iptables rules for jump peer")
+			} else {
+				policy.IPTablesRules = iptablesRules
+			}
+		}
+
+		// Add peer DNS records
 		for _, p := range net.Peers {
 			peerList = append(peerList, DNSPeer{Name: sanitizeDNSLabel(p.Name), IP: p.Address})
 			policy.Peers = append(policy.Peers, struct {
 				ID       string `json:"id"`
 				Name     string `json:"name"`
 				IP       string `json:"ip"`
-				Isolated bool   `json:"isolated"`
 				UseAgent bool   `json:"use_agent"`
 			}{
 				ID:       p.ID,
 				Name:     p.Name,
 				IP:       p.Address,
-				Isolated: p.IsIsolated,
 				UseAgent: p.UseAgent,
 			})
 		}
-		dnsConfig = &PeerDNSConfig{IP: peer.Address, Domain: net.GetDomain(), Peers: peerList}
-		if net.ACL != nil && net.ACL.Enabled {
-			for blockedID := range net.ACL.BlockedPeers {
-				policy.ACLBlocked = append(policy.ACLBlocked, blockedID)
+
+		// Add route DNS records
+		if s.dnsRepo != nil && s.routeRepo != nil {
+			routeMappings, err := s.dnsRepo.GetNetworkDNSMappings(ctx, networkID)
+			if err == nil {
+				// For each DNS mapping, get the route to build FQDN
+				for _, mapping := range routeMappings {
+					route, err := s.routeRepo.GetRoute(ctx, networkID, mapping.RouteID)
+					if err != nil {
+						// Skip if route not found
+						continue
+					}
+
+					// Build FQDN using route's domain suffix
+					routeDomainSuffix := route.DomainSuffix
+					if routeDomainSuffix == "" {
+						routeDomainSuffix = "internal"
+					}
+
+					// Format: name.route_name.domain_suffix
+					fqdn := fmt.Sprintf("%s.%s.%s", sanitizeDNSLabel(mapping.Name), sanitizeDNSLabel(route.Name), routeDomainSuffix)
+
+					// Add to peer list with the FQDN as the name (without the domain suffix since it's already in the FQDN)
+					// The DNS server will use the full FQDN
+					peerList = append(peerList, DNSPeer{
+						Name: fqdn,
+						IP:   mapping.IPAddress,
+					})
+				}
 			}
+		}
+
+		// Use network's custom domain suffix
+		domainSuffix := net.DomainSuffix
+		if domainSuffix == "" {
+			domainSuffix = "internal"
+		}
+
+		dnsConfig = &PeerDNSConfig{
+			IP:              peer.Address,
+			Domain:          fmt.Sprintf("%s.%s", net.Name, domainSuffix),
+			Peers:           peerList,
+			UpstreamServers: net.DNS, // Use network's configured DNS servers for forwarding
 		}
 	} else {
 		// For non-jump peers using agent, send an empty policy to trigger firewall initialization
@@ -534,28 +695,24 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 					ID       string `json:"id"`
 					Name     string `json:"name"`
 					IP       string `json:"ip"`
-					Isolated bool   `json:"isolated"`
 					UseAgent bool   `json:"use_agent"`
 				}{},
-				ACLBlocked: []string{},
 			}
 		}
 	}
 	return config, dnsConfig, policy, nil
 }
 
-// UpdateACL updates the ACL configuration for a network
-func (s *Service) UpdateACL(ctx context.Context, networkID string, acl *network.ACL) error {
-	_, err := s.repo.GetNetwork(ctx, networkID)
-	if err != nil {
-		return fmt.Errorf("network not found: %w", err)
-	}
-	return s.repo.UpdateACL(ctx, networkID, acl)
+// UpdateACL is deprecated - use policy-based access control instead
+// Kept for backward compatibility during migration
+func (s *Service) UpdateACL(ctx context.Context, networkID string, acl interface{}) error {
+	return fmt.Errorf("ACL system has been removed - use policy-based access control instead")
 }
 
-// GetACL retrieves the ACL configuration for a network
-func (s *Service) GetACL(ctx context.Context, networkID string) (*network.ACL, error) {
-	return s.repo.GetACL(ctx, networkID)
+// GetACL is deprecated - use policy-based access control instead
+// Kept for backward compatibility during migration
+func (s *Service) GetACL(ctx context.Context, networkID string) (interface{}, error) {
+	return nil, fmt.Errorf("ACL system has been removed - use policy-based access control instead")
 }
 
 // DeleteNetwork deletes a network
@@ -563,50 +720,97 @@ func (s *Service) DeleteNetwork(ctx context.Context, networkID string) error {
 	return s.repo.DeleteNetwork(ctx, networkID)
 }
 
-// blockPeerInACL adds a peer to the ACL blocked list to prevent all communication
+// blockPeerInACL is deprecated - ACL system has been removed
+// Security incidents should now be handled through policy-based access control
 func (s *Service) blockPeerInACL(ctx context.Context, networkID, peerID string, reason string) error {
-	// Get current ACL
-	acl, err := s.repo.GetACL(ctx, networkID)
-	if err != nil || acl == nil {
-		// Create new ACL if it doesn't exist or if there's an error
-		acl = &network.ACL{
-			ID:           uuid.New().String(),
-			Name:         "Default ACL",
-			Enabled:      true,
-			BlockedPeers: make(map[string]bool),
-			Rules:        []network.ACLRule{},
-		}
-	}
-
-	// Enable ACL if not already enabled
-	if !acl.Enabled {
-		acl.Enabled = true
-	}
-
-	// Add peer to blocked list
-	if acl.BlockedPeers == nil {
-		acl.BlockedPeers = make(map[string]bool)
-	}
-	acl.BlockedPeers[peerID] = true
-
-	// Update ACL in repository
-	if err := s.repo.UpdateACL(ctx, networkID, acl); err != nil {
-		return fmt.Errorf("failed to update ACL: %w", err)
-	}
-
-	// Notify all connected peers about the ACL change
-	if s.wsNotifier != nil {
-		s.wsNotifier.NotifyNetworkPeers(networkID)
-	}
-
 	peer, _ := s.repo.GetPeer(ctx, networkID, peerID)
 	peerName := peerID
 	if peer != nil {
 		peerName = peer.Name
 	}
 
-	fmt.Printf("SECURITY: Blocked peer %s in ACL due to %s\n", peerName, reason)
+	log.Warn().
+		Str("peer_id", peerID).
+		Str("peer_name", peerName).
+		Str("reason", reason).
+		Msg("SECURITY: Peer security incident detected - implementing policy-based blocking")
+
+	// Implement policy-based blocking using groups and policies
+	if s.groupRepo == nil || s.policyService == nil {
+		log.Error().Msg("cannot block peer: group repository or policy service not available")
+		return fmt.Errorf("policy-based blocking not available")
+	}
+
+	// 1. Ensure quarantine group exists
+	quarantineGroupID, err := s.ensureQuarantineGroup(ctx, networkID)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to ensure quarantine group")
+		return fmt.Errorf("failed to create quarantine group: %w", err)
+	}
+
+	// 2. Add peer to quarantine group
+	err = s.groupRepo.AddPeerToGroup(ctx, networkID, quarantineGroupID, peerID)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to add peer to quarantine group")
+		return fmt.Errorf("failed to quarantine peer: %w", err)
+	}
+
+	log.Info().
+		Str("peer_id", peerID).
+		Str("peer_name", peerName).
+		Str("group_id", quarantineGroupID).
+		Str("reason", reason).
+		Msg("SECURITY: Peer quarantined successfully")
+
+	// 3. Notify all peers to regenerate configs
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+
 	return nil
+}
+
+// ensureQuarantineGroup ensures a quarantine group with deny-all policy exists
+func (s *Service) ensureQuarantineGroup(ctx context.Context, networkID string) (string, error) {
+	// Check if quarantine group already exists
+	groups, err := s.groupRepo.ListGroups(ctx, networkID)
+	if err != nil {
+		return "", fmt.Errorf("failed to list groups: %w", err)
+	}
+
+	for _, group := range groups {
+		if group.Name == "quarantine" {
+			return group.ID, nil
+		}
+	}
+
+	// Create quarantine group with priority 0 (highest priority)
+	quarantineGroup := &network.Group{
+		ID:          uuid.New().String(),
+		NetworkID:   networkID,
+		Name:        "quarantine",
+		Description: "Automatically created group for blocking compromised peers",
+		Priority:    0, // Highest priority - quarantine policies apply first
+		PeerIDs:     []string{},
+		PolicyIDs:   []string{},
+		RouteIDs:    []string{},
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	err = s.groupRepo.CreateGroup(ctx, networkID, quarantineGroup)
+	if err != nil {
+		return "", fmt.Errorf("failed to create quarantine group: %w", err)
+	}
+
+	// Log that quarantine group was created
+	// Admin should manually attach a deny-all policy to this group
+	log.Warn().
+		Str("network_id", networkID).
+		Str("group_id", quarantineGroup.ID).
+		Msg("SECURITY: Quarantine group created - admin should attach deny-all policy to block quarantined peers")
+
+	return quarantineGroup.ID, nil
 }
 
 // ProcessAgentHeartbeat processes a heartbeat message from an agent
@@ -841,7 +1045,12 @@ func (s *Service) GetPeerSessionStatus(ctx context.Context, networkID, peerID st
 		LastChecked:           now,
 	}
 
-	// Find active sessions
+	// Check if peer has an active WebSocket connection to the server
+	if s.wsConnectionChecker != nil {
+		status.HasActiveAgent = s.wsConnectionChecker.IsConnected(networkID, peerID)
+	}
+
+	// Find active sessions (for security incident detection)
 	var activeSessions []*network.AgentSession
 	for _, session := range sessions {
 		if session.LastSeen.After(activeThreshold) {
@@ -850,7 +1059,6 @@ func (s *Service) GetPeerSessionStatus(ctx context.Context, networkID, peerID st
 	}
 
 	if len(activeSessions) > 0 {
-		status.HasActiveAgent = true
 		status.CurrentSession = activeSessions[0]
 	}
 
@@ -909,7 +1117,7 @@ func (s *Service) GetSecurityIncident(ctx context.Context, incidentID string) (*
 	return s.repo.GetSecurityIncident(ctx, incidentID)
 }
 
-// ResolveSecurityIncident marks a security incident as resolved and removes the peer from all ACLs
+// ResolveSecurityIncident marks a security incident as resolved
 func (s *Service) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
 	// First get the incident to find the peer ID
 	incident, err := s.repo.GetSecurityIncident(ctx, incidentID)
@@ -922,44 +1130,12 @@ func (s *Service) ResolveSecurityIncident(ctx context.Context, incidentID, resol
 		return err
 	}
 
-	// Get all networks to check for the blocked peer in all ACLs
-	networks, err := s.repo.ListNetworks(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list networks: %w", err)
-	}
-
-	// Remove the peer from blocked list in all network ACLs
-	var unblocked []string
-	for _, net := range networks {
-		acl, err := s.repo.GetACL(ctx, net.ID)
-		if err != nil || acl == nil {
-			// If ACL doesn't exist for this network, skip
-			continue
-		}
-
-		// Check if peer is blocked in this network
-		if acl.BlockedPeers != nil && acl.BlockedPeers[incident.PeerID] {
-			// Remove peer from blocked list
-			delete(acl.BlockedPeers, incident.PeerID)
-
-			// Update ACL in repository
-			if err := s.repo.UpdateACL(ctx, net.ID, acl); err != nil {
-				fmt.Printf("WARNING: Failed to update ACL for network %s: %v\n", net.Name, err)
-				continue
-			}
-
-			unblocked = append(unblocked, net.Name)
-
-			// Notify all connected peers in this network about the ACL change
-			if s.wsNotifier != nil {
-				s.wsNotifier.NotifyNetworkPeers(net.ID)
-			}
-		}
-	}
-
-	if len(unblocked) > 0 {
-		fmt.Printf("SECURITY: Unblocked peer %s in ACLs for networks: %v\n", incident.PeerName, unblocked)
-	}
+	log.Info().
+		Str("incident_id", incidentID).
+		Str("peer_id", incident.PeerID).
+		Str("peer_name", incident.PeerName).
+		Str("resolved_by", resolvedBy).
+		Msg("SECURITY: Security incident resolved")
 
 	// Clean up endpoint changes for the peer
 	if incident.PeerID != "" && incident.NetworkID != "" {
@@ -997,47 +1173,78 @@ func (s *Service) ResolveSecurityIncident(ctx context.Context, incidentID, resol
 				}
 			}
 		}
+
+		if err := s.reconnectPeer(ctx, incident.NetworkID, incident.PeerID); err != nil {
+			return fmt.Errorf("can't remove peer from quarantine: %w", err)
+		}
 	}
 
 	return nil
 }
 
-// ReconnectPeer removes a peer from the ACL blocked list to re-enable communication
-func (s *Service) ReconnectPeer(ctx context.Context, networkID, peerID string) error {
+// ReconnectPeer removes a peer from the quarantine group to restore network access
+func (s *Service) reconnectPeer(ctx context.Context, networkID, peerID string) error {
 	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
 	if err != nil {
 		return fmt.Errorf("peer not found: %w", err)
 	}
 
-	// Get current ACL
-	acl, err := s.repo.GetACL(ctx, networkID)
+	log.Info().
+		Str("peer_id", peerID).
+		Str("peer_name", peer.Name).
+		Msg("SECURITY: Peer reconnect requested - removing from quarantine group")
+
+	// Check if group repository is available
+	if s.groupRepo == nil {
+		log.Error().Msg("cannot reconnect peer: group repository not available")
+		return fmt.Errorf("policy-based reconnection not available")
+	}
+
+	// Get the quarantine group
+	quarantineGroupID, err := s.getQuarantineGroupID(ctx, networkID)
 	if err != nil {
-		return fmt.Errorf("failed to get ACL: %w", err)
-	}
-	if acl == nil {
-		return fmt.Errorf("no ACL found for network")
-	}
-
-	// Check if peer is blocked
-	if acl.BlockedPeers == nil || !acl.BlockedPeers[peerID] {
-		return fmt.Errorf("peer %s is not blocked in ACL", peer.Name)
+		// If quarantine group doesn't exist, peer is not quarantined
+		log.Info().
+			Str("peer_id", peerID).
+			Msg("Quarantine group does not exist, peer is not quarantined")
+		return nil
 	}
 
-	// Remove peer from blocked list
-	delete(acl.BlockedPeers, peerID)
-
-	// Update ACL in repository
-	if err := s.repo.UpdateACL(ctx, networkID, acl); err != nil {
-		return fmt.Errorf("failed to update ACL: %w", err)
+	// Remove peer from quarantine group (idempotent - no error if peer not in group)
+	err = s.groupRepo.RemovePeerFromGroup(ctx, networkID, quarantineGroupID, peerID)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to remove peer from quarantine group")
+		return fmt.Errorf("failed to reconnect peer: %w", err)
 	}
 
-	// Notify all connected peers about the ACL change
+	log.Info().
+		Str("peer_id", peerID).
+		Str("peer_name", peer.Name).
+		Str("group_id", quarantineGroupID).
+		Msg("SECURITY: Peer reconnected successfully")
+
+	// Notify all peers to regenerate configs
 	if s.wsNotifier != nil {
 		s.wsNotifier.NotifyNetworkPeers(networkID)
 	}
 
-	fmt.Printf("SECURITY: Unblocked peer %s in ACL - peer reconnected\n", peer.Name)
 	return nil
+}
+
+// getQuarantineGroupID retrieves the quarantine group ID for a network
+func (s *Service) getQuarantineGroupID(ctx context.Context, networkID string) (string, error) {
+	groups, err := s.groupRepo.ListGroups(ctx, networkID)
+	if err != nil {
+		return "", fmt.Errorf("failed to list groups: %w", err)
+	}
+
+	for _, group := range groups {
+		if group.Name == "quarantine" {
+			return group.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("quarantine group not found")
 }
 
 // trackPeerEndpointChanges tracks endpoint changes for peers based on their public keys

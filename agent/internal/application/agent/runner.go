@@ -203,8 +203,18 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				r.dnsServerMu.Lock()
 				if r.dnsServer == nil {
 					// First time: create and start DNS server
-					log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("starting DNS server")
+					log.Info().
+						Str("domain", payload.DNS.Domain).
+						Int("peer_count", len(payload.DNS.Peers)).
+						Strs("upstream_servers", payload.DNS.UpstreamServers).
+						Msg("starting DNS server")
 					r.dnsServer = r.dnsFactory(payload.DNS.Domain, payload.DNS.Peers)
+
+					// Set upstream DNS servers for forwarding
+					if len(payload.DNS.UpstreamServers) > 0 {
+						r.dnsServer.SetUpstreamServers(payload.DNS.UpstreamServers)
+					}
+
 					go func() {
 						if err := r.dnsServer.Start(fmt.Sprintf("%s:53", payload.DNS.IP)); err != nil {
 							log.Error().Err(err).Msg("dns server exited")
@@ -212,8 +222,17 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					}()
 				} else {
 					// Subsequent times: update existing DNS server
-					log.Info().Str("domain", payload.DNS.Domain).Int("peer_count", len(payload.DNS.Peers)).Msg("updating DNS server configuration")
+					log.Info().
+						Str("domain", payload.DNS.Domain).
+						Int("peer_count", len(payload.DNS.Peers)).
+						Strs("upstream_servers", payload.DNS.UpstreamServers).
+						Msg("updating DNS server configuration")
 					r.dnsServer.Update(payload.DNS.Domain, payload.DNS.Peers)
+
+					// Update upstream DNS servers
+					if len(payload.DNS.UpstreamServers) > 0 {
+						r.dnsServer.SetUpstreamServers(payload.DNS.UpstreamServers)
+					}
 				}
 				r.dnsServerMu.Unlock()
 			}
@@ -223,39 +242,41 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			}
 
 			// Handle whitelist updates
-			if payload.Whitelist != nil {
-				log.Info().Int("count", len(payload.Whitelist)).Msg("updating whitelist")
-				// Clear existing whitelist and add new ones
-				if r.captivePortal != nil {
-					r.captivePortal.ClearWhitelist()
-					for _, ip := range payload.Whitelist {
-						r.captivePortal.AddWhitelistedPeer(ip)
-					}
-				}
-				if r.tlsGateway != nil {
-					r.tlsGateway.ClearWhitelist()
-					for _, ip := range payload.Whitelist {
-						r.tlsGateway.AddWhitelistedPeer(ip)
-					}
-				}
-			}
+			// if payload.Whitelist != nil {
+			// 	log.Info().Int("count", len(payload.Whitelist)).Msg("updating whitelist")
+			// 	// Clear existing whitelist and add new ones
+			// 	if r.captivePortal != nil {
+			// 		r.captivePortal.ClearWhitelist()
+			// 		for _, ip := range payload.Whitelist {
+			// 			r.captivePortal.AddWhitelistedPeer(ip)
+			// 		}
+			// 	}
+			// 	if r.tlsGateway != nil {
+			// 		r.tlsGateway.ClearWhitelist()
+			// 		for _, ip := range payload.Whitelist {
+			// 			r.tlsGateway.AddWhitelistedPeer(ip)
+			// 		}
+			// 	}
+			// }
 
 			if payload.Policy != nil && r.fwAdapter != nil {
-				log.Info().Int("peer_count", len(payload.Policy.Peers)).Msg("applying firewall policy")
+				log.Info().
+					Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
+					Msg("applying firewall policy update")
 
 				// Update captive portal and TLS gateway with non-agent peers
-				nonAgentIPs := make([]string, 0)
-				for _, peer := range payload.Policy.Peers {
-					if !peer.UseAgent {
-						nonAgentIPs = append(nonAgentIPs, peer.IP)
-					}
-				}
-				if r.captivePortal != nil {
-					r.captivePortal.UpdateNonAgentPeers(nonAgentIPs)
-				}
-				if r.tlsGateway != nil {
-					r.tlsGateway.UpdateNonAgentPeers(nonAgentIPs)
-				}
+				// nonAgentIPs := make([]string, 0)
+				// for _, peer := range payload.Policy.Peers {
+				// 	if !peer.UseAgent {
+				// 		nonAgentIPs = append(nonAgentIPs, peer.IP)
+				// 	}
+				// }
+				// if r.captivePortal != nil {
+				// 	r.captivePortal.UpdateNonAgentPeers(nonAgentIPs)
+				// }
+				// if r.tlsGateway != nil {
+				// 	r.tlsGateway.UpdateNonAgentPeers(nonAgentIPs)
+				// }
 
 				// Get whitelisted IPs for firewall rules
 				whitelistedIPs := payload.Whitelist
@@ -263,10 +284,14 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					whitelistedIPs = []string{}
 				}
 
+				// Apply policy-based iptables rules atomically
+				// The Sync method flushes the chain and applies all rules in order
 				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, whitelistedIPs); err != nil {
-					log.Error().Err(err).Msg("failed applying firewall policy")
+					log.Error().Err(err).Msg("failed applying firewall policy update")
 				} else {
-					log.Debug().Msg("firewall policy applied")
+					log.Info().
+						Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
+						Msg("firewall policy update applied successfully")
 				}
 			}
 		}

@@ -4,29 +4,33 @@ import "time"
 
 // Network represents a WireGuard mesh network
 type Network struct {
-	ID        string           `json:"id"`
-	Name      string           `json:"name"`
-	CIDR      string           `json:"cidr"`       // Network CIDR (e.g., "10.0.0.0/16")
-	Peers     map[string]*Peer `json:"-"`          // Peer ID -> Peer
-	PeerCount int              `json:"peer_count"` // Computed number of peers for lightweight listing
-	ACL       *ACL             `json:"acl"`
-	DNS 		 []string         `json:"dns"` // Additional DNS servers for peers
-	CreatedAt time.Time        `json:"created_at"`
-	UpdatedAt time.Time        `json:"updated_at"`
+	ID              string           `json:"id"`
+	Name            string           `json:"name"`
+	CIDR            string           `json:"cidr"`              // Network CIDR (e.g., "10.0.0.0/16")
+	Peers           map[string]*Peer `json:"-"`                 // Peer ID -> Peer
+	PeerCount       int              `json:"peer_count"`        // Computed number of peers for lightweight listing
+	DNS             []string         `json:"dns"`               // Additional DNS servers for peers
+	DomainSuffix    string           `json:"domain_suffix"`     // Custom domain (default: .internal)
+	DefaultGroupIDs []string         `json:"default_group_ids"` // Groups for non-admin peers
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
 // NetworkCreateRequest represents the data needed to create a new network
 type NetworkCreateRequest struct {
-	Name string   `json:"name" binding:"required"`
-	CIDR string   `json:"cidr" binding:"required"`
-	DNS  []string `json:"dns,omitempty"`
+	Name         string   `json:"name" binding:"required"`
+	CIDR         string   `json:"cidr" binding:"required"`
+	DNS          []string `json:"dns,omitempty"`
+	DomainSuffix string   `json:"domain_suffix,omitempty"` // Custom domain (default: .internal)
 }
 
 // NetworkUpdateRequest represents the data that can be updated for a network
 type NetworkUpdateRequest struct {
-	Name string `json:"name,omitempty"`
-	CIDR string `json:"cidr,omitempty"`
-	DNS  []string `json:"dns,omitempty"`
+	Name            string   `json:"name,omitempty"`
+	CIDR            string   `json:"cidr,omitempty"`
+	DNS             []string `json:"dns,omitempty"`
+	DomainSuffix    string   `json:"domain_suffix,omitempty"`
+	DefaultGroupIDs []string `json:"default_group_ids,omitempty"`
 }
 
 // AddPeer adds a peer to the network
@@ -71,13 +75,10 @@ func (n *Network) GetAllowedPeersFor(peerID string) []*Peer {
 		return result
 	}
 
-	// If this is a jump peer, include all other peers (respect ACL if present)
+	// If this is a jump peer, include all other peers
 	if peer.IsJump {
 		for _, other := range n.Peers {
 			if other.ID == peerID {
-				continue
-			}
-			if n.ACL != nil && !n.ACL.CanCommunicate(peerID, other.ID) {
 				continue
 			}
 			result = append(result, other)
@@ -85,12 +86,9 @@ func (n *Network) GetAllowedPeersFor(peerID string) []*Peer {
 		return result
 	}
 
-	// Regular peer: only jump peers (respect ACL if present)
+	// Regular peer: only jump peers
 	for _, other := range n.Peers {
 		if !other.IsJump || other.ID == peerID {
-			continue
-		}
-		if n.ACL != nil && !n.ACL.CanCommunicate(peerID, other.ID) {
 			continue
 		}
 		result = append(result, other)
@@ -121,5 +119,9 @@ func (n *Network) GetJumpServers() []*Peer {
 
 // GetDomain computes the DNS domain for this network
 func (n *Network) GetDomain() string {
-	return n.Name + ".local"
+	suffix := n.DomainSuffix
+	if suffix == "" {
+		suffix = "internal"
+	}
+	return n.Name + "." + suffix
 }
