@@ -1177,8 +1177,7 @@ func (s *Service) ResolveSecurityIncident(ctx context.Context, incidentID, resol
 	return nil
 }
 
-// ReconnectPeer is deprecated - ACL system has been removed
-// Use policy-based access control to manage peer connectivity
+// ReconnectPeer removes a peer from the quarantine group to restore network access
 func (s *Service) ReconnectPeer(ctx context.Context, networkID, peerID string) error {
 	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
 	if err != nil {
@@ -1188,10 +1187,59 @@ func (s *Service) ReconnectPeer(ctx context.Context, networkID, peerID string) e
 	log.Info().
 		Str("peer_id", peerID).
 		Str("peer_name", peer.Name).
-		Msg("SECURITY: Peer reconnect requested - ACL system deprecated, use policy-based access control")
+		Msg("SECURITY: Peer reconnect requested - removing from quarantine group")
 
-	// TODO: Implement policy-based reconnection when policy service is available
-	return fmt.Errorf("ACL system has been removed - use policy-based access control instead")
+	// Check if group repository is available
+	if s.groupRepo == nil {
+		log.Error().Msg("cannot reconnect peer: group repository not available")
+		return fmt.Errorf("policy-based reconnection not available")
+	}
+
+	// Get the quarantine group
+	quarantineGroupID, err := s.getQuarantineGroupID(ctx, networkID)
+	if err != nil {
+		// If quarantine group doesn't exist, peer is not quarantined
+		log.Info().
+			Str("peer_id", peerID).
+			Msg("Quarantine group does not exist, peer is not quarantined")
+		return nil
+	}
+
+	// Remove peer from quarantine group (idempotent - no error if peer not in group)
+	err = s.groupRepo.RemovePeerFromGroup(ctx, networkID, quarantineGroupID, peerID)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to remove peer from quarantine group")
+		return fmt.Errorf("failed to reconnect peer: %w", err)
+	}
+
+	log.Info().
+		Str("peer_id", peerID).
+		Str("peer_name", peer.Name).
+		Str("group_id", quarantineGroupID).
+		Msg("SECURITY: Peer reconnected successfully")
+
+	// Notify all peers to regenerate configs
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+
+	return nil
+}
+
+// getQuarantineGroupID retrieves the quarantine group ID for a network
+func (s *Service) getQuarantineGroupID(ctx context.Context, networkID string) (string, error) {
+	groups, err := s.groupRepo.ListGroups(ctx, networkID)
+	if err != nil {
+		return "", fmt.Errorf("failed to list groups: %w", err)
+	}
+
+	for _, group := range groups {
+		if group.Name == "quarantine" {
+			return group.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("quarantine group not found")
 }
 
 // trackPeerEndpointChanges tracks endpoint changes for peers based on their public keys
