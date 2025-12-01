@@ -52,7 +52,7 @@ jobs:
           ls -lh build
       
       - name: Upload release assets (binaries + checksums)
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             agent/build/wirety-agent-linux-amd64
