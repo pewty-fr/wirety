@@ -31,8 +31,7 @@ interface DashboardStats {
   };
   security: {
     total: number;
-    unresolved: number;
-    recentIncidents: SecurityIncident[];
+    unresolvedIncidents: SecurityIncident[];
   };
   users: {
     total: number;
@@ -56,7 +55,7 @@ export default function DashboardPage() {
         api.getNetworks(1, 5).catch(() => null),
         api.getAllPeers(1, 1000).catch(() => null),
         api.getIPAMAllocations(1, 1000).catch(() => null),
-        api.getSecurityIncidents(1, 5, false).catch(() => null),
+        api.getSecurityIncidents(1, 1000).catch(() => null),
         api.getUsers(1, 100).catch(() => null),
       ]);
 
@@ -66,8 +65,6 @@ export default function DashboardPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const usersData = (usersRes || []) as any[];
       const networks = networksRes?.data || [];
-      
-      console.log('Dashboard security data:', { securityRes, securityData, total: securityRes?.total });
 
       // Calculate total capacity and used slots across all networks
       let totalCapacity = 0;
@@ -108,8 +105,7 @@ export default function DashboardPage() {
         },
         security: {
           total: Array.isArray(securityRes) ? securityData.length : (securityRes?.total || 0),
-          unresolved: Array.isArray(securityRes) ? securityData.length : (securityRes?.total || 0),
-          recentIncidents: securityData.slice(0, 5),
+          unresolvedIncidents: securityData.filter((incident: SecurityIncident) => !incident.resolved),
         },
         users: {
           total: usersData.length,
@@ -199,10 +195,10 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="text-3xl font-bold text-gray-900 dark:text-white">
-            {stats.security.unresolved}
+            {stats.security.total}
           </div>
           <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            {stats.security.unresolved > 0 ? 'unresolved incidents' : 'all clear'}
+            {stats.security.unresolvedIncidents.length > 0 ? 'unresolved incidents' : 'all clear'}
           </div>
         </Link>
       </div>
@@ -323,7 +319,7 @@ export default function DashboardPage() {
             </Link>
           </div>
           
-          {stats.security.recentIncidents.length === 0 ? (
+          {stats.security.unresolvedIncidents.length === 0 ? (
             <div className="text-center py-8">
               <div className="text-4xl mb-2">
                 <FontAwesomeIcon icon={faCircleCheck} className="text-green-500" />
@@ -332,7 +328,7 @@ export default function DashboardPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {stats.security.recentIncidents.map(incident => (
+              {stats.security.unresolvedIncidents.map(incident => (
                 <div
                   key={incident.id}
                   className="p-3 rounded-lg border border-gray-200 dark:border-gray-600"
