@@ -61,10 +61,13 @@ export default function DashboardPage() {
       ]);
 
       const peers = peersRes?.peers || [];
-      const securityData = securityRes?.data || [];
+      // Handle both paginated response and plain array (like users endpoint)
+      const securityData = Array.isArray(securityRes) ? securityRes : (securityRes?.data || []);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const usersData = (usersRes || []) as any[];
       const networks = networksRes?.data || [];
+      
+      console.log('Dashboard security data:', { securityRes, securityData, total: securityRes?.total });
 
       // Calculate total capacity and used slots across all networks
       let totalCapacity = 0;
@@ -104,8 +107,8 @@ export default function DashboardPage() {
             : 0,
         },
         security: {
-          total: securityRes?.total || 0,
-          unresolved: securityRes?.total || 0,
+          total: Array.isArray(securityRes) ? securityData.length : (securityRes?.total || 0),
+          unresolved: Array.isArray(securityRes) ? securityData.length : (securityRes?.total || 0),
           recentIncidents: securityData.slice(0, 5),
         },
         users: {
