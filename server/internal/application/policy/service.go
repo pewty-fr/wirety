@@ -222,33 +222,12 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		return nil, fmt.Errorf("failed to list peers: %w", err)
 	}
 
-	// Find all groups that use this jump peer (via routes)
-	groupsUsingJumpPeer := make(map[string]bool)
-	if s.routeRepo != nil {
-		// Get all routes that use this jump peer
-		routes, err := s.routeRepo.GetRoutesByJumpPeer(ctx, networkID, jumpPeerID)
-		if err == nil {
-			// For each route, find which groups it's attached to
-			allGroups, err := s.groupRepo.ListGroups(ctx, networkID)
-			if err == nil {
-				for _, group := range allGroups {
-					for _, routeID := range group.RouteIDs {
-						for _, route := range routes {
-							if route.ID == routeID {
-								groupsUsingJumpPeer[group.ID] = true
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
 	// Generate iptables rules
 	var rules []string
 
-	// Generate rules for each regular peer (non-jump peers)
+	// Generate rules for ALL regular peers (non-jump peers)
+	// Jump peers enforce policies for all regular peers regardless of routes
+	// This prevents peers from bypassing policies by modifying their WireGuard config
 	for _, peer := range allPeers {
 		if peer.IsJump {
 			continue // Skip jump peers
@@ -258,20 +237,6 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		groups, err := s.groupRepo.GetPeerGroups(ctx, networkID, peer.ID)
 		if err != nil {
 			// If we can't get groups, skip this peer
-			continue
-		}
-
-		// Check if any of this peer's groups use this jump peer
-		peerUsesJumpPeer := false
-		for _, group := range groups {
-			if groupsUsingJumpPeer[group.ID] {
-				peerUsesJumpPeer = true
-				break
-			}
-		}
-
-		// Only generate rules for peers that use this jump peer
-		if !peerUsesJumpPeer {
 			continue
 		}
 
