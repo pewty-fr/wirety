@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faShieldHalved } from '@fortawesome/free-solid-svg-icons';
+import { faShieldHalved, faCog } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import IncidentDetailModal from '../../components/IncidentDetailModal';
+import SecurityConfigModal from '../../components/SecurityConfigModal';
 import SearchableSelect from '../../components/SearchableSelect';
 import { useNetworks } from '../../hooks/useQueries';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/client';
 import type { SecurityIncident } from '../../types';
 
@@ -16,9 +18,13 @@ export default function SecurityPage() {
   const [page, setPage] = useState(1);
   const [selectedIncident, setSelectedIncident] = useState<SecurityIncident | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isSecurityConfigModalOpen, setIsSecurityConfigModalOpen] = useState(false);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [filterNetwork, setFilterNetwork] = useState<string>('');
   const [filterPeer, setFilterPeer] = useState<string>('');
+
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'administrator';
 
   const pageSize = 20;
 
@@ -151,6 +157,18 @@ export default function SecurityPage() {
       />
 
       <div className="p-8">
+        {/* Security Configuration Button */}
+        {isAdmin && filterNetwork && (
+          <div className="mb-6">
+            <button
+              onClick={() => setIsSecurityConfigModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              <FontAwesomeIcon icon={faCog} />
+              Security Configuration
+            </button>
+          </div>
+        )}
         {/* Filters */}
         <div className="relative z-20 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-200 dark:border-gray-700 p-6 mb-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -324,6 +342,16 @@ export default function SecurityPage() {
         incident={selectedIncident}
         onUpdate={loadIncidents}
       />
+
+      {/* Security Configuration Modal */}
+      {filterNetwork && (
+        <SecurityConfigModal
+          isOpen={isSecurityConfigModalOpen}
+          onClose={() => setIsSecurityConfigModalOpen(false)}
+          networkId={filterNetwork}
+          onUpdate={loadIncidents}
+        />
+      )}
     </div>
   );
 }

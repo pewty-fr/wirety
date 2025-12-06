@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { AxiosInstance } from 'axios';
-import type { Network, Peer, IPAMAllocation, SecurityIncident, User, PaginatedResponse, PeerSessionStatus, ACL, Group, Policy, PolicyRule, Route, DNSMapping } from '../types';
+import type { Network, Peer, IPAMAllocation, SecurityIncident, SecurityConfig, SecurityConfigUpdateRequest, User, PaginatedResponse, PeerSessionStatus, ACL, Group, Policy, PolicyRule, Route, DNSMapping } from '../types';
 
 class ApiClient {
   private client: AxiosInstance;
@@ -194,6 +194,16 @@ class ApiClient {
 
   async resolveIncident(incidentId: string): Promise<void> {
     await this.client.post(`/security/incidents/${incidentId}/resolve`);
+  }
+
+  async getSecurityConfig(networkId: string): Promise<SecurityConfig> {
+    const response = await this.client.get(`/networks/${networkId}/security/config`);
+    return response.data;
+  }
+
+  async updateSecurityConfig(networkId: string, data: SecurityConfigUpdateRequest): Promise<SecurityConfig> {
+    const response = await this.client.put(`/networks/${networkId}/security/config`, data);
+    return response.data;
   }
 
   // Users
