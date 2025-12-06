@@ -770,7 +770,7 @@ func TestProperty_AdminPeerNoAutoAssignment(t *testing.T) {
 func TestProperty_DNSServerInitializationCompleteness(t *testing.T) {
 	properties := gopter.NewProperties(nil)
 
-	properties.Property("Feature: network-groups-policies-routing, Property 53: DNS server initialization completeness",
+	properties.Property("Feature: network-groups-policies-routing, Property 5353: DNS server initialization completeness",
 		prop.ForAll(
 			func(networkID string, peerNames []string, routeNames []string, dnsNames []string) bool {
 				ctx := context.Background()

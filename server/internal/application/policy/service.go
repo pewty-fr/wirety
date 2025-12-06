@@ -275,10 +275,10 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		}
 
 		// Allow DNS queries from peer to jump server (UDP port 53)
-		rules = append(rules, fmt.Sprintf("iptables -A INPUT -s %s -p udp --dport 53 -j ACCEPT", peer.Address))
+		rules = append(rules, fmt.Sprintf("iptables -A INPUT -s %s -p udp --dport 5353 -j ACCEPT", peer.Address))
 
 		// Allow DNS responses from jump server to peer (UDP port 53)
-		rules = append(rules, fmt.Sprintf("iptables -A OUTPUT -d %s -p udp --sport 53 -j ACCEPT", peer.Address))
+		rules = append(rules, fmt.Sprintf("iptables -A OUTPUT -d %s -p udp --sport 5353 -j ACCEPT", peer.Address))
 	}
 
 	// Add WireGuard handshake rules to allow tunnel establishment
