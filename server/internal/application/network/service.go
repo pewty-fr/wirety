@@ -1068,11 +1068,13 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 		}
 		changes, err := s.repo.GetEndpointChanges(ctx, networkID, currentSess.PeerID, now.Add(-24*time.Hour))
 		if err == nil && (len(changes) == 0 || (len(changes) > 0 && changes[0].NewEndpoint != endpoint)) {
+			// Store the old endpoint before updating
+			oldEndpoint := currentSess.ReportedEndpoint
 			currentSess.ReportedEndpoint = endpoint
 			_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
 			change := &network.EndpointChange{
 				PeerID:      currentSess.PeerID,
-				OldEndpoint: currentSess.ReportedEndpoint,
+				OldEndpoint: oldEndpoint,
 				NewEndpoint: endpoint,
 				ChangedAt:   now,
 				Source:      peerID,

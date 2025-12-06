@@ -306,6 +306,10 @@ func (m *mockGroupRepository) GetGroupRoutes(ctx context.Context, networkID, gro
 	return nil, nil
 }
 
+func (m *mockGroupRepository) ReorderGroupPolicies(ctx context.Context, networkID, groupID string, policyIDs []string) error {
+	return nil
+}
+
 // Minimal mock for FullRepository - only implementing methods needed for AddPeer
 type mockFullRepository struct {
 	networks map[string]*network.Network
@@ -487,6 +491,20 @@ func (m *mockFullRepository) DeleteCaptivePortalToken(ctx context.Context, token
 	return nil
 }
 func (m *mockFullRepository) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
+	return nil
+}
+
+// Security config operations
+func (m *mockFullRepository) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	return nil
+}
+func (m *mockFullRepository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
+	return nil, nil
+}
+func (m *mockFullRepository) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	return nil
+}
+func (m *mockFullRepository) DeleteSecurityConfig(ctx context.Context, networkID string) error {
 	return nil
 }
 
