@@ -32,7 +32,7 @@ func main() {
 	token := envOr("TOKEN", "")
 	configPath := envOr("WG_CONFIG_PATH", "")
 	applyMethod := envOr("WG_APPLY_METHOD", "syncconf")
-	natIface := envOr("NAT_INTERFACE", "eth0")
+	natIface := envOr("NAT_INTERFACE", "") // Empty string enables auto-detection
 	httpPort := envOr("HTTP_PROXY_PORT", "3128")
 	httpsPort := envOr("HTTPS_PROXY_PORT", "3129")
 	portalURL := envOr("CAPTIVE_PORTAL_URL", "https://portal.example.com")
@@ -41,7 +41,7 @@ func main() {
 	flag.StringVar(&token, "token", token, "Enrollment token")
 	flag.StringVar(&configPath, "config", configPath, "Path to wireguard config file")
 	flag.StringVar(&applyMethod, "apply", applyMethod, "Apply method: wg-quick|syncconf")
-	flag.StringVar(&natIface, "nat", natIface, "NAT interface (eth0, etc.)")
+	flag.StringVar(&natIface, "nat", natIface, "NAT interface override (empty for auto-detection)")
 	flag.StringVar(&httpPort, "http-port", httpPort, "HTTP proxy port for captive portal")
 	flag.StringVar(&httpsPort, "https-port", httpsPort, "HTTPS proxy port for captive portal")
 	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal URL")
