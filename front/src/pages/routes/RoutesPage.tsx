@@ -43,7 +43,7 @@ export default function RoutesPage() {
     setLoading(true);
     try {
       let routesData;
-      let peersData = [];
+      let peersData: Peer[] = [];
       
       if (selectedNetworkId) {
         // Load routes and peers for specific network

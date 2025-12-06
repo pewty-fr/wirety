@@ -67,11 +67,7 @@ export default function GroupsPage() {
     setIsGroupModalOpen(true);
   };
 
-  const handleEdit = (group: Group, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setEditingGroup(group);
-    setIsGroupModalOpen(true);
-  };
+
 
   const handleDeleteGroup = async (groupId: string) => {
     try {
