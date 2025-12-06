@@ -39,7 +39,15 @@ func (r *GroupRepository) CreateGroup(ctx context.Context, networkID string, gro
 		group.RouteIDs = []string{}
 	}
 
-	_, err := r.db.ExecContext(ctx, `
+	// Start a transaction to ensure all inserts succeed or fail together
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Insert the group
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO groups (id, network_id, name, description, priority, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`, group.ID, networkID, group.Name, group.Description, group.Priority, group.CreatedAt, group.UpdatedAt)
@@ -49,6 +57,44 @@ func (r *GroupRepository) CreateGroup(ctx context.Context, networkID string, gro
 			return fmt.Errorf("group name already exists in network")
 		}
 		return fmt.Errorf("create group: %w", err)
+	}
+
+	// Insert group-peer associations
+	for _, peerID := range group.PeerIDs {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO group_peers (group_id, peer_id)
+			VALUES ($1, $2)
+		`, group.ID, peerID)
+		if err != nil {
+			return fmt.Errorf("insert group-peer association: %w", err)
+		}
+	}
+
+	// Insert group-policy associations
+	for _, policyID := range group.PolicyIDs {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO group_policies (group_id, policy_id)
+			VALUES ($1, $2)
+		`, group.ID, policyID)
+		if err != nil {
+			return fmt.Errorf("insert group-policy association: %w", err)
+		}
+	}
+
+	// Insert group-route associations
+	for _, routeID := range group.RouteIDs {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO group_routes (group_id, route_id)
+			VALUES ($1, $2)
+		`, group.ID, routeID)
+		if err != nil {
+			return fmt.Errorf("insert group-route association: %w", err)
+		}
+	}
+
+	// Commit the transaction
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
 	}
 
 	return nil
