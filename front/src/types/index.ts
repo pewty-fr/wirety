@@ -157,6 +157,7 @@ export interface PaginatedResponse<T> {
 export interface Group {
   id: string;
   network_id: string;
+  network_name?: string; // Added for cross-network display
   name: string;
   description: string;
   priority: number; // 0-999, lower = higher priority (0 for quarantine, 100 default)
@@ -170,6 +171,7 @@ export interface Group {
 export interface Policy {
   id: string;
   network_id: string;
+  network_name?: string; // Added for cross-network display
   name: string;
   description: string;
   rules: PolicyRule[];
@@ -189,6 +191,7 @@ export interface PolicyRule {
 export interface Route {
   id: string;
   network_id: string;
+  network_name?: string; // Added for cross-network display
   name: string;
   description: string;
   destination_cidr: string;

@@ -259,6 +259,29 @@ class ApiClient {
   }
 
   // Groups
+  async getAllGroups(): Promise<Group[]> {
+    // Get all groups from all networks
+    const networks = await this.getNetworks(1, 100); // Get up to 100 networks
+    const allGroups: Group[] = [];
+    
+    for (const network of networks.data) {
+      try {
+        const response = await this.client.get(`/networks/${network.id}/groups`);
+        const groups = response.data || [];
+        // Add network info to each group
+        for (const group of groups) {
+          group.network_id = network.id;
+          group.network_name = network.name;
+        }
+        allGroups.push(...groups);
+      } catch (error) {
+        console.warn(`Failed to fetch groups for network ${network.id}:`, error);
+      }
+    }
+    
+    return allGroups;
+  }
+
   async getGroups(networkId: string): Promise<Group[]> {
     const response = await this.client.get(`/networks/${networkId}/groups`);
     return response.data;
@@ -322,6 +345,29 @@ class ApiClient {
   }
 
   // Policies
+  async getAllPolicies(): Promise<Policy[]> {
+    // Get all policies from all networks
+    const networks = await this.getNetworks(1, 100); // Get up to 100 networks
+    const allPolicies: Policy[] = [];
+    
+    for (const network of networks.data) {
+      try {
+        const response = await this.client.get(`/networks/${network.id}/policies`);
+        const policies = response.data || [];
+        // Add network info to each policy
+        for (const policy of policies) {
+          policy.network_id = network.id;
+          policy.network_name = network.name;
+        }
+        allPolicies.push(...policies);
+      } catch (error) {
+        console.warn(`Failed to fetch policies for network ${network.id}:`, error);
+      }
+    }
+    
+    return allPolicies;
+  }
+
   async getPolicies(networkId: string): Promise<Policy[]> {
     const response = await this.client.get(`/networks/${networkId}/policies`);
     return response.data;
@@ -356,6 +402,29 @@ class ApiClient {
   }
 
   // Routes
+  async getAllRoutes(): Promise<Route[]> {
+    // Get all routes from all networks
+    const networks = await this.getNetworks(1, 100); // Get up to 100 networks
+    const allRoutes: Route[] = [];
+    
+    for (const network of networks.data) {
+      try {
+        const response = await this.client.get(`/networks/${network.id}/routes`);
+        const routes = response.data || [];
+        // Add network info to each route
+        for (const route of routes) {
+          route.network_id = network.id;
+          route.network_name = network.name;
+        }
+        allRoutes.push(...routes);
+      } catch (error) {
+        console.warn(`Failed to fetch routes for network ${network.id}:`, error);
+      }
+    }
+    
+    return allRoutes;
+  }
+
   async getRoutes(networkId: string): Promise<Route[]> {
     const response = await this.client.get(`/networks/${networkId}/routes`);
     return response.data;

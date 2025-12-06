@@ -40,19 +40,22 @@ export default function RoutesPage() {
   }, []);
 
   const loadRoutes = useCallback(async () => {
-    if (!selectedNetworkId) {
-      setRoutes([]);
-      setJumpPeers([]);
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     try {
-      const [routesData, peersData] = await Promise.all([
-        api.getRoutes(selectedNetworkId),
-        api.getAllNetworkPeers(selectedNetworkId)
-      ]);
+      let routesData;
+      let peersData = [];
+      
+      if (selectedNetworkId) {
+        // Load routes and peers for specific network
+        [routesData, peersData] = await Promise.all([
+          api.getRoutes(selectedNetworkId),
+          api.getAllNetworkPeers(selectedNetworkId)
+        ]);
+      } else {
+        // Load all routes from all networks
+        routesData = await api.getAllRoutes();
+        // For cross-network view, we don't need jump peers data
+      }
       setRoutes(routesData || []);
       setJumpPeers((peersData || []).filter((p: Peer) => p.is_jump));
     } catch (error) {
@@ -113,7 +116,7 @@ export default function RoutesPage() {
     <div>
       <PageHeader 
         title="Routes" 
-        subtitle={`${routes.length} route${routes.length !== 1 ? 's' : ''} in selected network`}
+        subtitle={`${routes.length} route${routes.length !== 1 ? 's' : ''} ${selectedNetworkId ? 'in selected network' : 'across all networks'}`}
         action={
           <button
             onClick={handleCreate}
@@ -146,17 +149,7 @@ export default function RoutesPage() {
           </div>
         </div>
 
-        {!selectedNetworkId ? (
-          <div className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-16 text-center shadow-sm">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue mb-6">
-              <FontAwesomeIcon icon={faRoute} className="text-3xl text-white" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Select a network</h3>
-            <p className="text-gray-600 dark:text-gray-300">
-              Choose a network from the dropdown above to view and manage routes
-            </p>
-          </div>
-        ) : loading ? (
+        {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="text-gray-500">Loading routes...</div>
           </div>
@@ -176,6 +169,9 @@ export default function RoutesPage() {
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
+                  {!selectedNetworkId && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Network</th>
+                  )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Destination CIDR</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Jump Peer</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Domain Suffix</th>
@@ -198,6 +194,11 @@ export default function RoutesPage() {
                         <div className="text-sm font-medium text-gray-900 dark:text-white">{route.name}</div>
                       </div>
                     </td>
+                    {!selectedNetworkId && (
+                      <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
+                        {route.network_name || '-'}
+                      </td>
+                    )}
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-white">
                       {route.destination_cidr}
                     </td>
@@ -287,6 +288,13 @@ function RouteModal({
   const [availableGroups, setAvailableGroups] = useState<any[]>([]);
   const [stagedGroupIds, setStagedGroupIds] = useState<string[]>([]);
 
+  // Individual edit modes
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [isEditingDestinationCidr, setIsEditingDestinationCidr] = useState(false);
+  const [isEditingJumpPeer, setIsEditingJumpPeer] = useState(false);
+  const [isEditingDomainSuffix, setIsEditingDomainSuffix] = useState(false);
+
   useEffect(() => {
     if (isOpen && selectedNetworkId) {
       loadJumpPeers();
@@ -304,6 +312,12 @@ function RouteModal({
       setSelectedNetworkId(networkId);
       setStagedDnsMappings([]);
       setStagedGroupIds([]);
+      // Reset edit modes
+      setIsEditingName(false);
+      setIsEditingDescription(false);
+      setIsEditingDestinationCidr(false);
+      setIsEditingJumpPeer(false);
+      setIsEditingDomainSuffix(false);
       loadDNSMappings();
       loadAttachments();
     } else {
@@ -317,6 +331,12 @@ function RouteModal({
       setStagedDnsMappings([]);
       setAttachedGroups([]);
       setStagedGroupIds([]);
+      // Reset edit modes
+      setIsEditingName(false);
+      setIsEditingDescription(false);
+      setIsEditingDestinationCidr(false);
+      setIsEditingJumpPeer(false);
+      setIsEditingDomainSuffix(false);
       if (selectedNetworkId) {
         loadAvailableItems();
       }
@@ -384,56 +404,144 @@ function RouteModal({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateRoute = async () => {
+    if (!selectedNetworkId) {
+      alert('Please select a network');
+      return;
+    }
+    
     setLoading(true);
-
     try {
-      if (route) {
-        // Update existing route
-        await api.updateRoute(selectedNetworkId, route.id, {
-          name,
-          description,
-          destination_cidr: destinationCidr,
-          jump_peer_id: jumpPeerId,
-          domain_suffix: domainSuffix,
-        });
-      } else {
-        // Create new route
-        if (!selectedNetworkId) {
-          alert('Please select a network');
-          return;
-        }
-        const newRoute = await api.createRoute(selectedNetworkId, {
-          name,
-          description,
-          destination_cidr: destinationCidr,
-          jump_peer_id: jumpPeerId,
-          domain_suffix: domainSuffix,
-        });
-        
-        // Add staged DNS mappings and attach to groups
-        const attachPromises = [];
-        
-        for (const dns of stagedDnsMappings) {
-          attachPromises.push(api.createDNSMapping(selectedNetworkId, newRoute.id, dns));
-        }
-        
-        for (const groupId of stagedGroupIds) {
-          attachPromises.push(api.attachRouteToGroup(selectedNetworkId, groupId, newRoute.id));
-        }
-        
-        if (attachPromises.length > 0) {
-          await Promise.all(attachPromises);
-        }
+      const newRoute = await api.createRoute(selectedNetworkId, {
+        name,
+        description,
+        destination_cidr: destinationCidr,
+        jump_peer_id: jumpPeerId,
+        domain_suffix: domainSuffix,
+      });
+      
+      // Add staged DNS mappings and attach to groups
+      const attachPromises = [];
+      
+      for (const dns of stagedDnsMappings) {
+        attachPromises.push(api.createDNSMapping(selectedNetworkId, newRoute.id, dns));
       }
+      
+      for (const groupId of stagedGroupIds) {
+        attachPromises.push(api.attachRouteToGroup(selectedNetworkId, groupId, newRoute.id));
+      }
+      
+      if (attachPromises.length > 0) {
+        await Promise.all(attachPromises);
+      }
+      
       onSuccess();
       onClose();
     } catch (error) {
-      console.error('Failed to save route:', error);
-      alert('Failed to save route');
+      console.error('Failed to create route:', error);
+      alert('Failed to create route');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUpdateName = async () => {
+    if (!route || !selectedNetworkId) return;
+    
+    try {
+      await api.updateRoute(selectedNetworkId, route.id, { name });
+      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      Object.assign(route, updatedRoute);
+      setIsEditingName(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update name:', error);
+      alert('Failed to update route name');
+    }
+  };
+
+  const handleUpdateDescription = async () => {
+    if (!route || !selectedNetworkId) return;
+    
+    try {
+      await api.updateRoute(selectedNetworkId, route.id, { description });
+      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      Object.assign(route, updatedRoute);
+      setIsEditingDescription(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update description:', error);
+      alert('Failed to update route description');
+    }
+  };
+
+  const handleUpdateDestinationCidr = async () => {
+    if (!route || !selectedNetworkId) return;
+    
+    try {
+      await api.updateRoute(selectedNetworkId, route.id, { destination_cidr: destinationCidr });
+      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      Object.assign(route, updatedRoute);
+      setIsEditingDestinationCidr(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update destination CIDR:', error);
+      alert('Failed to update route destination CIDR');
+    }
+  };
+
+  const handleUpdateJumpPeer = async () => {
+    if (!route || !selectedNetworkId) return;
+    
+    try {
+      await api.updateRoute(selectedNetworkId, route.id, { jump_peer_id: jumpPeerId });
+      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      Object.assign(route, updatedRoute);
+      setIsEditingJumpPeer(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update jump peer:', error);
+      alert('Failed to update route jump peer');
+    }
+  };
+
+  const handleUpdateDomainSuffix = async () => {
+    if (!route || !selectedNetworkId) return;
+    
+    try {
+      await api.updateRoute(selectedNetworkId, route.id, { domain_suffix: domainSuffix });
+      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      Object.assign(route, updatedRoute);
+      setIsEditingDomainSuffix(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update domain suffix:', error);
+      alert('Failed to update route domain suffix');
+    }
+  };
+
+  const handleCancelEdit = (field: 'name' | 'description' | 'destinationCidr' | 'jumpPeer' | 'domainSuffix') => {
+    switch (field) {
+      case 'name':
+        setName(route?.name || '');
+        setIsEditingName(false);
+        break;
+      case 'description':
+        setDescription(route?.description || '');
+        setIsEditingDescription(false);
+        break;
+      case 'destinationCidr':
+        setDestinationCidr(route?.destination_cidr || '');
+        setIsEditingDestinationCidr(false);
+        break;
+      case 'jumpPeer':
+        setJumpPeerId(route?.jump_peer_id || '');
+        setIsEditingJumpPeer(false);
+        break;
+      case 'domainSuffix':
+        setDomainSuffix(route?.domain_suffix || 'internal');
+        setIsEditingDomainSuffix(false);
+        break;
     }
   };
 
@@ -612,108 +720,293 @@ function RouteModal({
         {/* Details Tab */}
         {activeTab === 'details' && (
           <div className="p-6">
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            {!route && (
+            <div className="space-y-6">
+              {!route && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Network *
+                  </label>
+                  <SearchableSelect
+                    options={networks.map(network => ({
+                      value: network.id,
+                      label: `${network.name} (${network.cidr})`
+                    }))}
+                    value={selectedNetworkId}
+                    onChange={setSelectedNetworkId}
+                    placeholder="Select a network..."
+                  />
+                </div>
+              )}
+
+              {/* Name Field */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Network *
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Name *
                 </label>
-                <SearchableSelect
-                  options={networks.map(network => ({
-                    value: network.id,
-                    label: `${network.name} (${network.cidr})`
-                  }))}
-                  value={selectedNetworkId}
-                  onChange={setSelectedNetworkId}
-                  placeholder="Select a network..."
-                />
+                {route && !isEditingName ? (
+                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <span className="text-gray-900 dark:text-white font-medium">{name}</span>
+                    <button
+                      onClick={() => setIsEditingName(true)}
+                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
+                    >
+                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                      Edit
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      required
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      placeholder="Enter route name..."
+                    />
+                    {route && (
+                      <>
+                        <button
+                          onClick={handleUpdateName}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit('name')}
+                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Description Field */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Description
+                </label>
+                {route && !isEditingDescription ? (
+                  <div className="flex items-start justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <span className="text-gray-900 dark:text-white flex-1">
+                      {description || <em className="text-gray-500">No description</em>}
+                    </span>
+                    <button
+                      onClick={() => setIsEditingDescription(true)}
+                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm ml-3"
+                    >
+                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                      Edit
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      rows={2}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      placeholder="Enter route description..."
+                    />
+                    {route && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleUpdateDescription}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit('description')}
+                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Destination CIDR Field */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Destination CIDR *
+                </label>
+                {route && !isEditingDestinationCidr ? (
+                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <span className="text-gray-900 dark:text-white font-mono">{destinationCidr}</span>
+                    <button
+                      onClick={() => setIsEditingDestinationCidr(true)}
+                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
+                    >
+                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                      Edit
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={destinationCidr}
+                      onChange={(e) => setDestinationCidr(e.target.value)}
+                      placeholder="10.0.0.0/24"
+                      required
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
+                    />
+                    {route && (
+                      <>
+                        <button
+                          onClick={handleUpdateDestinationCidr}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit('destinationCidr')}
+                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Jump Peer Field */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Jump Peer *
+                </label>
+                {route && !isEditingJumpPeer ? (
+                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <span className="text-gray-900 dark:text-white">
+                      {jumpPeers.find(p => p.id === jumpPeerId)?.name || jumpPeerId}
+                    </span>
+                    <button
+                      onClick={() => setIsEditingJumpPeer(true)}
+                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
+                    >
+                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                      Edit
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <select
+                      value={jumpPeerId}
+                      onChange={(e) => setJumpPeerId(e.target.value)}
+                      required
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    >
+                      <option value="">Select a jump peer...</option>
+                      {jumpPeers.map((peer) => (
+                        <option key={peer.id} value={peer.id}>
+                          {peer.name}
+                        </option>
+                      ))}
+                    </select>
+                    {route && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleUpdateJumpPeer}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit('jumpPeer')}
+                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Domain Suffix Field */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Domain Suffix
+                </label>
+                {route && !isEditingDomainSuffix ? (
+                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <span className="text-gray-900 dark:text-white">{domainSuffix || 'internal'}</span>
+                    <button
+                      onClick={() => setIsEditingDomainSuffix(true)}
+                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
+                    >
+                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                      Edit
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={domainSuffix}
+                      onChange={(e) => setDomainSuffix(e.target.value)}
+                      placeholder="internal"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    />
+                    {route && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleUpdateDomainSuffix}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit('domainSuffix')}
+                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Create Button for New Routes */}
+            {!route && (
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateRoute}
+                  disabled={loading || !name.trim() || !destinationCidr.trim() || !jumpPeerId || !selectedNetworkId}
+                  className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? 'Creating...' : 'Create Route'}
+                </button>
               </div>
             )}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Name *
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Description
-              </label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={2}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Destination CIDR *
-              </label>
-              <input
-                type="text"
-                value={destinationCidr}
-                onChange={(e) => setDestinationCidr(e.target.value)}
-                placeholder="10.0.0.0/24"
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Jump Peer *
-              </label>
-              <select
-                value={jumpPeerId}
-                onChange={(e) => setJumpPeerId(e.target.value)}
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              >
-                <option value="">Select a jump peer...</option>
-                {jumpPeers.map((peer) => (
-                  <option key={peer.id} value={peer.id}>
-                    {peer.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Domain Suffix
-              </label>
-              <input
-                type="text"
-                value={domainSuffix}
-                onChange={(e) => setDomainSuffix(e.target.value)}
-                placeholder="internal"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-            </div>
-          </div>
-          <div className="mt-6 flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Saving...' : route ? 'Update' : 'Create'}
-            </button>
-          </div>
-        </form>
+
+            {/* Close Button for Existing Routes */}
+            {route && (
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+                >
+                  Close
+                </button>
+              </div>
+            )}
           </div>
         )}
 

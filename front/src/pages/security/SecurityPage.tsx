@@ -154,21 +154,21 @@ export default function SecurityPage() {
       <PageHeader 
         title="Security Incidents" 
         subtitle={`${filteredTotal} incident${filteredTotal !== 1 ? 's' : ''} shown, ${unresolvedCount} unresolved`}
+        action={
+          isAdmin ? (
+            <div className="mb-6">
+              <button
+                onClick={() => setIsSecurityConfigModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                <FontAwesomeIcon icon={faCog} />
+              </button>
+            </div>
+          ) : undefined
+        }
       />
 
       <div className="p-8">
-        {/* Security Configuration Button */}
-        {isAdmin && (
-          <div className="mb-6">
-            <button
-              onClick={() => setIsSecurityConfigModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
-              <FontAwesomeIcon icon={faCog} />
-              Security Configuration
-            </button>
-          </div>
-        )}
         {/* Filters */}
         <div className="relative z-20 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-gray-200 dark:border-gray-700 p-6 mb-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

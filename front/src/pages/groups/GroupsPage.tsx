@@ -33,15 +33,16 @@ export default function GroupsPage() {
   }, []);
 
   const loadGroups = useCallback(async () => {
-    if (!selectedNetworkId) {
-      setGroups([]);
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     try {
-      const data = await api.getGroups(selectedNetworkId);
+      let data;
+      if (selectedNetworkId) {
+        // Load groups for specific network
+        data = await api.getGroups(selectedNetworkId);
+      } else {
+        // Load all groups from all networks
+        data = await api.getAllGroups();
+      }
       setGroups(data || []);
     } catch (error) {
       console.error('Failed to load groups:', error);
@@ -105,7 +106,7 @@ export default function GroupsPage() {
     <div>
       <PageHeader 
         title="Groups" 
-        subtitle={`${groups.length} group${groups.length !== 1 ? 's' : ''} in selected network`}
+        subtitle={`${groups.length} group${groups.length !== 1 ? 's' : ''} ${selectedNetworkId ? 'in selected network' : 'across all networks'}`}
         action={
           <button
             onClick={handleCreate}
@@ -139,17 +140,7 @@ export default function GroupsPage() {
         </div>
 
         {/* Groups List */}
-        {!selectedNetworkId ? (
-          <div className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-16 text-center shadow-sm">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue mb-6">
-              <FontAwesomeIcon icon={faUsers} className="text-3xl text-white" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Select a network</h3>
-            <p className="text-gray-600 dark:text-gray-300">
-              Choose a network from the dropdown above to view and manage groups
-            </p>
-          </div>
-        ) : loading ? (
+        {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="text-gray-500">Loading groups...</div>
           </div>
@@ -169,6 +160,9 @@ export default function GroupsPage() {
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
+                  {!selectedNetworkId && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Network</th>
+                  )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Priority</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Peers</th>
@@ -193,6 +187,11 @@ export default function GroupsPage() {
                         <div className="text-sm font-medium text-gray-900 dark:text-white">{group.name}</div>
                       </div>
                     </td>
+                    {!selectedNetworkId && (
+                      <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
+                        {group.network_name || '-'}
+                      </td>
+                    )}
                     <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
                       {group.description || '-'}
                     </td>
@@ -221,13 +220,6 @@ export default function GroupsPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => handleEdit(group, e)}
-                          className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
-                          title="Edit group"
-                        >
-                          <FontAwesomeIcon icon={faPencil} />
-                        </button>
                         <button
                           onClick={(e) => handleDelete(group, e)}
                           className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 transition-colors"

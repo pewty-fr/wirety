@@ -32,15 +32,16 @@ export default function PoliciesPage() {
   }, []);
 
   const loadPolicies = useCallback(async () => {
-    if (!selectedNetworkId) {
-      setPolicies([]);
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     try {
-      const data = await api.getPolicies(selectedNetworkId);
+      let data;
+      if (selectedNetworkId) {
+        // Load policies for specific network
+        data = await api.getPolicies(selectedNetworkId);
+      } else {
+        // Load all policies from all networks
+        data = await api.getAllPolicies();
+      }
       setPolicies(data || []);
     } catch (error) {
       console.error('Failed to load policies:', error);
@@ -104,7 +105,7 @@ export default function PoliciesPage() {
     <div>
       <PageHeader 
         title="Policies" 
-        subtitle={`${policies.length} polic${policies.length !== 1 ? 'ies' : 'y'} in selected network`}
+        subtitle={`${policies.length} polic${policies.length !== 1 ? 'ies' : 'y'} ${selectedNetworkId ? 'in selected network' : 'across all networks'}`}
         action={
           <div className="flex gap-2">
             <button
@@ -139,17 +140,7 @@ export default function PoliciesPage() {
           </div>
         </div>
 
-        {!selectedNetworkId ? (
-          <div className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-16 text-center shadow-sm">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue mb-6">
-              <FontAwesomeIcon icon={faShieldAlt} className="text-3xl text-white" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Select a network</h3>
-            <p className="text-gray-600 dark:text-gray-300">
-              Choose a network from the dropdown above to view and manage policies
-            </p>
-          </div>
-        ) : loading ? (
+        {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="text-gray-500">Loading policies...</div>
           </div>
@@ -169,6 +160,9 @@ export default function PoliciesPage() {
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
+                  {!selectedNetworkId && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Network</th>
+                  )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Rules</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Created</th>
@@ -190,6 +184,11 @@ export default function PoliciesPage() {
                         <div className="text-sm font-medium text-gray-900 dark:text-white">{policy.name}</div>
                       </div>
                     </td>
+                    {!selectedNetworkId && (
+                      <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
+                        {policy.network_name || '-'}
+                      </td>
+                    )}
                     <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
                       {policy.description || '-'}
                     </td>
@@ -274,6 +273,10 @@ function PolicyModal({
   const [stagedRules, setStagedRules] = useState<Omit<PolicyRule, 'id'>[]>([]);
   const [stagedGroupIds, setStagedGroupIds] = useState<string[]>([]);
 
+  // Individual edit modes
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
+
   useEffect(() => {
     if (policy) {
       setName(policy.name);
@@ -282,6 +285,9 @@ function PolicyModal({
       setSelectedNetworkId(networkId);
       setStagedRules([]);
       setStagedGroupIds([]);
+      // Reset edit modes
+      setIsEditingName(false);
+      setIsEditingDescription(false);
       loadAttachments();
     } else {
       setName('');
@@ -291,6 +297,9 @@ function PolicyModal({
       setStagedRules([]);
       setStagedGroupIds([]);
       setAttachedGroups([]);
+      // Reset edit modes
+      setIsEditingName(false);
+      setIsEditingDescription(false);
       if (selectedNetworkId) {
         loadAvailableItems();
       }
@@ -336,47 +345,84 @@ function PolicyModal({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreatePolicy = async () => {
+    if (!selectedNetworkId) {
+      alert('Please select a network');
+      return;
+    }
+    
     setLoading(true);
-
     try {
-      if (policy) {
-        // Update existing policy
-        await api.updatePolicy(selectedNetworkId, policy.id, { name, description });
-      } else {
-        // Create new policy
-        if (!selectedNetworkId) {
-          alert('Please select a network');
-          return;
-        }
-        const newPolicy = await api.createPolicy(selectedNetworkId, { name, description });
-        
-        // Attach staged items
-        const attachPromises = [];
-        
-        // Add staged rules
-        for (const rule of stagedRules) {
-          attachPromises.push(api.addRuleToPolicy(selectedNetworkId, newPolicy.id, rule));
-        }
-        
-        // Attach to staged groups
-        for (const groupId of stagedGroupIds) {
-          attachPromises.push(api.attachPolicyToGroup(selectedNetworkId, groupId, newPolicy.id));
-        }
-        
-        // Wait for all attachments to complete
-        if (attachPromises.length > 0) {
-          await Promise.all(attachPromises);
-        }
+      const newPolicy = await api.createPolicy(selectedNetworkId, { name, description });
+      
+      // Attach staged items
+      const attachPromises = [];
+      
+      // Add staged rules
+      for (const rule of stagedRules) {
+        attachPromises.push(api.addRuleToPolicy(selectedNetworkId, newPolicy.id, rule));
       }
+      
+      // Attach to staged groups
+      for (const groupId of stagedGroupIds) {
+        attachPromises.push(api.attachPolicyToGroup(selectedNetworkId, groupId, newPolicy.id));
+      }
+      
+      // Wait for all attachments to complete
+      if (attachPromises.length > 0) {
+        await Promise.all(attachPromises);
+      }
+      
       onSuccess();
       onClose();
     } catch (error) {
-      console.error('Failed to save policy:', error);
-      alert('Failed to save policy');
+      console.error('Failed to create policy:', error);
+      alert('Failed to create policy');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUpdateName = async () => {
+    if (!policy || !selectedNetworkId) return;
+    
+    try {
+      await api.updatePolicy(selectedNetworkId, policy.id, { name });
+      const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
+      Object.assign(policy, updatedPolicy);
+      setIsEditingName(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update name:', error);
+      alert('Failed to update policy name');
+    }
+  };
+
+  const handleUpdateDescription = async () => {
+    if (!policy || !selectedNetworkId) return;
+    
+    try {
+      await api.updatePolicy(selectedNetworkId, policy.id, { description });
+      const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
+      Object.assign(policy, updatedPolicy);
+      setIsEditingDescription(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update description:', error);
+      alert('Failed to update policy description');
+    }
+  };
+
+  const handleCancelEdit = (field: 'name' | 'description') => {
+    switch (field) {
+      case 'name':
+        setName(policy?.name || '');
+        setIsEditingName(false);
+        break;
+      case 'description':
+        setDescription(policy?.description || '');
+        setIsEditingDescription(false);
+        break;
     }
   };
 
@@ -557,8 +603,7 @@ function PolicyModal({
         {/* Details Tab */}
         {activeTab === 'details' && (
           <div className="p-6">
-          <form onSubmit={handleSubmit}>
-            <div className="space-y-4">
+            <div className="space-y-6">
               {!policy && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -575,47 +620,132 @@ function PolicyModal({
                   />
                 </div>
               )}
+
+              {/* Name Field */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Name *
                 </label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
+                {policy && !isEditingName ? (
+                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <span className="text-gray-900 dark:text-white font-medium">{name}</span>
+                    <button
+                      onClick={() => setIsEditingName(true)}
+                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
+                    >
+                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                      Edit
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      required
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      placeholder="Enter policy name..."
+                    />
+                    {policy && (
+                      <>
+                        <button
+                          onClick={handleUpdateName}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit('name')}
+                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
+
+              {/* Description Field */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Description
                 </label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
+                {policy && !isEditingDescription ? (
+                  <div className="flex items-start justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <span className="text-gray-900 dark:text-white flex-1">
+                      {description || <em className="text-gray-500">No description</em>}
+                    </span>
+                    <button
+                      onClick={() => setIsEditingDescription(true)}
+                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm ml-3"
+                    >
+                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                      Edit
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      rows={3}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      placeholder="Enter policy description..."
+                    />
+                    {policy && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleUpdateDescription}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit('description')}
+                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
-                className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? 'Saving...' : policy ? 'Update' : 'Create'}
-              </button>
-            </div>
-          </form>
+
+            {/* Create Button for New Policies */}
+            {!policy && (
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreatePolicy}
+                  disabled={loading || !name.trim() || !selectedNetworkId}
+                  className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? 'Creating...' : 'Create Policy'}
+                </button>
+              </div>
+            )}
+
+            {/* Close Button for Existing Policies */}
+            {policy && (
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+                >
+                  Close
+                </button>
+              </div>
+            )}
           </div>
         )}
 
