@@ -24,9 +24,7 @@ export default function GroupsPage() {
       try {
         const response = await api.getNetworks(1, 100);
         setNetworks(response.data || []);
-        if (response.data && response.data.length > 0) {
-          setSelectedNetworkId(response.data[0].id);
-        }
+        // Don't auto-select first network - let user choose
       } catch (error) {
         console.error('Failed to load networks:', error);
       }
@@ -109,17 +107,15 @@ export default function GroupsPage() {
         title="Groups" 
         subtitle={`${groups.length} group${groups.length !== 1 ? 's' : ''} in selected network`}
         action={
-          selectedNetworkId ? (
-            <button
-              onClick={handleCreate}
-              className="px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl flex items-center gap-2 cursor-pointer transition-all font-semibold"
-            >
-              <svg className="w-5 h-5 group-hover:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Group
-            </button>
-          ) : undefined
+          <button
+            onClick={handleCreate}
+            className="px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl flex items-center gap-2 cursor-pointer transition-all font-semibold"
+          >
+            <svg className="w-5 h-5 group-hover:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Group
+          </button>
         }
       />
 
@@ -259,6 +255,7 @@ export default function GroupsPage() {
         onSuccess={loadGroups}
         networkId={selectedNetworkId}
         group={editingGroup}
+        networks={networks}
       />
 
     </div>
@@ -272,17 +269,20 @@ function GroupModal({
   onSuccess,
   networkId,
   group,
+  networks,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
   networkId: string;
   group: Group | null;
+  networks: Network[];
 }) {
   const [activeTab, setActiveTab] = useState<'details' | 'peers' | 'policies' | 'routes'>('details');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<number>(100);
+  const [selectedNetworkId, setSelectedNetworkId] = useState<string>(networkId);
   const [loading, setLoading] = useState(false);
   
   // Attachment management state
@@ -298,40 +298,67 @@ function GroupModal({
   const [stagedPolicyIds, setStagedPolicyIds] = useState<string[]>([]);
   const [stagedRouteIds, setStagedRouteIds] = useState<string[]>([]);
 
+  // Individual edit modes
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [isEditingPriority, setIsEditingPriority] = useState(false);
+
   const isQuarantineGroup = group?.name.toLowerCase() === 'quarantine';
+  const isDefaultGroup = group?.name.toLowerCase() === 'default';
+  const isSpecialGroup = isQuarantineGroup || isDefaultGroup;
 
   useEffect(() => {
     if (group) {
       setName(group.name);
       setDescription(group.description || '');
       setPriority(group.priority);
+      setSelectedNetworkId(networkId);
       setStagedPeerIds([]);
       setStagedPolicyIds([]);
       setStagedRouteIds([]);
+      // Reset edit modes
+      setIsEditingName(false);
+      setIsEditingDescription(false);
+      setIsEditingPriority(false);
       // Load attachments when editing
       loadAttachments();
     } else {
       setName('');
       setDescription('');
       setPriority(100);
+      setSelectedNetworkId(networkId || '');
       setPeers([]);
       setStagedPeerIds([]);
       setStagedPolicyIds([]);
       setStagedRouteIds([]);
-      // Load available items for creation mode
-      loadAvailableItems();
+      // Reset edit modes
+      setIsEditingName(false);
+      setIsEditingDescription(false);
+      setIsEditingPriority(false);
+      // Load available items for creation mode if network is selected
+      if (selectedNetworkId) {
+        loadAvailableItems();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group, networkId, isOpen]);
 
+  // Load available items when network changes in creation mode
+  useEffect(() => {
+    if (!group && selectedNetworkId && isOpen) {
+      loadAvailableItems();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNetworkId, group, isOpen]);
+
   const loadAvailableItems = async () => {
-    if (!networkId) return;
+    if (!selectedNetworkId) return;
 
     try {
       const [allPeers, allPolicies, allRoutes] = await Promise.all([
-        api.getAllNetworkPeers(networkId),
-        api.getPolicies(networkId),
-        api.getRoutes(networkId),
+        api.getAllNetworkPeers(selectedNetworkId),
+        api.getPolicies(selectedNetworkId),
+        api.getRoutes(selectedNetworkId),
       ]);
       
       setAvailablePeers(allPeers);
@@ -343,18 +370,18 @@ function GroupModal({
   };
 
   const loadAttachments = async () => {
-    if (!group || !networkId) return;
+    if (!group || !selectedNetworkId) return;
 
     try {
       // Load all network peers
-      const allPeers = await api.getAllNetworkPeers(networkId);
+      const allPeers = await api.getAllNetworkPeers(selectedNetworkId);
       const groupPeerIds = new Set(group.peer_ids || []);
       setPeers(allPeers.filter(p => groupPeerIds.has(p.id)));
       
       // Load group routes first to filter out jump peers used by routes
       const [groupRoutes, allRoutes] = await Promise.all([
-        api.getGroupRoutes(networkId, group.id),
-        api.getRoutes(networkId),
+        api.getGroupRoutes(selectedNetworkId, group.id),
+        api.getRoutes(selectedNetworkId),
       ]);
       setRoutes(groupRoutes);
       
@@ -369,8 +396,8 @@ function GroupModal({
 
       // Load group policies and all network policies
       const [groupPolicies, allPolicies] = await Promise.all([
-        api.getGroupPolicies(networkId, group.id),
-        api.getPolicies(networkId),
+        api.getGroupPolicies(selectedNetworkId, group.id),
+        api.getPolicies(selectedNetworkId),
       ]);
       setPolicies(groupPolicies);
       const groupPolicyIds = new Set(groupPolicies.map(p => p.id));
@@ -387,45 +414,105 @@ function GroupModal({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateGroup = async () => {
+    if (!selectedNetworkId) {
+      alert('Please select a network');
+      return;
+    }
+    
     setLoading(true);
-
     try {
-      if (group) {
-        // Update existing group
-        await api.updateGroup(networkId, group.id, { name, description, priority: isQuarantineGroup ? undefined : priority });
-      } else {
-        // Create new group
-        const newGroup = await api.createGroup(networkId, { name, description, priority });
-        
-        // Attach staged items
-        const attachPromises = [];
-        
-        for (const peerId of stagedPeerIds) {
-          attachPromises.push(api.addPeerToGroup(networkId, newGroup.id, peerId));
-        }
-        
-        for (const policyId of stagedPolicyIds) {
-          attachPromises.push(api.attachPolicyToGroup(networkId, newGroup.id, policyId));
-        }
-        
-        for (const routeId of stagedRouteIds) {
-          attachPromises.push(api.attachRouteToGroup(networkId, newGroup.id, routeId));
-        }
-        
-        // Wait for all attachments to complete
-        if (attachPromises.length > 0) {
-          await Promise.all(attachPromises);
-        }
+      const newGroup = await api.createGroup(selectedNetworkId, { name, description, priority });
+      
+      // Attach staged items
+      const attachPromises = [];
+      
+      for (const peerId of stagedPeerIds) {
+        attachPromises.push(api.addPeerToGroup(selectedNetworkId, newGroup.id, peerId));
       }
+      
+      for (const policyId of stagedPolicyIds) {
+        attachPromises.push(api.attachPolicyToGroup(selectedNetworkId, newGroup.id, policyId));
+      }
+      
+      for (const routeId of stagedRouteIds) {
+        attachPromises.push(api.attachRouteToGroup(selectedNetworkId, newGroup.id, routeId));
+      }
+      
+      // Wait for all attachments to complete
+      if (attachPromises.length > 0) {
+        await Promise.all(attachPromises);
+      }
+      
       onSuccess();
       onClose();
     } catch (error) {
-      console.error('Failed to save group:', error);
-      alert('Failed to save group');
+      console.error('Failed to create group:', error);
+      alert('Failed to create group');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUpdateName = async () => {
+    if (!group || !selectedNetworkId) return;
+    
+    try {
+      await api.updateGroup(selectedNetworkId, group.id, { name });
+      const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+      Object.assign(group, updatedGroup);
+      setIsEditingName(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update name:', error);
+      alert('Failed to update group name');
+    }
+  };
+
+  const handleUpdateDescription = async () => {
+    if (!group || !selectedNetworkId) return;
+    
+    try {
+      await api.updateGroup(selectedNetworkId, group.id, { description });
+      const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+      Object.assign(group, updatedGroup);
+      setIsEditingDescription(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update description:', error);
+      alert('Failed to update group description');
+    }
+  };
+
+  const handleUpdatePriority = async () => {
+    if (!group || !selectedNetworkId) return;
+    
+    try {
+      await api.updateGroup(selectedNetworkId, group.id, { priority });
+      const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+      Object.assign(group, updatedGroup);
+      setIsEditingPriority(false);
+      onSuccess();
+    } catch (error) {
+      console.error('Failed to update priority:', error);
+      alert('Failed to update group priority');
+    }
+  };
+
+  const handleCancelEdit = (field: 'name' | 'description' | 'priority') => {
+    switch (field) {
+      case 'name':
+        setName(group?.name || '');
+        setIsEditingName(false);
+        break;
+      case 'description':
+        setDescription(group?.description || '');
+        setIsEditingDescription(false);
+        break;
+      case 'priority':
+        setPriority(group?.priority || 100);
+        setIsEditingPriority(false);
+        break;
     }
   };
 
@@ -442,10 +529,13 @@ function GroupModal({
       }
     }
     
-    if (group && networkId) {
+    if (group && selectedNetworkId) {
       // Edit mode: attach immediately
       try {
-        await api.addPeerToGroup(networkId, group.id, peerId);
+        await api.addPeerToGroup(selectedNetworkId, group.id, peerId);
+        // Refetch the updated group data and reload attachments
+        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error: any) {
@@ -465,10 +555,13 @@ function GroupModal({
   };
 
   const handleRemovePeer = async (peerId: string) => {
-    if (group && networkId) {
+    if (group && selectedNetworkId) {
       // Edit mode: remove immediately
       try {
-        await api.removePeerFromGroup(networkId, group.id, peerId);
+        await api.removePeerFromGroup(selectedNetworkId, group.id, peerId);
+        // Refetch the updated group data and reload attachments
+        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error) {
@@ -490,10 +583,13 @@ function GroupModal({
     const policy = availablePolicies.find(p => p.id === policyId);
     if (!policy) return;
     
-    if (group && networkId) {
+    if (group && selectedNetworkId) {
       // Edit mode: attach immediately
       try {
-        await api.attachPolicyToGroup(networkId, group.id, policyId);
+        await api.attachPolicyToGroup(selectedNetworkId, group.id, policyId);
+        // Refetch the updated group data and reload attachments
+        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error) {
@@ -509,10 +605,13 @@ function GroupModal({
   };
 
   const handleDetachPolicy = async (policyId: string) => {
-    if (group && networkId) {
+    if (group && selectedNetworkId) {
       // Edit mode: detach immediately
       try {
-        await api.detachPolicyFromGroup(networkId, group.id, policyId);
+        await api.detachPolicyFromGroup(selectedNetworkId, group.id, policyId);
+        // Refetch the updated group data and reload attachments
+        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error) {
@@ -537,11 +636,14 @@ function GroupModal({
     
     setPolicies(reorderedPolicies);
     
-    if (group && networkId) {
+    if (group && selectedNetworkId) {
       // Edit mode: reorder on server
       try {
         const policyIds = reorderedPolicies.map(p => p.id);
-        await api.reorderGroupPolicies(networkId, group.id, policyIds);
+        await api.reorderGroupPolicies(selectedNetworkId, group.id, policyIds);
+        // Refetch the updated group data
+        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        Object.assign(group, updatedGroup); // Update the group object with fresh data
         onSuccess();
       } catch (error) {
         console.error('Failed to reorder policies:', error);
@@ -564,10 +666,13 @@ function GroupModal({
       return;
     }
     
-    if (group && networkId) {
+    if (group && selectedNetworkId) {
       // Edit mode: attach immediately
       try {
-        await api.attachRouteToGroup(networkId, group.id, routeId);
+        await api.attachRouteToGroup(selectedNetworkId, group.id, routeId);
+        // Refetch the updated group data and reload attachments
+        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error: any) {
@@ -587,10 +692,13 @@ function GroupModal({
   };
 
   const handleDetachRoute = async (routeId: string) => {
-    if (group && networkId) {
+    if (group && selectedNetworkId) {
       // Edit mode: detach immediately
       try {
-        await api.detachRouteFromGroup(networkId, group.id, routeId);
+        await api.detachRouteFromGroup(selectedNetworkId, group.id, routeId);
+        // Refetch the updated group data and reload attachments
+        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error) {
@@ -700,74 +808,232 @@ function GroupModal({
         {/* Details Tab */}
         {activeTab === 'details' && (
           <div className="p-6">
-          <form onSubmit={handleSubmit}>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Name *
-                </label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Description
-                </label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
-              </div>
-              {!isQuarantineGroup && (
+            <div className="space-y-6">
+              {!group && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Network *
+                  </label>
+                  <SearchableSelect
+                    options={networks.map(network => ({
+                      value: network.id,
+                      label: `${network.name} (${network.cidr})`
+                    }))}
+                    value={selectedNetworkId}
+                    onChange={setSelectedNetworkId}
+                    placeholder="Select a network..."
+                  />
+                </div>
+              )}
+
+              {/* Name Field */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Name *
+                </label>
+                {group && !isEditingName ? (
+                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <span className="text-gray-900 dark:text-white font-medium">{name}</span>
+                    {!isSpecialGroup && (
+                      <button
+                        onClick={() => setIsEditingName(true)}
+                        className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
+                      >
+                        <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                        Edit
+                      </button>
+                    )}
+                    {isSpecialGroup && (
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {isQuarantineGroup ? 'Quarantine' : 'Default'} group name cannot be changed
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      required
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      placeholder="Enter group name..."
+                    />
+                    {group && (
+                      <>
+                        <button
+                          onClick={handleUpdateName}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit('name')}
+                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Description Field */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Description
+                </label>
+                {group && !isEditingDescription ? (
+                  <div className="flex items-start justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <span className="text-gray-900 dark:text-white flex-1">
+                      {description || <em className="text-gray-500">No description</em>}
+                    </span>
+                    <button
+                      onClick={() => setIsEditingDescription(true)}
+                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm ml-3"
+                    >
+                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                      Edit
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      rows={3}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      placeholder="Enter group description..."
+                    />
+                    {group && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleUpdateDescription}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit('description')}
+                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Priority Field */}
+              {!isQuarantineGroup && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Priority (1-999)
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="999"
-                    value={priority}
-                    onChange={(e) => setPriority(parseInt(e.target.value) || 100)}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Lower number = higher priority. Default is 100. Quarantine groups use 0.
-                  </p>
+                  {group && !isEditingPriority ? (
+                    <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                      <div>
+                        <span className="text-gray-900 dark:text-white font-medium">{priority}</span>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Lower number = higher priority
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setIsEditingPriority(true)}
+                        className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
+                      >
+                        <FontAwesomeIcon icon={faPencil} className="mr-1" />
+                        Edit
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <input
+                        type="number"
+                        min="1"
+                        max="999"
+                        value={priority}
+                        onChange={(e) => setPriority(parseInt(e.target.value) || 100)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Lower number = higher priority. Default is 100.
+                      </p>
+                      {group && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleUpdatePriority}
+                            className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => handleCancelEdit('priority')}
+                            className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
+
+              {/* Quarantine Group Notice */}
               {isQuarantineGroup && (
-                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
                   <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                    Quarantine groups have priority 0 (highest) and cannot be changed.
+                    <strong>Quarantine Group:</strong> This group has priority 0 (highest) and its name cannot be changed. 
+                    Peers in this group are isolated from the network.
+                  </p>
+                </div>
+              )}
+
+              {/* Default Group Notice */}
+              {isDefaultGroup && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    <strong>Default Group:</strong> This is a system group and its name cannot be changed. 
+                    New peers are automatically added to this group.
                   </p>
                 </div>
               )}
             </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
-                className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? 'Saving...' : group ? 'Update' : 'Create'}
-              </button>
-            </div>
-          </form>
+
+            {/* Create Button for New Groups */}
+            {!group && (
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateGroup}
+                  disabled={loading || !name.trim() || !selectedNetworkId}
+                  className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? 'Creating...' : 'Create Group'}
+                </button>
+              </div>
+            )}
+
+            {/* Close Button for Existing Groups */}
+            {group && (
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
+                >
+                  Close
+                </button>
+              </div>
+            )}
           </div>
         )}
 

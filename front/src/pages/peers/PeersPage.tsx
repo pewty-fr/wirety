@@ -133,11 +133,6 @@ export default function PeersPage() {
     if (filterType === 'jump' && !peer.is_jump) return false;
     if (filterType === 'regular' && peer.is_jump) return false;
 
-    // Status filter (wireguard up/down)
-    const wgUp = !!peer.session_status?.current_session?.reported_endpoint;
-    if (filterStatus === 'wg-up' && !wgUp) return false;
-    if (filterStatus === 'wg-down' && wgUp) return false;
-
     // Agent filter (connected/disconnected/none)
     const agentConnected = peer.use_agent && peer.session_status?.has_active_agent;
     if (filterStatus === 'agent-connected' && !agentConnected) return false;
@@ -219,8 +214,6 @@ export default function PeersPage() {
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               >
                 <option value="">All</option>
-                <option value="wg-up">WireGuard Up</option>
-                <option value="wg-down">WireGuard Down</option>
                 <option value="agent-connected">Agent Connected</option>
                 <option value="agent-disconnected">Agent Disconnected</option>
                 <option value="agent-none">No Agent</option>

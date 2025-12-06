@@ -1,14 +1,16 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faTimes, faShieldHalved } from '@fortawesome/free-solid-svg-icons';
 import Modal from './Modal';
-import type { SecurityConfigUpdateRequest } from '../types';
+import SearchableSelect from './SearchableSelect';
+import type { SecurityConfigUpdateRequest, Network } from '../types';
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 
 interface SecurityConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
-  networkId: string;
+  networkId?: string;
+  networks?: Network[];
   onUpdate?: () => void;
 }
 
@@ -16,8 +18,10 @@ export default function SecurityConfigModal({
   isOpen,
   onClose,
   networkId,
+  networks = [],
   onUpdate,
 }: SecurityConfigModalProps) {
+  const [selectedNetworkId, setSelectedNetworkId] = useState<string>(networkId || '');
   const [enabled, setEnabled] = useState<boolean>(true);
   const [sessionConflictThreshold, setSessionConflictThreshold] = useState<number>(5);
   const [endpointChangeThreshold, setEndpointChangeThreshold] = useState<number>(30);
@@ -26,15 +30,32 @@ export default function SecurityConfigModal({
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (isOpen && networkId) {
-      loadData();
+    if (isOpen) {
+      setSelectedNetworkId(networkId || '');
+      if (networkId) {
+        loadData();
+      } else {
+        // Reset to defaults when no network is selected
+        setEnabled(true);
+        setSessionConflictThreshold(5);
+        setEndpointChangeThreshold(30);
+        setMaxEndpointChangesPerDay(10);
+      }
     }
   }, [isOpen, networkId]);
 
+  useEffect(() => {
+    if (selectedNetworkId) {
+      loadData();
+    }
+  }, [selectedNetworkId]);
+
   const loadData = async () => {
+    if (!selectedNetworkId) return;
+    
     setIsLoading(true);
     try {
-      const config = await api.getSecurityConfig(networkId);
+      const config = await api.getSecurityConfig(selectedNetworkId);
       setEnabled(config.enabled);
       setSessionConflictThreshold(config.session_conflict_threshold_minutes);
       setEndpointChangeThreshold(config.endpoint_change_threshold_minutes);
@@ -52,6 +73,11 @@ export default function SecurityConfigModal({
   };
 
   const handleSave = async () => {
+    if (!selectedNetworkId) {
+      alert('Please select a network');
+      return;
+    }
+    
     setIsSaving(true);
     try {
       const updateData: SecurityConfigUpdateRequest = {
@@ -61,7 +87,7 @@ export default function SecurityConfigModal({
         max_endpoint_changes_per_day: maxEndpointChangesPerDay,
       };
       
-      await api.updateSecurityConfig(networkId, updateData);
+      await api.updateSecurityConfig(selectedNetworkId, updateData);
       
       if (onUpdate) {
         onUpdate();
@@ -104,25 +130,68 @@ export default function SecurityConfigModal({
               </div>
             </div>
 
-            {/* Security Detection Toggle */}
+            {/* Network Selection */}
             <div>
-              <label className="flex items-center gap-3 px-4 py-3 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={(e) => setEnabled(e.target.checked)}
-                  className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-                />
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                    Enable Security Incident Detection
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Network *
+              </label>
+              <SearchableSelect
+                options={networks.map(network => ({
+                  value: network.id,
+                  label: `${network.name} (${network.cidr})`
+                }))}
+                value={selectedNetworkId}
+                onChange={setSelectedNetworkId}
+                placeholder="Select a network..."
+              />
+              {!selectedNetworkId && (
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Please select a network to configure security settings
+                </p>
+              )}
+            </div>
+
+            {/* Message when no network selected */}
+            {!selectedNetworkId && (
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <div className="text-blue-600 dark:text-blue-400 mt-0.5">
+                    ℹ️
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    Automatically detect and respond to suspicious network activity
+                  <div>
+                    <h4 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                      Select a Network
+                    </h4>
+                    <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                      Choose a network from the dropdown above to view and configure its security detection settings.
+                    </p>
                   </div>
                 </div>
-              </label>
-            </div>
+              </div>
+            )}
+
+            {/* Security Settings - Only show when network is selected */}
+            {selectedNetworkId && (
+              <>
+                {/* Security Detection Toggle */}
+                <div>
+                  <label className="flex items-center gap-3 px-4 py-3 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={(e) => setEnabled(e.target.checked)}
+                      className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        Enable Security Incident Detection
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        Automatically detect and respond to suspicious network activity
+                      </div>
+                    </div>
+                  </label>
+                </div>
 
             {/* Security Thresholds - Only show when enabled */}
             {enabled && (
@@ -196,23 +265,25 @@ export default function SecurityConfigModal({
               </div>
             )}
 
-            {/* Warning when disabled */}
-            {!enabled && (
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-                <div className="flex items-start gap-3">
-                  <div className="text-yellow-600 dark:text-yellow-400 mt-0.5">
-                    ⚠️
+                {/* Warning when disabled */}
+                {!enabled && (
+                  <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="text-yellow-600 dark:text-yellow-400 mt-0.5">
+                        ⚠️
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                          Security Detection Disabled
+                        </h4>
+                        <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+                          When disabled, the system will not detect or respond to suspicious network activity such as session conflicts, shared configurations, or unusual endpoint changes.
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                      Security Detection Disabled
-                    </h4>
-                    <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                      When disabled, the system will not detect or respond to suspicious network activity such as session conflicts, shared configurations, or unusual endpoint changes.
-                    </p>
-                  </div>
-                </div>
-              </div>
+                )}
+              </>
             )}
 
             {/* Actions */}
@@ -227,7 +298,7 @@ export default function SecurityConfigModal({
               </button>
               <button
                 onClick={handleSave}
-                disabled={isSaving}
+                disabled={isSaving || !selectedNetworkId}
                 className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <FontAwesomeIcon icon={faCheck} />

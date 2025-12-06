@@ -481,8 +481,13 @@ func (r *NetworkRepository) DeleteEndpointChanges(ctx context.Context, networkID
 
 // Security incident operations
 func (r *NetworkRepository) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
+	var resolvedAt interface{}
+	if !incident.ResolvedAt.IsZero() {
+		resolvedAt = incident.ResolvedAt
+	}
+
 	_, err := r.db.ExecContext(ctx, `INSERT INTO security_incidents (id,peer_id,peer_name,network_id,network_name,incident_type,detected_at,public_key,endpoints,details,resolved,resolved_at,resolved_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		incident.ID, incident.PeerID, incident.PeerName, incident.NetworkID, incident.NetworkName, incident.IncidentType, incident.DetectedAt, incident.PublicKey, pq.Array(incident.Endpoints), incident.Details, incident.Resolved, nullTimePtr(incident.ResolvedAt), incident.ResolvedBy)
+		incident.ID, incident.PeerID, incident.PeerName, incident.NetworkID, incident.NetworkName, incident.IncidentType, incident.DetectedAt, incident.PublicKey, pq.Array(incident.Endpoints), incident.Details, incident.Resolved, resolvedAt, incident.ResolvedBy)
 	if err != nil {
 		return fmt.Errorf("create incident: %w", err)
 	}
@@ -710,9 +715,9 @@ func (r *NetworkRepository) UpdateSecurityConfig(ctx context.Context, networkID 
 
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE security_configs
-		SET enabled = $3, session_conflict_threshold = $4, endpoint_change_threshold = $5, max_endpoint_changes_per_day = $6, updated_at = $7
+		SET enabled = $2, session_conflict_threshold = $3, endpoint_change_threshold = $4, max_endpoint_changes_per_day = $5, updated_at = $6
 		WHERE network_id = $1
-	`, networkID, config.ID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.UpdatedAt)
+	`, networkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update security config: %w", err)
 	}

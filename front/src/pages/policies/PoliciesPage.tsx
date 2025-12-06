@@ -23,9 +23,7 @@ export default function PoliciesPage() {
       try {
         const response = await api.getNetworks(1, 100);
         setNetworks(response.data || []);
-        if (response.data && response.data.length > 0) {
-          setSelectedNetworkId(response.data[0].id);
-        }
+        // Don't auto-select first network - let user choose
       } catch (error) {
         console.error('Failed to load networks:', error);
       }
@@ -108,19 +106,17 @@ export default function PoliciesPage() {
         title="Policies" 
         subtitle={`${policies.length} polic${policies.length !== 1 ? 'ies' : 'y'} in selected network`}
         action={
-          selectedNetworkId ? (
-            <div className="flex gap-2">
-              <button
-                onClick={handleCreate}
-                className="px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl flex items-center gap-2 cursor-pointer transition-all font-semibold"
-              >
-                <svg className="w-5 h-5 group-hover:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Policy
-              </button>
-            </div>
-          ) : undefined
+          <div className="flex gap-2">
+            <button
+              onClick={handleCreate}
+              className="px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl flex items-center gap-2 cursor-pointer transition-all font-semibold"
+            >
+              <svg className="w-5 h-5 group-hover:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Policy
+            </button>
+          </div>
         }
       />
 
@@ -238,6 +234,7 @@ export default function PoliciesPage() {
         onSuccess={loadPolicies}
         networkId={selectedNetworkId}
         policy={editingPolicy}
+        networks={networks}
       />
     </div>
   );
@@ -250,16 +247,19 @@ function PolicyModal({
   onSuccess,
   networkId,
   policy,
+  networks,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
   networkId: string;
   policy: Policy | null;
+  networks: Network[];
 }) {
   const [activeTab, setActiveTab] = useState<'details' | 'rules' | 'groups'>('details');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [selectedNetworkId, setSelectedNetworkId] = useState<string>(networkId);
   const [loading, setLoading] = useState(false);
   
   // Rules management
@@ -279,6 +279,7 @@ function PolicyModal({
       setName(policy.name);
       setDescription(policy.description || '');
       setRules(policy.rules || []);
+      setSelectedNetworkId(networkId);
       setStagedRules([]);
       setStagedGroupIds([]);
       loadAttachments();
@@ -286,19 +287,30 @@ function PolicyModal({
       setName('');
       setDescription('');
       setRules([]);
+      setSelectedNetworkId(networkId || '');
       setStagedRules([]);
       setStagedGroupIds([]);
       setAttachedGroups([]);
-      loadAvailableItems();
+      if (selectedNetworkId) {
+        loadAvailableItems();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [policy, networkId, isOpen]);
 
+  // Load available items when network changes in creation mode
+  useEffect(() => {
+    if (!policy && selectedNetworkId && isOpen) {
+      loadAvailableItems();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNetworkId, policy, isOpen]);
+
   const loadAvailableItems = async () => {
-    if (!networkId) return;
+    if (!selectedNetworkId) return;
 
     try {
-      const allGroups = await api.getGroups(networkId);
+      const allGroups = await api.getGroups(selectedNetworkId);
       setAvailableGroups(allGroups);
     } catch (error) {
       console.error('Failed to load available items:', error);
@@ -306,11 +318,11 @@ function PolicyModal({
   };
 
   const loadAttachments = async () => {
-    if (!policy || !networkId) return;
+    if (!policy || !selectedNetworkId) return;
 
     try {
       // Load all groups in the network
-      const allGroups = await api.getGroups(networkId);
+      const allGroups = await api.getGroups(selectedNetworkId);
       
       // Filter groups that have this policy attached
       const groupsWithPolicy = allGroups.filter(g => g.policy_ids?.includes(policy.id));
@@ -331,22 +343,26 @@ function PolicyModal({
     try {
       if (policy) {
         // Update existing policy
-        await api.updatePolicy(networkId, policy.id, { name, description });
+        await api.updatePolicy(selectedNetworkId, policy.id, { name, description });
       } else {
         // Create new policy
-        const newPolicy = await api.createPolicy(networkId, { name, description });
+        if (!selectedNetworkId) {
+          alert('Please select a network');
+          return;
+        }
+        const newPolicy = await api.createPolicy(selectedNetworkId, { name, description });
         
         // Attach staged items
         const attachPromises = [];
         
         // Add staged rules
         for (const rule of stagedRules) {
-          attachPromises.push(api.addRuleToPolicy(networkId, newPolicy.id, rule));
+          attachPromises.push(api.addRuleToPolicy(selectedNetworkId, newPolicy.id, rule));
         }
         
         // Attach to staged groups
         for (const groupId of stagedGroupIds) {
-          attachPromises.push(api.attachPolicyToGroup(networkId, groupId, newPolicy.id));
+          attachPromises.push(api.attachPolicyToGroup(selectedNetworkId, groupId, newPolicy.id));
         }
         
         // Wait for all attachments to complete
@@ -367,11 +383,11 @@ function PolicyModal({
   const handleAddRule = async (rule: Omit<PolicyRule, 'id'>) => {
     if (rule.target_type === 'route') rule.target_type = 'cidr';
     
-    if (policy && networkId) {
+    if (policy && selectedNetworkId) {
       // Edit mode: add immediately
       try {
-        await api.addRuleToPolicy(networkId, policy.id, rule);
-        const updatedPolicy = await api.getPolicy(networkId, policy.id);
+        await api.addRuleToPolicy(selectedNetworkId, policy.id, rule);
+        const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
         setRules(updatedPolicy.rules || []);
         onSuccess();
         setIsAddRuleModalOpen(false);
@@ -389,11 +405,11 @@ function PolicyModal({
   };
 
   const handleRemoveRule = async (ruleId: string) => {
-    if (policy && networkId) {
+    if (policy && selectedNetworkId) {
       // Edit mode: remove immediately
       try {
-        await api.removeRuleFromPolicy(networkId, policy.id, ruleId);
-        const updatedPolicy = await api.getPolicy(networkId, policy.id);
+        await api.removeRuleFromPolicy(selectedNetworkId, policy.id, ruleId);
+        const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
         setRules(updatedPolicy.rules || []);
         onSuccess();
       } catch (error) {
@@ -414,10 +430,13 @@ function PolicyModal({
     const group = availableGroups.find(g => g.id === groupId);
     if (!group) return;
     
-    if (policy && networkId) {
+    if (policy && selectedNetworkId) {
       // Edit mode: attach immediately
       try {
-        await api.attachPolicyToGroup(networkId, groupId, policy.id);
+        await api.attachPolicyToGroup(selectedNetworkId, groupId, policy.id);
+        // Refetch the updated policy data and reload attachments
+        const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
+        Object.assign(policy, updatedPolicy); // Update the policy object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error) {
@@ -433,10 +452,13 @@ function PolicyModal({
   };
 
   const handleDetachFromGroup = async (groupId: string) => {
-    if (policy && networkId) {
+    if (policy && selectedNetworkId) {
       // Edit mode: detach immediately
       try {
-        await api.detachPolicyFromGroup(networkId, groupId, policy.id);
+        await api.detachPolicyFromGroup(selectedNetworkId, groupId, policy.id);
+        // Refetch the updated policy data and reload attachments
+        const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
+        Object.assign(policy, updatedPolicy); // Update the policy object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error) {
@@ -537,6 +559,22 @@ function PolicyModal({
           <div className="p-6">
           <form onSubmit={handleSubmit}>
             <div className="space-y-4">
+              {!policy && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Network *
+                  </label>
+                  <SearchableSelect
+                    options={networks.map(network => ({
+                      value: network.id,
+                      label: `${network.name} (${network.cidr})`
+                    }))}
+                    value={selectedNetworkId}
+                    onChange={setSelectedNetworkId}
+                    placeholder="Select a network..."
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Name *
@@ -719,7 +757,7 @@ function PolicyModal({
           isOpen={isAddRuleModalOpen}
           onClose={() => setIsAddRuleModalOpen(false)}
           onAdd={handleAddRule}
-          networkId={networkId}
+          networkId={selectedNetworkId}
         />
       </div>
       </div>
@@ -741,9 +779,9 @@ function AddRuleModal({
   onAdd: (rule: Omit<PolicyRule, 'id'>) => void;
   networkId: string;
 }) {
-  const [direction, setDirection] = useState<'input' | 'output'>('input');
+  const [direction, setDirection] = useState<'input' | 'output'>('output');
   const [action, setAction] = useState<'allow' | 'deny'>('allow');
-  const [targetType, setTargetType] = useState<'cidr' | 'peer' | 'group' | 'route' | 'network'>('network');
+  const [targetType, setTargetType] = useState<'cidr' | 'peer' | 'group' | 'route' | 'network'>('cidr');
   const [target, setTarget] = useState('');
   const [description, setDescription] = useState('');
   const [routes, setRoutes] = useState<Route[]>([]);

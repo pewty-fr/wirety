@@ -31,9 +31,7 @@ export default function RoutesPage() {
       try {
         const response = await api.getNetworks(1, 100);
         setNetworks(response.data || []);
-        if (response.data && response.data.length > 0) {
-          setSelectedNetworkId(response.data[0].id);
-        }
+        // Don't auto-select first network - let user choose
       } catch (error) {
         console.error('Failed to load networks:', error);
       }
@@ -117,17 +115,15 @@ export default function RoutesPage() {
         title="Routes" 
         subtitle={`${routes.length} route${routes.length !== 1 ? 's' : ''} in selected network`}
         action={
-          selectedNetworkId ? (
-            <button
-              onClick={handleCreate}
-              className="px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl flex items-center gap-2 cursor-pointer transition-all font-semibold"
-            >
-              <svg className="w-5 h-5 group-hover:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Route
-            </button>
-          ) : undefined
+          <button
+            onClick={handleCreate}
+            className="px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl flex items-center gap-2 cursor-pointer transition-all font-semibold"
+          >
+            <svg className="w-5 h-5 group-hover:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Route
+          </button>
         }
       />
 
@@ -249,6 +245,7 @@ export default function RoutesPage() {
         onSuccess={loadRoutes}
         networkId={selectedNetworkId}
         route={editingRoute}
+        networks={networks}
       />
     </div>
   );
@@ -261,12 +258,14 @@ function RouteModal({
   onSuccess,
   networkId,
   route,
+  networks,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
   networkId: string;
   route: Route | null;
+  networks: Network[];
 }) {
   const [activeTab, setActiveTab] = useState<'details' | 'dns' | 'groups'>('details');
   const [name, setName] = useState('');
@@ -274,6 +273,7 @@ function RouteModal({
   const [destinationCidr, setDestinationCidr] = useState('');
   const [jumpPeerId, setJumpPeerId] = useState('');
   const [domainSuffix, setDomainSuffix] = useState('internal');
+  const [selectedNetworkId, setSelectedNetworkId] = useState<string>(networkId);
   const [jumpPeers, setJumpPeers] = useState<Peer[]>([]);
   const [loading, setLoading] = useState(false);
   
@@ -288,11 +288,11 @@ function RouteModal({
   const [stagedGroupIds, setStagedGroupIds] = useState<string[]>([]);
 
   useEffect(() => {
-    if (isOpen && networkId) {
+    if (isOpen && selectedNetworkId) {
       loadJumpPeers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, networkId]);
+  }, [isOpen, selectedNetworkId]);
 
   useEffect(() => {
     if (route) {
@@ -301,6 +301,7 @@ function RouteModal({
       setDestinationCidr(route.destination_cidr);
       setJumpPeerId(route.jump_peer_id);
       setDomainSuffix(route.domain_suffix || 'internal');
+      setSelectedNetworkId(networkId);
       setStagedDnsMappings([]);
       setStagedGroupIds([]);
       loadDNSMappings();
@@ -311,18 +312,31 @@ function RouteModal({
       setDestinationCidr('');
       setJumpPeerId('');
       setDomainSuffix('internal');
+      setSelectedNetworkId(networkId || '');
       setDnsMappings([]);
       setStagedDnsMappings([]);
       setAttachedGroups([]);
       setStagedGroupIds([]);
-      loadAvailableItems();
+      if (selectedNetworkId) {
+        loadAvailableItems();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, isOpen]);
 
+  // Load available items when network changes in creation mode
+  useEffect(() => {
+    if (!route && selectedNetworkId && isOpen) {
+      loadAvailableItems();
+      loadJumpPeers();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNetworkId, route, isOpen]);
+
   const loadJumpPeers = async () => {
+    if (!selectedNetworkId) return;
     try {
-      const peers = await api.getAllNetworkPeers(networkId);
+      const peers = await api.getAllNetworkPeers(selectedNetworkId);
       setJumpPeers(peers.filter(p => p.is_jump));
     } catch (error) {
       console.error('Failed to load jump peers:', error);
@@ -330,10 +344,10 @@ function RouteModal({
   };
 
   const loadDNSMappings = async () => {
-    if (!route || !networkId) return;
+    if (!route || !selectedNetworkId) return;
 
     try {
-      const data = await api.getDNSMappings(networkId, route.id);
+      const data = await api.getDNSMappings(selectedNetworkId, route.id);
       setDnsMappings(data || []);
     } catch (error) {
       console.error('Failed to load DNS mappings:', error);
@@ -341,10 +355,10 @@ function RouteModal({
   };
 
   const loadAvailableItems = async () => {
-    if (!networkId) return;
+    if (!selectedNetworkId) return;
 
     try {
-      const allGroups = await api.getGroups(networkId);
+      const allGroups = await api.getGroups(selectedNetworkId);
       setAvailableGroups(allGroups);
     } catch (error) {
       console.error('Failed to load available items:', error);
@@ -352,11 +366,11 @@ function RouteModal({
   };
 
   const loadAttachments = async () => {
-    if (!route || !networkId) return;
+    if (!route || !selectedNetworkId) return;
 
     try {
       // Load all groups in the network
-      const allGroups = await api.getGroups(networkId);
+      const allGroups = await api.getGroups(selectedNetworkId);
       
       // Filter groups that have this route attached
       const groupsWithRoute = allGroups.filter(g => g.route_ids?.includes(route.id));
@@ -377,7 +391,7 @@ function RouteModal({
     try {
       if (route) {
         // Update existing route
-        await api.updateRoute(networkId, route.id, {
+        await api.updateRoute(selectedNetworkId, route.id, {
           name,
           description,
           destination_cidr: destinationCidr,
@@ -386,7 +400,11 @@ function RouteModal({
         });
       } else {
         // Create new route
-        const newRoute = await api.createRoute(networkId, {
+        if (!selectedNetworkId) {
+          alert('Please select a network');
+          return;
+        }
+        const newRoute = await api.createRoute(selectedNetworkId, {
           name,
           description,
           destination_cidr: destinationCidr,
@@ -398,11 +416,11 @@ function RouteModal({
         const attachPromises = [];
         
         for (const dns of stagedDnsMappings) {
-          attachPromises.push(api.createDNSMapping(networkId, newRoute.id, dns));
+          attachPromises.push(api.createDNSMapping(selectedNetworkId, newRoute.id, dns));
         }
         
         for (const groupId of stagedGroupIds) {
-          attachPromises.push(api.attachRouteToGroup(networkId, groupId, newRoute.id));
+          attachPromises.push(api.attachRouteToGroup(selectedNetworkId, groupId, newRoute.id));
         }
         
         if (attachPromises.length > 0) {
@@ -420,10 +438,10 @@ function RouteModal({
   };
 
   const handleAddDNS = async (dnsName: string, ipAddress: string) => {
-    if (route && networkId) {
+    if (route && selectedNetworkId) {
       // Edit mode: add immediately
       try {
-        await api.createDNSMapping(networkId, route.id, { name: dnsName, ip_address: ipAddress });
+        await api.createDNSMapping(selectedNetworkId, route.id, { name: dnsName, ip_address: ipAddress });
         await loadDNSMappings();
         onSuccess();
         setIsAddDNSModalOpen(false);
@@ -439,10 +457,10 @@ function RouteModal({
   };
 
   const handleDeleteDNS = async (dnsId: string) => {
-    if (route && networkId) {
+    if (route && selectedNetworkId) {
       // Edit mode: delete immediately
       try {
-        await api.deleteDNSMapping(networkId, route.id, dnsId);
+        await api.deleteDNSMapping(selectedNetworkId, route.id, dnsId);
         await loadDNSMappings();
         onSuccess();
       } catch (error) {
@@ -461,10 +479,13 @@ function RouteModal({
     const group = availableGroups.find(g => g.id === groupId);
     if (!group) return;
     
-    if (route && networkId) {
+    if (route && selectedNetworkId) {
       // Edit mode: attach immediately
       try {
-        await api.attachRouteToGroup(networkId, groupId, route.id);
+        await api.attachRouteToGroup(selectedNetworkId, groupId, route.id);
+        // Refetch the updated route data and reload attachments
+        const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+        Object.assign(route, updatedRoute); // Update the route object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error) {
@@ -480,10 +501,13 @@ function RouteModal({
   };
 
   const handleDetachFromGroup = async (groupId: string) => {
-    if (route && networkId) {
+    if (route && selectedNetworkId) {
       // Edit mode: detach immediately
       try {
-        await api.detachRouteFromGroup(networkId, groupId, route.id);
+        await api.detachRouteFromGroup(selectedNetworkId, groupId, route.id);
+        // Refetch the updated route data and reload attachments
+        const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+        Object.assign(route, updatedRoute); // Update the route object with fresh data
         await loadAttachments();
         onSuccess();
       } catch (error) {
@@ -590,6 +614,22 @@ function RouteModal({
           <div className="p-6">
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
+            {!route && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Network *
+                </label>
+                <SearchableSelect
+                  options={networks.map(network => ({
+                    value: network.id,
+                    label: `${network.name} (${network.cidr})`
+                  }))}
+                  value={selectedNetworkId}
+                  onChange={setSelectedNetworkId}
+                  placeholder="Select a network..."
+                />
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Name *

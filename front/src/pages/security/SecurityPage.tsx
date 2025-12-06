@@ -158,7 +158,7 @@ export default function SecurityPage() {
 
       <div className="p-8">
         {/* Security Configuration Button */}
-        {isAdmin && filterNetwork && (
+        {isAdmin && (
           <div className="mb-6">
             <button
               onClick={() => setIsSecurityConfigModalOpen(true)}
@@ -344,14 +344,13 @@ export default function SecurityPage() {
       />
 
       {/* Security Configuration Modal */}
-      {filterNetwork && (
-        <SecurityConfigModal
-          isOpen={isSecurityConfigModalOpen}
-          onClose={() => setIsSecurityConfigModalOpen(false)}
-          networkId={filterNetwork}
-          onUpdate={loadIncidents}
-        />
-      )}
+      <SecurityConfigModal
+        isOpen={isSecurityConfigModalOpen}
+        onClose={() => setIsSecurityConfigModalOpen(false)}
+        networkId={filterNetwork}
+        networks={networks}
+        onUpdate={loadIncidents}
+      />
     </div>
   );
 }
