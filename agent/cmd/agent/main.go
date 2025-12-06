@@ -13,12 +13,10 @@ import (
 	"syscall"
 	dnsadapter "wirety/agent/internal/adapters/dns"
 	"wirety/agent/internal/adapters/firewall"
-	"wirety/agent/internal/adapters/proxy"
 	"wirety/agent/internal/adapters/wg"
 	"wirety/agent/internal/adapters/ws"
 	app "wirety/agent/internal/application/agent"
 	dom "wirety/agent/internal/domain/dns"
-	"wirety/agent/internal/ports"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -58,6 +56,14 @@ func main() {
 	}
 	log.Info().Str("network_id", networkID).Str("peer_id", peerID).Str("peer_name", peerName).Msg("resolved token")
 
+	log.Info().Msg("starting DNS server")
+	dnsServer := dnsadapter.NewServer("", []dom.DNSPeer{})
+	go func() {
+		if err := dnsServer.Start(":5353"); err != nil {
+			log.Error().Err(err).Msg("dns server exited")
+		}
+	}()
+
 	// Use peer name as interface name - sanitize for valid interface names
 	iface := sanitizeInterfaceName(peerName)
 	writer := wg.NewWriter(configPath, iface, applyMethod)
@@ -89,9 +95,6 @@ func main() {
 	wsURL := fmt.Sprintf("%s/api/v1/ws?token=%s", wsServer, token)
 
 	wsClient := ws.NewClient()
-	dnsFactory := func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort {
-		return dnsadapter.NewServer(domain, peers)
-	}
 
 	// Parse proxy ports
 	httpPortInt := 3128
@@ -109,10 +112,10 @@ func main() {
 
 	// Initialize captive portal
 	// Use server URL as portal URL if not explicitly set
-	if portalURL == "https://portal.example.com" {
-		portalURL = server
-	}
-	captivePortal := proxy.NewCaptivePortal(httpPortInt, portalURL, server, token)
+	// if portalURL == "https://portal.example.com" {
+	// 	portalURL = server
+	// }
+	// captivePortal := proxy.NewCaptivePortal(httpPortInt, portalURL, server, token)
 	// if err := captivePortal.Start(); err != nil {
 	// 	log.Fatal().Err(err).Msg("failed to start captive portal")
 	// }
@@ -123,19 +126,19 @@ func main() {
 
 	// Initialize TLS-SNI gateway for HTTPS filtering
 	// This gateway only allows connections to the server domain for non-authenticated users
-	tlsGateway, err := proxy.NewTLSSNIGateway(httpsPortInt, server)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create TLS-SNI gateway")
-	}
-	if err := tlsGateway.Start(); err != nil {
-		log.Fatal().Err(err).Msg("failed to start TLS-SNI gateway")
-	}
-	log.Info().
-		Int("https_port", httpsPortInt).
-		Str("allowed_domain", server).
-		Msg("TLS-SNI gateway started (HTTPS filtering)")
+	// tlsGateway, err := proxy.NewTLSSNIGateway(httpsPortInt, server)
+	// if err != nil {
+	// 	log.Fatal().Err(err).Msg("failed to create TLS-SNI gateway")
+	// }
+	// if err := tlsGateway.Start(); err != nil {
+	// 	log.Fatal().Err(err).Msg("failed to start TLS-SNI gateway")
+	// }
+	// log.Info().
+	// 	Int("https_port", httpsPortInt).
+	// 	Str("allowed_domain", server).
+	// 	Msg("TLS-SNI gateway started (HTTPS filtering)")
 
-	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, captivePortal, tlsGateway, wsURL, iface)
+	runner := app.NewRunner(wsClient, writer, dnsServer, fwAdapter, wsURL, iface)
 
 	// Set the initial peer name in the runner
 	runner.SetCurrentPeerName(peerName)
@@ -150,18 +153,18 @@ func main() {
 		log.Info().Msg("shutdown signal received, stopping services...")
 
 		// Stop captive portal
-		if err := captivePortal.Stop(); err != nil {
-			log.Error().Err(err).Msg("failed to stop captive portal")
-		} else {
-			log.Info().Msg("captive portal stopped")
-		}
+		// if err := captivePortal.Stop(); err != nil {
+		// 	log.Error().Err(err).Msg("failed to stop captive portal")
+		// } else {
+		// 	log.Info().Msg("captive portal stopped")
+		// }
 
-		// Stop TLS gateway
-		if err := tlsGateway.Stop(); err != nil {
-			log.Error().Err(err).Msg("failed to stop TLS gateway")
-		} else {
-			log.Info().Msg("TLS gateway stopped")
-		}
+		// // Stop TLS gateway
+		// if err := tlsGateway.Stop(); err != nil {
+		// 	log.Error().Err(err).Msg("failed to stop TLS gateway")
+		// } else {
+		// 	log.Info().Msg("TLS gateway stopped")
+		// }
 
 		close(stop)
 	}()

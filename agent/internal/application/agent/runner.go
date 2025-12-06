@@ -33,12 +33,9 @@ type WSMessage struct {
 type Runner struct {
 	wsClient          ports.WebSocketClientPort
 	cfgWriter         ports.ConfigWriterPort
-	dnsFactory        func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort // factory to create DNS server instance
-	dnsServer         ports.DNSStarterPort                                          // active DNS server instance
-	dnsServerMu       sync.Mutex                                                    // protects dnsServer
+	dnsServer         ports.DNSStarterPort // active DNS server instance
+	dnsServerMu       sync.Mutex           // protects dnsServer
 	fwAdapter         ports.FirewallPort
-	captivePortal     ports.CaptivePortalPort
-	tlsGateway        ports.TLSSNIGatewayPort
 	wsURL             string
 	wgInterface       string
 	currentPeerName   string // Track current peer name to detect changes
@@ -47,14 +44,12 @@ type Runner struct {
 	heartbeatInterval time.Duration
 }
 
-func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsFactory func(string, []dom.DNSPeer) ports.DNSStarterPort, fwAdapter ports.FirewallPort, captivePortal ports.CaptivePortalPort, tlsGateway ports.TLSSNIGatewayPort, wsURL string, wgInterface string) *Runner {
+func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string) *Runner {
 	return &Runner{
 		wsClient:          wsClient,
 		cfgWriter:         writer,
-		dnsFactory:        dnsFactory,
+		dnsServer:         dnsServer,
 		fwAdapter:         fwAdapter,
-		captivePortal:     captivePortal,
-		tlsGateway:        tlsGateway,
 		wsURL:             wsURL,
 		wgInterface:       wgInterface,
 		currentPeerName:   "", // Will be set when first message is received
@@ -202,24 +197,12 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			if payload.DNS != nil {
 				r.dnsServerMu.Lock()
 				if r.dnsServer == nil {
-					// First time: create and start DNS server
-					log.Info().
-						Str("domain", payload.DNS.Domain).
-						Int("peer_count", len(payload.DNS.Peers)).
-						Strs("upstream_servers", payload.DNS.UpstreamServers).
-						Msg("starting DNS server")
-					r.dnsServer = r.dnsFactory(payload.DNS.Domain, payload.DNS.Peers)
 
 					// Set upstream DNS servers for forwarding
 					if len(payload.DNS.UpstreamServers) > 0 {
 						r.dnsServer.SetUpstreamServers(payload.DNS.UpstreamServers)
 					}
 
-					go func() {
-						if err := r.dnsServer.Start(fmt.Sprintf("%s:53", payload.DNS.IP)); err != nil {
-							log.Error().Err(err).Msg("dns server exited")
-						}
-					}()
 				} else {
 					// Subsequent times: update existing DNS server
 					log.Info().
@@ -237,9 +220,9 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				r.dnsServerMu.Unlock()
 			}
 			// Handle OAuth issuer for TLS-SNI gateway
-			if payload.OAuthIssuer != "" && r.tlsGateway != nil {
-				r.tlsGateway.AddAllowedDomain(payload.OAuthIssuer)
-			}
+			// if payload.OAuthIssuer != "" && r.tlsGateway != nil {
+			// 	r.tlsGateway.AddAllowedDomain(payload.OAuthIssuer)
+			// }
 
 			// Handle whitelist updates
 			// if payload.Whitelist != nil {
