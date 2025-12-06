@@ -20,12 +20,15 @@ type Adapter struct {
 	httpsPort    int
 }
 
+// NewAdapter creates a new firewall adapter
+// wgIface: WireGuard interface name (e.g., "wg0")
+// natIface: NAT interface override (empty string for auto-detection)
 func NewAdapter(wgIface, natIface string) *Adapter {
 	return &Adapter{
 		iface:        wgIface,
-		natInterface: natIface,
-		httpPort:     3128, // Default HTTP proxy port
-		httpsPort:    3129, // Default HTTPS proxy port
+		natInterface: natIface, // Empty string means auto-detect
+		httpPort:     3128,     // Default HTTP proxy port
+		httpsPort:    3129,     // Default HTTPS proxy port
 	}
 }
 
@@ -33,6 +36,77 @@ func NewAdapter(wgIface, natIface string) *Adapter {
 func (a *Adapter) SetProxyPorts(httpPort, httpsPort int) {
 	a.httpPort = httpPort
 	a.httpsPort = httpsPort
+}
+
+// detectDefaultNATInterface detects the default network interface for NAT
+// Returns the interface with the default route (usually the one with internet access)
+func (a *Adapter) detectDefaultNATInterface() string {
+	// Try to get the default route interface
+	cmd := exec.Command("ip", "route", "show", "default") // #nosec G204 - static command
+	output, err := cmd.Output()
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to detect default route, falling back to common interfaces")
+		return a.fallbackNATInterface()
+	}
+
+	// Parse output like: "default via 192.168.1.1 dev eth0 proto dhcp metric 100"
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "default") && strings.Contains(line, "dev") {
+			parts := strings.Fields(line)
+			for i, part := range parts {
+				if part == "dev" && i+1 < len(parts) {
+					iface := parts[i+1]
+					log.Info().Str("interface", iface).Msg("detected default NAT interface")
+					return iface
+				}
+			}
+		}
+	}
+
+	log.Warn().Msg("could not parse default route, falling back to common interfaces")
+	return a.fallbackNATInterface()
+}
+
+// fallbackNATInterface tries common interface names as fallback
+func (a *Adapter) fallbackNATInterface() string {
+	commonInterfaces := []string{"eth0", "ens3", "ens18", "enp0s3", "wlan0", "wlp2s0"}
+
+	for _, iface := range commonInterfaces {
+		// Check if interface exists and is up
+		cmd := exec.Command("ip", "link", "show", iface) // #nosec G204 - controlled interface names
+		if err := cmd.Run(); err == nil {
+			// Check if interface has an IP address
+			cmd = exec.Command("ip", "addr", "show", iface) // #nosec G204 - controlled interface names
+			output, err := cmd.Output()
+			if err == nil && strings.Contains(string(output), "inet ") {
+				log.Info().Str("interface", iface).Msg("using fallback NAT interface")
+				return iface
+			}
+		}
+	}
+
+	log.Warn().Msg("no suitable NAT interface found")
+	return ""
+}
+
+// getNATInterface returns the NAT interface to use (config override or auto-detected)
+func (a *Adapter) getNATInterface() string {
+	// If explicitly configured, use that
+	if a.natInterface != "" {
+		log.Debug().Str("interface", a.natInterface).Msg("using configured NAT interface")
+		return a.natInterface
+	}
+
+	// Otherwise, auto-detect
+	detected := a.detectDefaultNATInterface()
+	if detected != "" {
+		log.Info().Str("interface", detected).Msg("auto-detected NAT interface")
+		return detected
+	}
+
+	log.Warn().Msg("no NAT interface available - NAT rules will be skipped")
+	return ""
 }
 
 // EnableDebugLogging adds LOG rules to help debug packet drops
@@ -366,12 +440,22 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	// Attach captive portal chain to PREROUTING (only if not already attached)
 	// _ = a.runIfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-j", captiveChain)
 
-	// NAT (MASQUERADE) if needed (only add if not already present)
-	if a.natInterface != "" {
-		_ = a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", a.natInterface, "-j", "MASQUERADE")
+	// NAT (MASQUERADE) for internet access (only add if not already present)
+	natIface := a.getNATInterface()
+	if natIface != "" {
+		if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
+			log.Warn().Err(err).Str("interface", natIface).Msg("failed to add NAT rule")
+		} else {
+			log.Debug().Str("interface", natIface).Msg("NAT rule configured")
+		}
 
 		// TODO: Add IPv6 NAT (MASQUERADE) support
 		// IPv6 NAT requires ip6tables -t nat which may not be available on all systems
+		// if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
+		//     log.Debug().Err(err).Msg("IPv6 NAT not available (normal on many systems)")
+		// }
+	} else {
+		log.Info().Msg("no NAT interface configured - peers will not have internet access")
 	}
 	return nil
 }
