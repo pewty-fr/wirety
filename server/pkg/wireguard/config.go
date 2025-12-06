@@ -24,18 +24,22 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 	// Add DNS configuration
 	// For peers with internal domain support, use jump server DNS only
 	// The jump server will forward external queries to upstream DNS servers
-	domain := network.GetDomain()
-	var dns []string
-	if domain != "" {
-		// Use jump server as DNS (it will forward to upstream servers)
-		dns = []string{extractDNSServer(network.CIDR)}
-	} else {
-		// No internal domain, use network's external DNS servers directly
-		dns = network.DNS
-	}
+	if !peer.IsJump {
+		domain := network.GetDomain()
+		var dns []string
+		if domain != "" {
+			// Use jump server as DNS (it will forward to upstream servers)
+			dns = []string{extractDNSServer(network.CIDR)}
+		} else {
+			// No internal domain, use network's external DNS servers directly
+			dns = network.DNS
+		}
 
-	if len(dns) > 0 {
-		sb.WriteString(fmt.Sprintf("DNS = %s\n", strings.Join(dns, ", ")))
+		if len(dns) > 0 {
+			sb.WriteString(fmt.Sprintf("DNS = %s\n", strings.Join(dns, ", ")))
+		}
+	} else {
+		sb.WriteString(fmt.Sprintf("DNS = %s\n", peer.Address))
 	}
 
 	// Jump server packet filtering & forwarding now handled dynamically by agent firewall adapter.
