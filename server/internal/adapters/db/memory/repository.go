@@ -19,6 +19,7 @@ type Repository struct {
 	incidents        map[string]*network.SecurityIncident          // incidentID -> SecurityIncident
 	captiveWhitelist map[string]map[string]bool                    // "networkID:jumpPeerID" -> peerIP -> true
 	captiveTokens    map[string]*network.CaptivePortalToken        // token -> CaptivePortalToken
+	securityConfigs  map[string]*network.SecurityConfig            // networkID -> SecurityConfig
 }
 
 // NewRepository creates a new in-memory repository
@@ -29,6 +30,7 @@ func NewRepository() *Repository {
 		sessions:        make(map[string]map[string]*network.AgentSession),
 		endpointChanges: make(map[string][]*network.EndpointChange),
 		incidents:       make(map[string]*network.SecurityIncident),
+		securityConfigs: make(map[string]*network.SecurityConfig),
 	}
 	return repo
 }
@@ -610,5 +612,55 @@ func (r *Repository) CleanupExpiredCaptivePortalTokens(ctx context.Context) erro
 		}
 	}
 
+	return nil
+}
+
+// Security config operations
+
+// CreateSecurityConfig creates a security configuration for a network
+func (r *Repository) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.securityConfigs[networkID]; exists {
+		return fmt.Errorf("security config already exists for network")
+	}
+
+	r.securityConfigs[networkID] = config
+	return nil
+}
+
+// GetSecurityConfig retrieves the security configuration for a network
+func (r *Repository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	config, exists := r.securityConfigs[networkID]
+	if !exists {
+		return nil, fmt.Errorf("security config not found")
+	}
+
+	return config, nil
+}
+
+// UpdateSecurityConfig updates the security configuration for a network
+func (r *Repository) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.securityConfigs[networkID]; !exists {
+		return fmt.Errorf("security config not found")
+	}
+
+	r.securityConfigs[networkID] = config
+	return nil
+}
+
+// DeleteSecurityConfig deletes the security configuration for a network
+func (r *Repository) DeleteSecurityConfig(ctx context.Context, networkID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	delete(r.securityConfigs, networkID)
 	return nil
 }

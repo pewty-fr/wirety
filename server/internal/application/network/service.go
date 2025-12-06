@@ -920,7 +920,8 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 
 	// Check for session conflicts (multiple agents with different hostnames)
 	now := time.Now()
-	activeSessionThreshold := now.Add(-network.SessionConflictThreshold)
+	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
+	activeSessionThreshold := now.Add(-securityConfig.SessionConflictThreshold)
 
 	var currentSession *network.AgentSession
 	for _, session := range existingSessions {
@@ -946,26 +947,30 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 							if exists {
 								continue
 							}
-							incident := &network.SecurityIncident{
-								ID:           fmt.Sprintf("incident-conflict-%s-%d", peerID, now.Unix()),
-								PeerID:       peerID,
-								PeerName:     peer.Name,
-								NetworkID:    networkID,
-								NetworkName:  net.Name,
-								IncidentType: network.IncidentTypeSessionConflict,
-								DetectedAt:   now,
-								PublicKey:    peer.PublicKey,
-								Endpoints:    []string{session.ReportedEndpoint},
-								Details:      fmt.Sprintf("Session conflict: peer %s has multiple active agents (hostnames: %s, %s)", peer.Name, session.Hostname, heartbeat.Hostname),
-								Resolved:     false,
-							}
-							if err := s.repo.CreateSecurityIncident(ctx, incident); err != nil {
-								fmt.Printf("failed to create security incident for session conflict: %v\n", err)
-							}
 
-							// Block the peer in ACL to prevent all communication
-							if err := s.blockPeerInACL(ctx, networkID, peerID, "session conflict detection"); err != nil {
-								fmt.Printf("failed to block peer in ACL: %v\n", err)
+							// Only create security incident if security detection is enabled
+							if securityConfig.Enabled {
+								incident := &network.SecurityIncident{
+									ID:           fmt.Sprintf("incident-conflict-%s-%d", peerID, now.Unix()),
+									PeerID:       peerID,
+									PeerName:     peer.Name,
+									NetworkID:    networkID,
+									NetworkName:  net.Name,
+									IncidentType: network.IncidentTypeSessionConflict,
+									DetectedAt:   now,
+									PublicKey:    peer.PublicKey,
+									Endpoints:    []string{session.ReportedEndpoint},
+									Details:      fmt.Sprintf("Session conflict: peer %s has multiple active agents (hostnames: %s, %s)", peer.Name, session.Hostname, heartbeat.Hostname),
+									Resolved:     false,
+								}
+								if err := s.repo.CreateSecurityIncident(ctx, incident); err != nil {
+									fmt.Printf("failed to create security incident for session conflict: %v\n", err)
+								}
+
+								// Block the peer in ACL to prevent all communication
+								if err := s.blockPeerInACL(ctx, networkID, peerID, "session conflict detection"); err != nil {
+									fmt.Printf("failed to block peer in ACL: %v\n", err)
+								}
 							}
 						}
 					}
@@ -1011,7 +1016,7 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 			return fmt.Errorf("failed to get existing sessions: %w", err)
 		}
 		now := time.Now()
-		activeSessionThreshold := now.Add(-network.SessionConflictThreshold)
+		activeSessionThreshold := now.Add(-securityConfig.SessionConflictThreshold)
 
 		var currentSess *network.AgentSession
 		if len(existingSess) > 0 {
@@ -1128,7 +1133,8 @@ func (s *Service) GetPeerSessionStatus(ctx context.Context, networkID, peerID st
 	}
 
 	now := time.Now()
-	activeThreshold := now.Add(-network.SessionConflictThreshold)
+	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
+	activeThreshold := now.Add(-securityConfig.SessionConflictThreshold)
 
 	status := &network.PeerSessionStatus{
 		PeerID:                peerID,
@@ -1172,14 +1178,14 @@ func (s *Service) GetPeerSessionStatus(ctx context.Context, networkID, peerID st
 		}
 
 		// Check for suspicious activity (too many endpoint changes)
-		if len(changes) >= network.MaxEndpointChangesPerDay {
+		if len(changes) >= securityConfig.MaxEndpointChangesPerDay {
 			status.SuspiciousActivity = true
 		}
 
 		// Check for rapid endpoint changes
 		for i := 1; i < len(changes); i++ {
 			timeDiff := changes[i].ChangedAt.Sub(changes[i-1].ChangedAt)
-			if timeDiff < network.EndpointChangeThreshold {
+			if timeDiff < securityConfig.EndpointChangeThreshold {
 				status.SuspiciousActivity = true
 				break
 			}
@@ -1422,8 +1428,14 @@ func (s *Service) getQuarantineGroupID(ctx context.Context, networkID string) (s
 // }
 
 // detectAndHandleSharedConfigs detects if the same peer's endpoint changes multiple times
-// within a short time period (5 minutes), indicating shared WireGuard configurations
+// within a short time period, indicating shared WireGuard configurations
 func (s *Service) detectAndHandleSharedConfigs(ctx context.Context, networkID string) error {
+	// Get security config to check if detection is enabled
+	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
+	if !securityConfig.Enabled {
+		return nil // Skip detection if security is disabled
+	}
+
 	// Get all peers in the network
 	peers, err := s.repo.ListPeers(ctx, networkID)
 	if err != nil {
@@ -1431,7 +1443,7 @@ func (s *Service) detectAndHandleSharedConfigs(ctx context.Context, networkID st
 	}
 
 	now := time.Now()
-	checkWindow := now.Add(-network.EndpointChangeThreshold) // 30 minutes ago
+	checkWindow := now.Add(-securityConfig.EndpointChangeThreshold)
 
 	sharedConfigPeers := make(map[string]bool)
 	peerEndpoints := make(map[string][]string) // peerID -> list of endpoints
@@ -1472,10 +1484,10 @@ func (s *Service) detectAndHandleSharedConfigs(ctx context.Context, networkID st
 				}
 			}
 
-			// If we see 2+ different endpoints from the same source within 30 minutes, it's a shared config
+			// If we see 2+ different endpoints from the same source within the threshold time, it's a shared config
 			if len(endpoints) >= 2 {
-				fmt.Printf("WARNING: Shared config detected! Peer %s (%s) seen at %d different endpoints from source %s within 30 minutes:\n",
-					peer.Name, peer.ID, len(endpoints), sourceID)
+				fmt.Printf("WARNING: Shared config detected! Peer %s (%s) seen at %d different endpoints from source %s within %v:\n",
+					peer.Name, peer.ID, len(endpoints), sourceID, securityConfig.EndpointChangeThreshold)
 				for _, ep := range endpoints {
 					fmt.Printf("  - %s\n", ep)
 				}
@@ -1510,7 +1522,7 @@ func (s *Service) detectAndHandleSharedConfigs(ctx context.Context, networkID st
 							DetectedAt:   now,
 							PublicKey:    peer.PublicKey,
 							Endpoints:    endpoints,
-							Details:      fmt.Sprintf("Peer %s detected at %d different endpoints from source %s within 30 minutes: %v", peer.Name, len(endpoints), sourceID, endpoints),
+							Details:      fmt.Sprintf("Peer %s detected at %d different endpoints from source %s within %v: %v", peer.Name, len(endpoints), sourceID, securityConfig.EndpointChangeThreshold, endpoints),
 							Resolved:     false,
 						}
 
@@ -1537,6 +1549,12 @@ func (s *Service) detectAndHandleSharedConfigs(ctx context.Context, networkID st
 }
 
 func (s *Service) detectAndHandleSuspicousActivity(ctx context.Context, networkID string) error {
+	// Get security config to check if detection is enabled
+	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
+	if !securityConfig.Enabled {
+		return nil // Skip detection if security is disabled
+	}
+
 	// Get all peers in the network
 	peers, err := s.repo.ListPeers(ctx, networkID)
 	if err != nil {
@@ -1565,7 +1583,7 @@ func (s *Service) detectAndHandleSuspicousActivity(ctx context.Context, networkI
 
 		// Check each source separately for suspicious activity
 		for sourceID, sourceChanges := range changesBySource {
-			if len(sourceChanges) >= network.MaxEndpointChangesPerDay {
+			if len(sourceChanges) >= securityConfig.MaxEndpointChangesPerDay {
 				// Collect unique endpoints seen from this source
 				endpointSet := make(map[string]bool)
 				var endpoints []string
@@ -1608,7 +1626,7 @@ func (s *Service) detectAndHandleSuspicousActivity(ctx context.Context, networkI
 							DetectedAt:   now,
 							PublicKey:    peer.PublicKey,
 							Endpoints:    endpoints,
-							Details:      fmt.Sprintf("Peer %s has %d endpoint changes from source %s within 24 hours (threshold: %d)", peer.Name, len(sourceChanges), sourceID, network.MaxEndpointChangesPerDay),
+							Details:      fmt.Sprintf("Peer %s has %d endpoint changes from source %s within 24 hours (threshold: %d)", peer.Name, len(sourceChanges), sourceID, securityConfig.MaxEndpointChangesPerDay),
 							Resolved:     false,
 						}
 
@@ -1785,4 +1803,94 @@ func (s *Service) filterQuarantinedPeers(ctx context.Context, networkID string, 
 	}
 
 	return filteredPeers
+}
+
+// Security config operations
+
+// GetSecurityConfig retrieves the security configuration for a network
+func (s *Service) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
+	// Verify network exists
+	_, err := s.repo.GetNetwork(ctx, networkID)
+	if err != nil {
+		return nil, fmt.Errorf("network not found: %w", err)
+	}
+
+	config, err := s.repo.GetSecurityConfig(ctx, networkID)
+	if err != nil {
+		// If no config exists, return default config
+		defaultConfig := network.DefaultSecurityConfig()
+		defaultConfig.NetworkID = networkID
+		return defaultConfig, nil
+	}
+
+	return config, nil
+}
+
+// UpdateSecurityConfig updates the security configuration for a network
+func (s *Service) UpdateSecurityConfig(ctx context.Context, networkID string, req *network.SecurityConfigUpdateRequest) (*network.SecurityConfig, error) {
+	// Validate request
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid security config: %w", err)
+	}
+
+	// Verify network exists
+	_, err := s.repo.GetNetwork(ctx, networkID)
+	if err != nil {
+		return nil, fmt.Errorf("network not found: %w", err)
+	}
+
+	// Get existing config or create default
+	config, err := s.repo.GetSecurityConfig(ctx, networkID)
+	if err != nil {
+		// If no config exists, create one with default values
+		config = network.DefaultSecurityConfig()
+		config.NetworkID = networkID
+		if err := s.repo.CreateSecurityConfig(ctx, networkID, config); err != nil {
+			return nil, fmt.Errorf("failed to create default security config: %w", err)
+		}
+	}
+
+	// Update fields if provided
+	if req.Enabled != nil {
+		config.Enabled = *req.Enabled
+	}
+	if req.SessionConflictThreshold != nil {
+		config.SessionConflictThreshold = *req.SessionConflictThreshold
+	}
+	if req.EndpointChangeThreshold != nil {
+		config.EndpointChangeThreshold = *req.EndpointChangeThreshold
+	}
+	if req.MaxEndpointChangesPerDay != nil {
+		config.MaxEndpointChangesPerDay = *req.MaxEndpointChangesPerDay
+	}
+
+	// Validate the updated config
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid updated security config: %w", err)
+	}
+
+	if err := s.repo.UpdateSecurityConfig(ctx, networkID, config); err != nil {
+		return nil, fmt.Errorf("failed to update security config: %w", err)
+	}
+
+	log.Info().
+		Str("network_id", networkID).
+		Bool("enabled", config.Enabled).
+		Dur("session_conflict_threshold", config.SessionConflictThreshold).
+		Dur("endpoint_change_threshold", config.EndpointChangeThreshold).
+		Int("max_endpoint_changes_per_day", config.MaxEndpointChangesPerDay).
+		Msg("Security config updated")
+
+	return config, nil
+}
+
+// getSecurityConfigWithDefaults gets the security configuration for a network, returning defaults if not found
+func (s *Service) getSecurityConfigWithDefaults(ctx context.Context, networkID string) *network.SecurityConfig {
+	config, err := s.repo.GetSecurityConfig(ctx, networkID)
+	if err != nil {
+		// Return default config if not found or error
+		return network.DefaultSecurityConfig()
+	}
+
+	return config
 }

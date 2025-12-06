@@ -101,6 +101,24 @@ export interface SecurityIncident {
   resolved_by?: string;
 }
 
+export interface SecurityConfig {
+  id: string;
+  network_id: string;
+  enabled: boolean;
+  session_conflict_threshold_minutes: number;
+  endpoint_change_threshold_minutes: number;
+  max_endpoint_changes_per_day: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SecurityConfigUpdateRequest {
+  enabled?: boolean;
+  session_conflict_threshold_minutes?: number;
+  endpoint_change_threshold_minutes?: number;
+  max_endpoint_changes_per_day?: number;
+}
+
 export interface User {
   id: string;
   email: string;

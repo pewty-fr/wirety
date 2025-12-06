@@ -70,4 +70,10 @@ type Repository interface {
 	GetCaptivePortalToken(ctx context.Context, token string) (*CaptivePortalToken, error)
 	DeleteCaptivePortalToken(ctx context.Context, token string) error
 	CleanupExpiredCaptivePortalTokens(ctx context.Context) error
+
+	// Security config operations
+	CreateSecurityConfig(ctx context.Context, networkID string, config *SecurityConfig) error
+	GetSecurityConfig(ctx context.Context, networkID string) (*SecurityConfig, error)
+	UpdateSecurityConfig(ctx context.Context, networkID string, config *SecurityConfig) error
+	DeleteSecurityConfig(ctx context.Context, networkID string) error
 }

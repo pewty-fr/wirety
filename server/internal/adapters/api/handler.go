@@ -203,6 +203,10 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 				// Network security incidents
 				networkOps.GET("/security/incidents", h.ListNetworkSecurityIncidents)
 
+				// Network security config (admin only)
+				networkOps.GET("/security/config", requireAdmin, h.GetNetworkSecurityConfig)
+				networkOps.PUT("/security/config", requireAdmin, h.UpdateNetworkSecurityConfig)
+
 				// ACL routes (admin only)
 				acl := networkOps.Group("/acl")
 				acl.Use(requireAdmin)

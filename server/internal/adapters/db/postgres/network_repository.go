@@ -9,6 +9,7 @@ import (
 
 	"wirety/internal/domain/network"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
@@ -666,4 +667,77 @@ func (r *NetworkRepository) CleanupExpiredCaptivePortalTokens(ctx context.Contex
 		DELETE FROM captive_portal_tokens WHERE expires_at < NOW()
 	`)
 	return err
+}
+
+// Security config operations
+
+func (r *NetworkRepository) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	config.ID = uuid.New().String()
+	config.NetworkID = networkID
+	config.CreatedAt = time.Now()
+	config.UpdatedAt = time.Now()
+
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO security_configs (id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, config.ID, config.NetworkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.CreatedAt, config.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("create security config: %w", err)
+	}
+
+	return nil
+}
+
+func (r *NetworkRepository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
+	var config network.SecurityConfig
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, created_at, updated_at
+		FROM security_configs
+		WHERE network_id = $1
+	`, networkID).Scan(&config.ID, &config.NetworkID, &config.Enabled, &config.SessionConflictThreshold, &config.EndpointChangeThreshold, &config.MaxEndpointChangesPerDay, &config.CreatedAt, &config.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("security config not found")
+		}
+		return nil, fmt.Errorf("get security config: %w", err)
+	}
+
+	return &config, nil
+}
+
+func (r *NetworkRepository) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	config.UpdatedAt = time.Now()
+
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE security_configs
+		SET enabled = $3, session_conflict_threshold = $4, endpoint_change_threshold = $5, max_endpoint_changes_per_day = $6, updated_at = $7
+		WHERE network_id = $1
+	`, networkID, config.ID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("update security config: %w", err)
+	}
+
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("security config not found")
+	}
+
+	return nil
+}
+
+func (r *NetworkRepository) DeleteSecurityConfig(ctx context.Context, networkID string) error {
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM security_configs
+		WHERE network_id = $1
+	`, networkID)
+	if err != nil {
+		return fmt.Errorf("delete security config: %w", err)
+	}
+
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("security config not found")
+	}
+
+	return nil
 }
