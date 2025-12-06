@@ -1067,14 +1067,32 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 			continue
 		}
 		changes, err := s.repo.GetEndpointChanges(ctx, networkID, currentSess.PeerID, now.Add(-24*time.Hour))
-		if err == nil && (len(changes) == 0 || (len(changes) > 0 && changes[0].NewEndpoint != endpoint)) {
-			// Store the old endpoint before updating
-			oldEndpoint := currentSess.ReportedEndpoint
-			currentSess.ReportedEndpoint = endpoint
-			_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
+
+		// Check if this source has seen a different endpoint for this peer
+		shouldRecordChange := false
+		lastEndpointFromThisSource := ""
+
+		if err == nil && len(changes) > 0 {
+			// Look for the most recent change from the same source
+			for _, change := range changes {
+				if change.Source == peerID {
+					lastEndpointFromThisSource = change.NewEndpoint
+					break // Found the most recent change from this source
+				}
+			}
+		}
+
+		// Only record change if:
+		// 1. This source has never seen this peer before (lastEndpointFromThisSource == ""), OR
+		// 2. This source has seen this peer but with a different endpoint
+		if lastEndpointFromThisSource == "" || lastEndpointFromThisSource != endpoint {
+			shouldRecordChange = true
+		}
+
+		if shouldRecordChange {
 			change := &network.EndpointChange{
 				PeerID:      currentSess.PeerID,
-				OldEndpoint: oldEndpoint,
+				OldEndpoint: lastEndpointFromThisSource,
 				NewEndpoint: endpoint,
 				ChangedAt:   now,
 				Source:      peerID,
@@ -1084,15 +1102,23 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 				fmt.Printf("failed to record endpoint change: %v\n", err)
 			}
 
-			// Remove peer from whitelist due to endpoint change
-			peer, err := s.repo.GetPeer(ctx, networkID, currentSess.PeerID)
-			if err == nil && !peer.UseAgent {
-				// This is a non-agent peer with endpoint change - remove from whitelist
-				if err := s.RemoveFromWhitelistOnEndpointChange(ctx, networkID, peer.Address); err != nil {
-					log.Error().Err(err).Str("peer_ip", peer.Address).Msg("failed to remove peer from whitelist on endpoint change")
+			// Only remove from whitelist if this represents an actual endpoint change (not first time seeing)
+			if lastEndpointFromThisSource != "" {
+				// Remove peer from whitelist due to endpoint change
+				peer, err := s.repo.GetPeer(ctx, networkID, currentSess.PeerID)
+				if err == nil && !peer.UseAgent {
+					// This is a non-agent peer with endpoint change - remove from whitelist
+					if err := s.RemoveFromWhitelistOnEndpointChange(ctx, networkID, peer.Address); err != nil {
+						log.Error().Err(err).Str("peer_ip", peer.Address).Msg("failed to remove peer from whitelist on endpoint change")
+					}
 				}
 			}
 		}
+
+		// Always update the session's last seen time, but don't update ReportedEndpoint
+		// since multiple sources might see different endpoints for the same peer
+		currentSess.LastSeen = now
+		_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
 	}
 
 	// If this is a jump peer, cleanup whitelist for disconnected peers
