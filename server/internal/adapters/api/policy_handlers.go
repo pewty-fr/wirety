@@ -210,22 +210,6 @@ func (h *Handler) RemoveRuleFromPolicy(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// GetDefaultTemplates godoc
-//
-//	@Summary		Get default policy templates
-//	@Description	Get predefined policy templates (admin only)
-//	@Tags			policies
-//	@Produce		json
-//	@Param			networkId	path		string	true	"Network ID"
-//	@Success		200			{array}		PolicyTemplate
-//	@Failure		403			{object}	map[string]string
-//	@Router			/networks/{networkId}/policies/templates [get]
-//	@Security		BearerAuth
-func (h *Handler) GetDefaultTemplates(c *gin.Context) {
-	templates := h.policyService.GetDefaultTemplates()
-	c.JSON(http.StatusOK, templates)
-}
-
 // AttachPolicyToGroup godoc
 //
 //	@Summary		Attach policy to group

@@ -52,13 +52,6 @@ type GroupService interface {
 	DetachRouteFromGroup(ctx context.Context, networkID, groupID, routeID string) error
 }
 
-// PolicyTemplate represents a predefined policy template
-type PolicyTemplate struct {
-	Name        string              `json:"name"`
-	Description string              `json:"description"`
-	Rules       []domain.PolicyRule `json:"rules"`
-}
-
 // PolicyService defines the interface for policy operations
 type PolicyService interface {
 	CreatePolicy(ctx context.Context, networkID string, req *domain.PolicyCreateRequest) (*domain.Policy, error)
@@ -68,7 +61,6 @@ type PolicyService interface {
 	ListPolicies(ctx context.Context, networkID string) ([]*domain.Policy, error)
 	AddRuleToPolicy(ctx context.Context, networkID, policyID string, rule *domain.PolicyRule) error
 	RemoveRuleFromPolicy(ctx context.Context, networkID, policyID, ruleID string) error
-	GetDefaultTemplates() []PolicyTemplate
 }
 
 // RouteService defines the interface for route operations
@@ -246,7 +238,6 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 				policies := networkOps.Group("/policies")
 				policies.Use(requireAdmin)
 				{
-					policies.GET("/templates", h.GetDefaultTemplates)
 					policies.POST("", h.CreatePolicy)
 					policies.GET("", h.ListPolicies)
 					policies.GET("/:policyId", h.GetPolicy)

@@ -208,6 +208,10 @@ func (m *mockGroupRepository) GetGroupRoutes(ctx context.Context, networkID, gro
 	return nil, nil
 }
 
+func (m *mockGroupRepository) ReorderGroupPolicies(ctx context.Context, networkID, groupID string, policyIDs []string) error {
+	return nil
+}
+
 type mockNetworkGetter struct {
 	networks map[string]*network.Network
 	peers    map[string]*network.Peer
@@ -785,70 +789,6 @@ func TestProperty_PolicyDeletionCleanup(t *testing.T) {
 			},
 			genNetworkID(),
 			genPolicyID(),
-		))
-
-	properties.TestingRun(t, gopter.ConsoleReporter(false))
-}
-
-// **Feature: network-groups-policies-routing, Property 15: Template policy independence**
-// **Validates: Requirements 3.5**
-func TestProperty_TemplatePolicyIndependence(t *testing.T) {
-	properties := gopter.NewProperties(nil)
-
-	properties.Property("Feature: network-groups-policies-routing, Property 15: Template policy independence",
-		prop.ForAll(
-			func(networkID string) bool {
-				ctx := context.Background()
-				policyRepo := newMockPolicyRepository()
-				groupRepo := newMockGroupRepository()
-				netGetter := newMockNetworkGetter()
-
-				// Setup: Create network
-				netGetter.networks[networkID] = &network.Network{
-					ID:   networkID,
-					Name: "test-network",
-				}
-
-				routeRepo := newMockRouteRepository()
-				service := NewService(policyRepo, groupRepo, &networkGetterAdapter{getter: netGetter}, routeRepo)
-
-				// Get templates
-				templates := service.GetDefaultTemplates()
-				if len(templates) == 0 {
-					return false
-				}
-
-				// Create a policy from the first template
-				template := templates[0]
-				policy, err := service.CreatePolicy(ctx, networkID, &network.PolicyCreateRequest{
-					Name:        "from-template",
-					Description: template.Description,
-					Rules:       template.Rules,
-				})
-				if err != nil {
-					return false
-				}
-
-				// Modify the created policy
-				_, err = service.UpdatePolicy(ctx, networkID, policy.ID, &network.PolicyUpdateRequest{
-					Name: "modified-name",
-				})
-				if err != nil {
-					return false
-				}
-
-				// Get templates again and verify they haven't changed
-				newTemplates := service.GetDefaultTemplates()
-				if len(newTemplates) != len(templates) {
-					return false
-				}
-
-				// Verify first template is unchanged
-				return newTemplates[0].Name == template.Name &&
-					newTemplates[0].Description == template.Description &&
-					len(newTemplates[0].Rules) == len(template.Rules)
-			},
-			genNetworkID(),
 		))
 
 	properties.TestingRun(t, gopter.ConsoleReporter(false))
