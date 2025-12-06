@@ -203,6 +203,10 @@ func (m *mockGroupRepository) GetGroupRoutes(ctx context.Context, networkID, gro
 	return nil, nil
 }
 
+func (m *mockGroupRepository) ReorderGroupPolicies(ctx context.Context, networkID, groupID string, policyIDs []string) error {
+	return nil
+}
+
 type mockNetworkGetter struct {
 	networks map[string]*network.Network
 	peers    map[string]*network.Peer

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faShieldAlt, faPencil, faTrash, faPlus, faCopy, faUsers, faList } from '@fortawesome/free-solid-svg-icons';
+import { faShieldAlt, faPencil, faTrash, faPlus, faUsers, faList } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import SearchableSelect from '../../components/SearchableSelect';
 import api from '../../api/client';
@@ -15,7 +15,6 @@ export default function PoliciesPage() {
   const [loading, setLoading] = useState(true);
   const [isPolicyModalOpen, setIsPolicyModalOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<Policy | null>(null);
-  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
 
   const isAdmin = user?.role === 'administrator';
 
@@ -111,13 +110,6 @@ export default function PoliciesPage() {
         action={
           selectedNetworkId ? (
             <div className="flex gap-2">
-              <button
-                onClick={() => setIsTemplateModalOpen(true)}
-                className="px-4 py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-xl hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl flex items-center gap-2 cursor-pointer transition-all font-semibold"
-              >
-                <FontAwesomeIcon icon={faCopy} />
-                Templates
-              </button>
               <button
                 onClick={handleCreate}
                 className="px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl flex items-center gap-2 cursor-pointer transition-all font-semibold"
@@ -246,13 +238,6 @@ export default function PoliciesPage() {
         onSuccess={loadPolicies}
         networkId={selectedNetworkId}
         policy={editingPolicy}
-      />
-
-      <TemplateModal
-        isOpen={isTemplateModalOpen}
-        onClose={() => setIsTemplateModalOpen(false)}
-        networkId={selectedNetworkId}
-        onSuccess={loadPolicies}
       />
     </div>
   );
@@ -946,135 +931,3 @@ function AddRuleModal({
   );
 }
 
-// Template Modal Component
-function TemplateModal({
-  isOpen,
-  onClose,
-  networkId,
-  onSuccess,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  networkId: string;
-  onSuccess: () => void;
-}) {
-  const [templates, setTemplates] = useState<Policy[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (isOpen && networkId) {
-      loadTemplates();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, networkId]);
-
-  const loadTemplates = async () => {
-    setLoading(true);
-    try {
-      const data = await api.getPolicyTemplates(networkId);
-      setTemplates(data || []);
-    } catch (error) {
-      console.error('Failed to load templates:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUseTemplate = async (template: Policy) => {
-    try {
-      await api.createPolicy(networkId, {
-        name: `${template.name} (Copy)`,
-        description: template.description,
-        rules: template.rules,
-      });
-      onSuccess();
-      onClose();
-    } catch (error) {
-      console.error('Failed to create policy from template:', error);
-      alert('Failed to create policy from template');
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      {/* Backdrop with blur */}
-      <div 
-        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
-        onClick={onClose}
-      />
-      
-      {/* Modal */}
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div 
-          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-3xl transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto"
-          onClick={(e) => e.stopPropagation()}
-        >
-        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Policy Templates</h2>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">
-            Choose a template to quickly create a policy with predefined rules
-          </p>
-        </div>
-
-        {loading ? (
-          <div className="p-6 text-center text-gray-500">Loading templates...</div>
-        ) : (
-          <div className="p-6 space-y-4">
-            {templates.map((template) => (
-              <div key={template.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{template.name}</h3>
-                    {template.description && (
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{template.description}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => handleUseTemplate(template)}
-                    className="px-3 py-1.5 text-sm bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-lg hover:scale-105"
-                  >
-                    Use Template
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Rules ({template.rules?.length || 0}):
-                  </p>
-                  {template.rules?.map((rule, idx) => (
-                    <div key={idx} className="flex items-center gap-2 text-sm">
-                      <span className={`px-2 py-0.5 text-xs font-semibold rounded ${
-                        rule.action === 'allow' 
-                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                          : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                      }`}>
-                        {rule.action}
-                      </span>
-                      <span className="px-2 py-0.5 text-xs font-semibold rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                        {rule.direction}
-                      </span>
-                      <span className="text-gray-900 dark:text-white font-mono">
-                        {rule.target_type}: {rule.target}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-      </div>
-    </div>
-  );
-}

@@ -45,15 +45,3 @@ func (a *policyServiceAdapter) RemoveRuleFromPolicy(ctx context.Context, network
 	return a.service.RemoveRuleFromPolicy(ctx, networkID, policyID, ruleID)
 }
 
-func (a *policyServiceAdapter) GetDefaultTemplates() []PolicyTemplate {
-	templates := a.service.GetDefaultTemplates()
-	result := make([]PolicyTemplate, len(templates))
-	for i, t := range templates {
-		result[i] = PolicyTemplate{
-			Name:        t.Name,
-			Description: t.Description,
-			Rules:       t.Rules,
-		}
-	}
-	return result
-}

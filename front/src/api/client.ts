@@ -345,11 +345,6 @@ class ApiClient {
     await this.client.delete(`/networks/${networkId}/policies/${policyId}/rules/${ruleId}`);
   }
 
-  async getPolicyTemplates(networkId: string): Promise<Policy[]> {
-    const response = await this.client.get(`/networks/${networkId}/policies/templates`);
-    return response.data;
-  }
-
   // Routes
   async getRoutes(networkId: string): Promise<Route[]> {
     const response = await this.client.get(`/networks/${networkId}/routes`);
