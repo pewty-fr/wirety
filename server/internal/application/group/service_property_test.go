@@ -439,6 +439,20 @@ func (a *networkGetterAdapter) CleanupExpiredCaptivePortalTokens(ctx context.Con
 	return nil
 }
 
+// Security config operations
+func (a *networkGetterAdapter) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	return nil
+}
+func (a *networkGetterAdapter) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
+	return nil, nil
+}
+func (a *networkGetterAdapter) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	return nil
+}
+func (a *networkGetterAdapter) DeleteSecurityConfig(ctx context.Context, networkID string) error {
+	return nil
+}
+
 // Generators for property-based testing
 
 func genValidGroupName() gopter.Gen {
