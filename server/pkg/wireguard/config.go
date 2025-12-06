@@ -99,7 +99,7 @@ func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network
 	// For regular peers connecting to a jump peer
 	if allowedPeer.IsJump {
 		// Include network CIDR for peer-to-peer communication
-		allowedIPs = []string{network.CIDR}
+		allowedIPs = []string{fmt.Sprintf("%s/32", allowedPeer.Address)}
 
 		// Include route CIDRs that use this jump peer as gateway
 		for _, route := range routes {

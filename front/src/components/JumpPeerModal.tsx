@@ -3,7 +3,7 @@ import Modal from './Modal';
 import SearchableSelect from './SearchableSelect';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api/client';
-import type { Peer, Network, User } from '../types';
+import type { Peer, Network, User, Route, Group, Policy } from '../types';
 
 interface JumpPeerModalProps {
   isOpen: boolean;
@@ -87,7 +87,59 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
           is_jump: true,
           use_agent: formData.use_agent,
         };
-        await api.createPeer(selectedNetworkId, createData);
+        const jumpPeer : Peer = await api.createPeer(selectedNetworkId, createData);
+        
+        // Check if this is the first jump peer created
+        const peers: Peer[] = await api.getAllNetworkPeers(selectedNetworkId);
+        const jumpPeers = peers.filter(peer => peer.is_jump);
+        const regularPeers = peers.filter(peer => !peer.is_jump);
+        const isFirstJumpPeer = jumpPeers.length === 1;
+        const network = networks.filter(network => network.id == networkId)
+
+        if (isFirstJumpPeer && network.length === 1) {
+
+          // When a the first jump peer is created, add default group, policy and route
+          const group : Group = await api.createGroup(networkId, {
+            name: 'default',
+            description: 'default group generated at network creation',
+            priority: 100
+          })
+          const policy : Policy = await api.createPolicy(networkId, {
+            name: 'default',
+            description: 'default policy for network access',
+            rules: [
+              {
+                id: crypto.randomUUID(),
+                direction: 'input',
+                action: 'allow',
+                target: network[0].cidr,
+                target_type: 'cidr',
+                description: 'allow network CIDR resources to access a peer'
+              },
+              {
+                id: crypto.randomUUID(),
+                direction: 'output',
+                action: 'allow',
+                target: network[0].cidr,
+                target_type: 'cidr',
+                description: 'allow a peer to access network CIDR resources'
+              }
+            ]
+          })
+          api.attachPolicyToGroup(networkId, group.id, policy.id)
+          
+          const route : Route = await api.createRoute(selectedNetworkId, {
+            name: network[0].name,
+            description: 'default route for network',
+            destination_cidr: network[0].cidr,
+            jump_peer_id: jumpPeer.id
+          })
+
+          api.attachRouteToGroup(networkId, group.id, route.id);
+
+          regularPeers.forEach(peer => api.addPeerToGroup(networkId, group.id, peer.id));
+        }
+        
       }
       onSuccess();
       onClose();
