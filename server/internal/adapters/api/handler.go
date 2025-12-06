@@ -142,10 +142,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 		api.POST("/auth/token", h.ExchangeToken)
 		api.POST("/auth/logout", h.Logout)
 		// Captive portal authentication
-		api.POST("/captive-portal/authenticate", h.AuthenticateCaptivePortal)
 		// Agent endpoints (token-based authentication, not OIDC)
 		api.GET("/agent/resolve", h.ResolveAgent)
-		api.GET("/agent/captive-portal-token", h.GetCaptivePortalToken)
 		api.GET("/ws", h.HandleWebSocketToken)               // token-based WebSocket
 		api.GET("/ws/:networkId/:peerId", h.HandleWebSocket) // legacy WebSocket
 	}
