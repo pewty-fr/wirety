@@ -926,7 +926,7 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 	for _, session := range existingSessions {
 		// Consider sessions active if seen within threshold
 		if session.LastSeen.After(activeSessionThreshold) {
-			if session.Hostname != heartbeat.Hostname {
+			if session.Hostname != heartbeat.Hostname && session.ReportedEndpoint != "" && session.SystemUptime != -1 && session.WireGuardUptime != -1 {
 				peer, err := s.repo.GetPeer(ctx, networkID, peerID)
 				if err == nil {
 					net, err := s.repo.GetNetwork(ctx, networkID)

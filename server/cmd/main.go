@@ -74,7 +74,7 @@ func main() {
 	var db *sql.DB
 
 	if cfg.Database.Enabled {
-		log.Info().Str("dsn", cfg.Database.DSN).Msg("Initializing Postgres repositories")
+		log.Info().Msg("Initializing Postgres repositories")
 		var err error
 		db, err = sql.Open("postgres", cfg.Database.DSN)
 		if err != nil {
