@@ -182,3 +182,17 @@ func (c *CombinedRepository) DeleteCaptivePortalToken(ctx context.Context, token
 func (c *CombinedRepository) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
 	return c.netRepo.CleanupExpiredCaptivePortalTokens(ctx)
 }
+
+// Security config operations
+func (c *CombinedRepository) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	return c.netRepo.CreateSecurityConfig(ctx, networkID, config)
+}
+func (c *CombinedRepository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
+	return c.netRepo.GetSecurityConfig(ctx, networkID)
+}
+func (c *CombinedRepository) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
+	return c.netRepo.UpdateSecurityConfig(ctx, networkID, config)
+}
+func (c *CombinedRepository) DeleteSecurityConfig(ctx context.Context, networkID string) error {
+	return c.netRepo.DeleteSecurityConfig(ctx, networkID)
+}
