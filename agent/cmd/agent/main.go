@@ -49,13 +49,6 @@ func main() {
 		log.Fatal().Msg("TOKEN is required (env or flag)")
 	}
 
-	// First resolve token to get peer name for interface/config naming
-	networkID, peerID, peerName, cfg, err := resolveToken(server, token)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to resolve token")
-	}
-	log.Info().Str("network_id", networkID).Str("peer_id", peerID).Str("peer_name", peerName).Msg("resolved token")
-
 	log.Info().Msg("starting DNS server")
 	dnsServer := dnsadapter.NewServer("", []dom.DNSPeer{})
 	go func() {
@@ -63,6 +56,13 @@ func main() {
 			log.Error().Err(err).Msg("dns server exited")
 		}
 	}()
+
+	// First resolve token to get peer name for interface/config naming
+	networkID, peerID, peerName, cfg, err := resolveToken(server, token)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to resolve token")
+	}
+	log.Info().Str("network_id", networkID).Str("peer_id", peerID).Str("peer_name", peerName).Msg("resolved token")
 
 	// Use peer name as interface name - sanitize for valid interface names
 	iface := sanitizeInterfaceName(peerName)
