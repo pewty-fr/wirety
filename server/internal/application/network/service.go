@@ -475,6 +475,12 @@ func (s *Service) GeneratePeerConfig(ctx context.Context, networkID, peerID stri
 
 	allowedPeers := net.GetAllowedPeersFor(peerID)
 
+	// Filter out quarantined peers from allowed peers (for jump servers)
+	// This ensures quarantined peers are completely disconnected from the network
+	if peer.IsJump {
+		allowedPeers = s.filterQuarantinedPeers(ctx, networkID, allowedPeers)
+	}
+
 	// Build a map of preshared keys for allowed peers
 	presharedKeys := make(map[string]string)
 	for _, allowedPeer := range allowedPeers {
@@ -573,6 +579,13 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 		return "", nil, nil, fmt.Errorf("peer not found")
 	}
 	allowedPeers := net.GetAllowedPeersFor(peerID)
+
+	// Filter out quarantined peers from allowed peers (for jump servers)
+	// This ensures quarantined peers are completely disconnected from the network
+	if peer.IsJump {
+		allowedPeers = s.filterQuarantinedPeers(ctx, networkID, allowedPeers)
+	}
+
 	presharedKeys := make(map[string]string)
 	for _, allowedPeer := range allowedPeers {
 		conn, err := s.repo.GetConnection(ctx, networkID, peerID, allowedPeer.ID)
@@ -717,9 +730,36 @@ func (s *Service) GetACL(ctx context.Context, networkID string) (interface{}, er
 	return nil, fmt.Errorf("ACL system has been removed - use policy-based access control instead")
 }
 
-// DeleteNetwork deletes a network
+// DeleteNetwork deletes a network and releases its CIDR from IPAM
 func (s *Service) DeleteNetwork(ctx context.Context, networkID string) error {
-	return s.repo.DeleteNetwork(ctx, networkID)
+	// Get the network to retrieve its CIDR before deletion
+	net, err := s.repo.GetNetwork(ctx, networkID)
+	if err != nil {
+		return fmt.Errorf("failed to get network for deletion: %w", err)
+	}
+
+	// Delete the network first
+	if err := s.repo.DeleteNetwork(ctx, networkID); err != nil {
+		return fmt.Errorf("failed to delete network: %w", err)
+	}
+
+	// Release the CIDR from IPAM to allow reuse
+	if err := s.repo.DeletePrefix(ctx, net.CIDR); err != nil {
+		// Log the error but don't fail the network deletion
+		// The network is already deleted, so we don't want to rollback
+		log.Warn().
+			Err(err).
+			Str("network_id", networkID).
+			Str("cidr", net.CIDR).
+			Msg("Failed to release CIDR from IPAM after network deletion")
+	} else {
+		log.Info().
+			Str("network_id", networkID).
+			Str("cidr", net.CIDR).
+			Msg("Successfully released CIDR from IPAM after network deletion")
+	}
+
+	return nil
 }
 
 // blockPeerInACL is deprecated - ACL system has been removed
@@ -1888,4 +1928,49 @@ func (s *Service) ValidateCaptivePortalToken(ctx context.Context, tokenStr strin
 // DeleteCaptivePortalToken deletes a captive portal token
 func (s *Service) DeleteCaptivePortalToken(ctx context.Context, tokenStr string) error {
 	return s.repo.DeleteCaptivePortalToken(ctx, tokenStr)
+}
+
+// filterQuarantinedPeers removes quarantined peers from the allowed peers list
+// This ensures quarantined peers are completely disconnected from jump server WireGuard configs
+func (s *Service) filterQuarantinedPeers(ctx context.Context, networkID string, allowedPeers []*network.Peer) []*network.Peer {
+	// If group repository is not available, return all peers (no filtering)
+	if s.groupRepo == nil {
+		return allowedPeers
+	}
+
+	// Get quarantine group ID
+	quarantineGroupID, err := s.getQuarantineGroupID(ctx, networkID)
+	if err != nil {
+		// If quarantine group doesn't exist, no peers are quarantined
+		return allowedPeers
+	}
+
+	// Get the quarantine group directly
+	quarantineGroup, err := s.groupRepo.GetGroup(ctx, networkID, quarantineGroupID)
+	if err != nil {
+		// If we can't get the quarantine group, return all peers (no filtering)
+		return allowedPeers
+	}
+
+	// Build a map of quarantined peer IDs for quick lookup
+	quarantinedPeerIDs := make(map[string]bool)
+	for _, peerID := range quarantineGroup.PeerIDs {
+		quarantinedPeerIDs[peerID] = true
+	}
+
+	// Filter out quarantined peers
+	var filteredPeers []*network.Peer
+	for _, peer := range allowedPeers {
+		if !quarantinedPeerIDs[peer.ID] {
+			filteredPeers = append(filteredPeers, peer)
+		} else {
+			log.Debug().
+				Str("network_id", networkID).
+				Str("peer_id", peer.ID).
+				Str("peer_name", peer.Name).
+				Msg("Excluding quarantined peer from jump server WireGuard config")
+		}
+	}
+
+	return filteredPeers
 }

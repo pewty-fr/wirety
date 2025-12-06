@@ -46,8 +46,8 @@ func (r *NetworkRepository) CreateNetwork(ctx context.Context, n *network.Networ
 
 func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*network.Network, error) {
 	var n network.Network
-	err := r.db.QueryRowContext(ctx, `SELECT id,name,cidr,dns,created_at,updated_at FROM networks WHERE id=$1`, networkID).
-		Scan(&n.ID, &n.Name, &n.CIDR, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt)
+	err := r.db.QueryRowContext(ctx, `SELECT id,name,cidr,dns,created_at,updated_at,domain_suffix FROM networks WHERE id=$1`, networkID).
+		Scan(&n.ID, &n.Name, &n.CIDR, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt, &n.DomainSuffix)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("network not found")
