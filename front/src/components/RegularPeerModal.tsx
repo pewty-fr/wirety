@@ -3,7 +3,7 @@ import Modal from './Modal';
 import SearchableSelect from './SearchableSelect';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api/client';
-import type { Peer, Network, User } from '../types';
+import type { Peer, Network, User, Group } from '../types';
 
 interface RegularPeerModalProps {
   isOpen: boolean;
@@ -77,7 +77,15 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
           is_jump: false,
           use_agent: formData.use_agent,
         };
-        await api.createPeer(selectedNetworkId, createData);
+        const peer : Peer = await api.createPeer(selectedNetworkId, createData);
+
+        const groups : Group[] = await api.getGroups(selectedNetworkId);
+
+        groups.forEach((group) => {
+          if (group.name === 'default') {
+            api.addPeerToGroup(networkId, group.id, peer.id)
+          }
+        })
       }
       onSuccess();
       onClose();
