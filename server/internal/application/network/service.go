@@ -39,6 +39,7 @@ type Service struct {
 	groupRepo           network.GroupRepository
 	routeRepo           network.RouteRepository
 	dnsRepo             network.DNSRepository
+	policyRepo          network.PolicyRepository
 	policyService       PolicyService
 	wsNotifier          WebSocketNotifier
 	wsConnectionChecker WebSocketConnectionChecker
@@ -60,13 +61,14 @@ func (s *Service) ResolveAgentToken(ctx context.Context, token string) (string, 
 }
 
 // NewService creates a new network service
-func NewService(networkRepo network.Repository, ipamRepo ipam.Repository, authRepo auth.Repository, groupRepo network.GroupRepository, routeRepo network.RouteRepository, dnsRepo network.DNSRepository) *Service {
+func NewService(networkRepo network.Repository, ipamRepo ipam.Repository, authRepo auth.Repository, groupRepo network.GroupRepository, routeRepo network.RouteRepository, dnsRepo network.DNSRepository, policyRepo network.PolicyRepository) *Service {
 	return &Service{
-		repo:      NewCombinedRepository(networkRepo, ipamRepo),
-		authRepo:  authRepo,
-		groupRepo: groupRepo,
-		routeRepo: routeRepo,
-		dnsRepo:   dnsRepo,
+		repo:       NewCombinedRepository(networkRepo, ipamRepo),
+		authRepo:   authRepo,
+		groupRepo:  groupRepo,
+		routeRepo:  routeRepo,
+		dnsRepo:    dnsRepo,
+		policyRepo: policyRepo,
 	}
 }
 
@@ -784,15 +786,60 @@ func (s *Service) ensureQuarantineGroup(ctx context.Context, networkID string) (
 		}
 	}
 
+	// Create deny-all policy for quarantine group
+	denyAllPolicyID := uuid.New().String()
+	denyAllPolicy := &network.Policy{
+		ID:          denyAllPolicyID,
+		NetworkID:   networkID,
+		Name:        "quarantine-deny-all",
+		Description: "automatically created policy to deny all traffic for quarantined peers",
+		Rules: []network.PolicyRule{
+			{
+				ID:          uuid.New().String(),
+				Direction:   "output",
+				Action:      "deny",
+				Target:      "0.0.0.0/0",
+				TargetType:  "cidr",
+				Description: "deny all outbound traffic",
+			},
+			{
+				ID:          uuid.New().String(),
+				Direction:   "input",
+				Action:      "deny",
+				Target:      "0.0.0.0/0",
+				TargetType:  "cidr",
+				Description: "deny all inbound traffic",
+			},
+		},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	// Create the policy only if policy repository is available
+	if s.policyRepo != nil {
+		err = s.policyRepo.CreatePolicy(ctx, networkID, denyAllPolicy)
+		if err != nil {
+			return "", fmt.Errorf("failed to create quarantine deny-all policy: %w", err)
+		}
+	} else {
+		log.Warn().Msg("Policy repository not available - quarantine group created without deny-all policy")
+		denyAllPolicyID = "" // Clear the policy ID since we couldn't create it
+	}
+
 	// Create quarantine group with priority 0 (highest priority)
+	var policyIDs []string
+	if denyAllPolicyID != "" {
+		policyIDs = []string{denyAllPolicyID} // Attach the deny-all policy if created
+	}
+
 	quarantineGroup := &network.Group{
 		ID:          uuid.New().String(),
 		NetworkID:   networkID,
 		Name:        "quarantine",
-		Description: "Automatically created group for blocking compromised peers",
+		Description: "automatically created group for blocking compromised peers",
 		Priority:    0, // Highest priority - quarantine policies apply first
 		PeerIDs:     []string{},
-		PolicyIDs:   []string{},
+		PolicyIDs:   policyIDs,
 		RouteIDs:    []string{},
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -804,11 +851,18 @@ func (s *Service) ensureQuarantineGroup(ctx context.Context, networkID string) (
 	}
 
 	// Log that quarantine group was created
-	// Admin should manually attach a deny-all policy to this group
-	log.Warn().
-		Str("network_id", networkID).
-		Str("group_id", quarantineGroup.ID).
-		Msg("SECURITY: Quarantine group created - admin should attach deny-all policy to block quarantined peers")
+	if denyAllPolicyID != "" {
+		log.Warn().
+			Str("network_id", networkID).
+			Str("group_id", quarantineGroup.ID).
+			Str("policy_id", denyAllPolicyID).
+			Msg("SECURITY: Quarantine group created with deny-all policy to block quarantined peers")
+	} else {
+		log.Warn().
+			Str("network_id", networkID).
+			Str("group_id", quarantineGroup.ID).
+			Msg("SECURITY: Quarantine group created - admin should manually attach deny-all policy to block quarantined peers")
+	}
 
 	return quarantineGroup.ID, nil
 }

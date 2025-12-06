@@ -116,7 +116,7 @@ func main() {
 	}
 
 	// Initialize services
-	networkService := appnetwork.NewService(networkRepo, ipamRepo, userRepo, groupRepo, routeRepo, dnsRepo)
+	networkService := appnetwork.NewService(networkRepo, ipamRepo, userRepo, groupRepo, routeRepo, dnsRepo, policyRepo)
 	ipamService := ipam.NewService(ipamRepo)
 
 	var authService *appauth.Service
