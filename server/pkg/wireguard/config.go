@@ -34,10 +34,10 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 		}
 
 		if dns != "" {
-			sb.WriteString(fmt.Sprintf("DNS = %s:5353\n", dns))
+			sb.WriteString(fmt.Sprintf("DNS = %s\n", dns))
 		}
 	} else {
-		sb.WriteString(fmt.Sprintf("DNS = %s:5353\n", peer.Address))
+		sb.WriteString(fmt.Sprintf("DNS = %s\n", peer.Address))
 	}
 
 	// Jump server packet filtering & forwarding now handled dynamically by agent firewall adapter.

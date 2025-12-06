@@ -59,7 +59,7 @@ func main() {
 	log.Info().Msg("starting DNS server")
 	dnsServer := dnsadapter.NewServer("", []dom.DNSPeer{})
 	go func() {
-		if err := dnsServer.Start(":5353"); err != nil {
+		if err := dnsServer.Start(":53"); err != nil {
 			log.Error().Err(err).Msg("dns server exited")
 		}
 	}()
