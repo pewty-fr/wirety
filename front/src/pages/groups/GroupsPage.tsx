@@ -358,18 +358,21 @@ function GroupModal({
   };
 
   const loadAttachments = async () => {
-    if (!group || !selectedNetworkId) return;
+    if (!group) return;
+    
+    const networkIdToUse = group.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
 
     try {
       // Load all network peers
-      const allPeers = await api.getAllNetworkPeers(selectedNetworkId);
+      const allPeers = await api.getAllNetworkPeers(networkIdToUse);
       const groupPeerIds = new Set(group.peer_ids || []);
       setPeers(allPeers.filter(p => groupPeerIds.has(p.id)));
       
       // Load group routes first to filter out jump peers used by routes
       const [groupRoutes, allRoutes] = await Promise.all([
-        api.getGroupRoutes(selectedNetworkId, group.id),
-        api.getRoutes(selectedNetworkId),
+        api.getGroupRoutes(networkIdToUse, group.id),
+        api.getRoutes(networkIdToUse),
       ]);
       setRoutes(groupRoutes);
       
@@ -384,8 +387,8 @@ function GroupModal({
 
       // Load group policies and all network policies
       const [groupPolicies, allPolicies] = await Promise.all([
-        api.getGroupPolicies(selectedNetworkId, group.id),
-        api.getPolicies(selectedNetworkId),
+        api.getGroupPolicies(networkIdToUse, group.id),
+        api.getPolicies(networkIdToUse),
       ]);
       setPolicies(groupPolicies);
       const groupPolicyIds = new Set(groupPolicies.map(p => p.id));
@@ -443,11 +446,14 @@ function GroupModal({
   };
 
   const handleUpdateName = async () => {
-    if (!group || !selectedNetworkId) return;
+    if (!group) return;
+    
+    const networkIdToUse = group.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updateGroup(selectedNetworkId, group.id, { name });
-      const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+      await api.updateGroup(networkIdToUse, group.id, { name });
+      const updatedGroup = await api.getGroup(networkIdToUse, group.id);
       Object.assign(group, updatedGroup);
       setIsEditingName(false);
       onSuccess();
@@ -458,11 +464,14 @@ function GroupModal({
   };
 
   const handleUpdateDescription = async () => {
-    if (!group || !selectedNetworkId) return;
+    if (!group) return;
+    
+    const networkIdToUse = group.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updateGroup(selectedNetworkId, group.id, { description });
-      const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+      await api.updateGroup(networkIdToUse, group.id, { description });
+      const updatedGroup = await api.getGroup(networkIdToUse, group.id);
       Object.assign(group, updatedGroup);
       setIsEditingDescription(false);
       onSuccess();
@@ -473,11 +482,14 @@ function GroupModal({
   };
 
   const handleUpdatePriority = async () => {
-    if (!group || !selectedNetworkId) return;
+    if (!group) return;
+    
+    const networkIdToUse = group.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updateGroup(selectedNetworkId, group.id, { priority });
-      const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+      await api.updateGroup(networkIdToUse, group.id, { priority });
+      const updatedGroup = await api.getGroup(networkIdToUse, group.id);
       Object.assign(group, updatedGroup);
       setIsEditingPriority(false);
       onSuccess();
@@ -517,12 +529,15 @@ function GroupModal({
       }
     }
     
-    if (group && selectedNetworkId) {
+    if (group) {
+      const networkIdToUse = group.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: attach immediately
       try {
-        await api.addPeerToGroup(selectedNetworkId, group.id, peerId);
+        await api.addPeerToGroup(networkIdToUse, group.id, peerId);
         // Refetch the updated group data and reload attachments
-        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        const updatedGroup = await api.getGroup(networkIdToUse, group.id);
         Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
@@ -543,12 +558,15 @@ function GroupModal({
   };
 
   const handleRemovePeer = async (peerId: string) => {
-    if (group && selectedNetworkId) {
+    if (group) {
+      const networkIdToUse = group.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: remove immediately
       try {
-        await api.removePeerFromGroup(selectedNetworkId, group.id, peerId);
+        await api.removePeerFromGroup(networkIdToUse, group.id, peerId);
         // Refetch the updated group data and reload attachments
-        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        const updatedGroup = await api.getGroup(networkIdToUse, group.id);
         Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
@@ -571,12 +589,15 @@ function GroupModal({
     const policy = availablePolicies.find(p => p.id === policyId);
     if (!policy) return;
     
-    if (group && selectedNetworkId) {
+    if (group) {
+      const networkIdToUse = group.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: attach immediately
       try {
-        await api.attachPolicyToGroup(selectedNetworkId, group.id, policyId);
+        await api.attachPolicyToGroup(networkIdToUse, group.id, policyId);
         // Refetch the updated group data and reload attachments
-        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        const updatedGroup = await api.getGroup(networkIdToUse, group.id);
         Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
@@ -593,12 +614,15 @@ function GroupModal({
   };
 
   const handleDetachPolicy = async (policyId: string) => {
-    if (group && selectedNetworkId) {
+    if (group) {
+      const networkIdToUse = group.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: detach immediately
       try {
-        await api.detachPolicyFromGroup(selectedNetworkId, group.id, policyId);
+        await api.detachPolicyFromGroup(networkIdToUse, group.id, policyId);
         // Refetch the updated group data and reload attachments
-        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        const updatedGroup = await api.getGroup(networkIdToUse, group.id);
         Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
@@ -624,13 +648,16 @@ function GroupModal({
     
     setPolicies(reorderedPolicies);
     
-    if (group && selectedNetworkId) {
+    if (group) {
+      const networkIdToUse = group.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: reorder on server
       try {
         const policyIds = reorderedPolicies.map(p => p.id);
-        await api.reorderGroupPolicies(selectedNetworkId, group.id, policyIds);
+        await api.reorderGroupPolicies(networkIdToUse, group.id, policyIds);
         // Refetch the updated group data
-        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        const updatedGroup = await api.getGroup(networkIdToUse, group.id);
         Object.assign(group, updatedGroup); // Update the group object with fresh data
         onSuccess();
       } catch (error) {
@@ -654,12 +681,15 @@ function GroupModal({
       return;
     }
     
-    if (group && selectedNetworkId) {
+    if (group) {
+      const networkIdToUse = group.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: attach immediately
       try {
-        await api.attachRouteToGroup(selectedNetworkId, group.id, routeId);
+        await api.attachRouteToGroup(networkIdToUse, group.id, routeId);
         // Refetch the updated group data and reload attachments
-        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        const updatedGroup = await api.getGroup(networkIdToUse, group.id);
         Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
@@ -680,12 +710,15 @@ function GroupModal({
   };
 
   const handleDetachRoute = async (routeId: string) => {
-    if (group && selectedNetworkId) {
+    if (group) {
+      const networkIdToUse = group.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: detach immediately
       try {
-        await api.detachRouteFromGroup(selectedNetworkId, group.id, routeId);
+        await api.detachRouteFromGroup(networkIdToUse, group.id, routeId);
         // Refetch the updated group data and reload attachments
-        const updatedGroup = await api.getGroup(selectedNetworkId, group.id);
+        const updatedGroup = await api.getGroup(networkIdToUse, group.id);
         Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();

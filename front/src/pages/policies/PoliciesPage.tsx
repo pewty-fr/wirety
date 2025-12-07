@@ -384,11 +384,14 @@ function PolicyModal({
   };
 
   const handleUpdateName = async () => {
-    if (!policy || !selectedNetworkId) return;
+    if (!policy) return;
+    
+    const networkIdToUse = policy.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updatePolicy(selectedNetworkId, policy.id, { name });
-      const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
+      await api.updatePolicy(networkIdToUse, policy.id, { name });
+      const updatedPolicy = await api.getPolicy(networkIdToUse, policy.id);
       Object.assign(policy, updatedPolicy);
       setIsEditingName(false);
       onSuccess();
@@ -399,11 +402,14 @@ function PolicyModal({
   };
 
   const handleUpdateDescription = async () => {
-    if (!policy || !selectedNetworkId) return;
+    if (!policy) return;
+    
+    const networkIdToUse = policy.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updatePolicy(selectedNetworkId, policy.id, { description });
-      const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
+      await api.updatePolicy(networkIdToUse, policy.id, { description });
+      const updatedPolicy = await api.getPolicy(networkIdToUse, policy.id);
       Object.assign(policy, updatedPolicy);
       setIsEditingDescription(false);
       onSuccess();
@@ -429,11 +435,14 @@ function PolicyModal({
   const handleAddRule = async (rule: Omit<PolicyRule, 'id'>) => {
     if (rule.target_type === 'route') rule.target_type = 'cidr';
     
-    if (policy && selectedNetworkId) {
+    if (policy) {
+      const networkIdToUse = policy.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: add immediately
       try {
-        await api.addRuleToPolicy(selectedNetworkId, policy.id, rule);
-        const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
+        await api.addRuleToPolicy(networkIdToUse, policy.id, rule);
+        const updatedPolicy = await api.getPolicy(networkIdToUse, policy.id);
         setRules(updatedPolicy.rules || []);
         onSuccess();
         setIsAddRuleModalOpen(false);
@@ -451,11 +460,14 @@ function PolicyModal({
   };
 
   const handleRemoveRule = async (ruleId: string) => {
-    if (policy && selectedNetworkId) {
+    if (policy) {
+      const networkIdToUse = policy.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: remove immediately
       try {
-        await api.removeRuleFromPolicy(selectedNetworkId, policy.id, ruleId);
-        const updatedPolicy = await api.getPolicy(selectedNetworkId, policy.id);
+        await api.removeRuleFromPolicy(networkIdToUse, policy.id, ruleId);
+        const updatedPolicy = await api.getPolicy(networkIdToUse, policy.id);
         setRules(updatedPolicy.rules || []);
         onSuccess();
       } catch (error) {

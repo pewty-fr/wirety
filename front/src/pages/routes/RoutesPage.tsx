@@ -446,11 +446,14 @@ function RouteModal({
   };
 
   const handleUpdateName = async () => {
-    if (!route || !selectedNetworkId) return;
+    if (!route) return;
+    
+    const networkIdToUse = route.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updateRoute(selectedNetworkId, route.id, { name });
-      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      await api.updateRoute(networkIdToUse, route.id, { name });
+      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
       Object.assign(route, updatedRoute);
       setIsEditingName(false);
       onSuccess();
@@ -461,11 +464,14 @@ function RouteModal({
   };
 
   const handleUpdateDescription = async () => {
-    if (!route || !selectedNetworkId) return;
+    if (!route) return;
+    
+    const networkIdToUse = route.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updateRoute(selectedNetworkId, route.id, { description });
-      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      await api.updateRoute(networkIdToUse, route.id, { description });
+      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
       Object.assign(route, updatedRoute);
       setIsEditingDescription(false);
       onSuccess();
@@ -476,11 +482,14 @@ function RouteModal({
   };
 
   const handleUpdateDestinationCidr = async () => {
-    if (!route || !selectedNetworkId) return;
+    if (!route) return;
+    
+    const networkIdToUse = route.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updateRoute(selectedNetworkId, route.id, { destination_cidr: destinationCidr });
-      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      await api.updateRoute(networkIdToUse, route.id, { destination_cidr: destinationCidr });
+      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
       Object.assign(route, updatedRoute);
       setIsEditingDestinationCidr(false);
       onSuccess();
@@ -491,11 +500,14 @@ function RouteModal({
   };
 
   const handleUpdateJumpPeer = async () => {
-    if (!route || !selectedNetworkId) return;
+    if (!route) return;
+    
+    const networkIdToUse = route.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updateRoute(selectedNetworkId, route.id, { jump_peer_id: jumpPeerId });
-      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      await api.updateRoute(networkIdToUse, route.id, { jump_peer_id: jumpPeerId });
+      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
       Object.assign(route, updatedRoute);
       setIsEditingJumpPeer(false);
       onSuccess();
@@ -506,11 +518,14 @@ function RouteModal({
   };
 
   const handleUpdateDomainSuffix = async () => {
-    if (!route || !selectedNetworkId) return;
+    if (!route) return;
+    
+    const networkIdToUse = route.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     
     try {
-      await api.updateRoute(selectedNetworkId, route.id, { domain_suffix: domainSuffix });
-      const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+      await api.updateRoute(networkIdToUse, route.id, { domain_suffix: domainSuffix });
+      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
       Object.assign(route, updatedRoute);
       setIsEditingDomainSuffix(false);
       onSuccess();
@@ -587,12 +602,15 @@ function RouteModal({
     const group = availableGroups.find(g => g.id === groupId);
     if (!group) return;
     
-    if (route && selectedNetworkId) {
+    if (route) {
+      const networkIdToUse = route.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: attach immediately
       try {
-        await api.attachRouteToGroup(selectedNetworkId, groupId, route.id);
+        await api.attachRouteToGroup(networkIdToUse, groupId, route.id);
         // Refetch the updated route data and reload attachments
-        const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+        const updatedRoute = await api.getRoute(networkIdToUse, route.id);
         Object.assign(route, updatedRoute); // Update the route object with fresh data
         await loadAttachments();
         onSuccess();
@@ -609,12 +627,15 @@ function RouteModal({
   };
 
   const handleDetachFromGroup = async (groupId: string) => {
-    if (route && selectedNetworkId) {
+    if (route) {
+      const networkIdToUse = route.network_id || selectedNetworkId;
+      if (!networkIdToUse) return;
+      
       // Edit mode: detach immediately
       try {
-        await api.detachRouteFromGroup(selectedNetworkId, groupId, route.id);
+        await api.detachRouteFromGroup(networkIdToUse, groupId, route.id);
         // Refetch the updated route data and reload attachments
-        const updatedRoute = await api.getRoute(selectedNetworkId, route.id);
+        const updatedRoute = await api.getRoute(networkIdToUse, route.id);
         Object.assign(route, updatedRoute); // Update the route object with fresh data
         await loadAttachments();
         onSuccess();
