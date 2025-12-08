@@ -112,8 +112,8 @@ func validateDNSName(name string) error {
 	}
 	// Additional RFC compliance: no special characters except hyphens
 	for _, char := range name {
-		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') || char == '-') {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '-' {
 			return errors.New("DNS name can only contain alphanumeric characters and hyphens")
 		}
 	}

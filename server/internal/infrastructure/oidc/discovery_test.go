@@ -26,7 +26,7 @@ func TestDiscover_Success(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(expectedDiscovery)
+		_ = json.NewEncoder(w).Encode(expectedDiscovery)
 	}))
 	defer server.Close()
 
@@ -78,7 +78,7 @@ func TestDiscover_Caching(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(discovery)
+		_ = json.NewEncoder(w).Encode(discovery)
 	}))
 	defer server.Close()
 
@@ -120,7 +120,7 @@ func TestDiscover_TrailingSlashHandling(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(discovery)
+		_ = json.NewEncoder(w).Encode(discovery)
 	}))
 	defer server.Close()
 
@@ -157,7 +157,7 @@ func TestDiscover_ServerError(t *testing.T) {
 func TestDiscover_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("invalid json"))
+		_, _ = w.Write([]byte("invalid json"))
 	}))
 	defer server.Close()
 
@@ -199,7 +199,7 @@ func TestDiscover_CacheExpiration(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(discovery)
+		_ = json.NewEncoder(w).Encode(discovery)
 	}))
 	defer server.Close()
 
@@ -251,7 +251,7 @@ func TestDiscover_ContextCancellation(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(discovery)
+		_ = json.NewEncoder(w).Encode(discovery)
 	}))
 	defer server.Close()
 
@@ -286,7 +286,7 @@ func TestDiscover_ConcurrentAccess(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(discovery)
+		_ = json.NewEncoder(w).Encode(discovery)
 	}))
 	defer server.Close()
 

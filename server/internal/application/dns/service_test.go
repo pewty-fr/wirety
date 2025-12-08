@@ -687,13 +687,14 @@ func TestService_GetNetworkDNSRecords(t *testing.T) {
 	peerRecords := 0
 	routeRecords := 0
 	for _, record := range records {
-		if record.Type == "peer" {
+		switch record.Type {
+		case "peer":
 			peerRecords++
 			expectedFQDN := record.Name + ".testnet.example.com"
 			if record.FQDN != expectedFQDN {
 				t.Errorf("Expected peer FQDN %s, got %s", expectedFQDN, record.FQDN)
 			}
-		} else if record.Type == "route" {
+		case "route":
 			routeRecords++
 			expectedFQDN := "api.backend.example.com"
 			if record.FQDN != expectedFQDN {

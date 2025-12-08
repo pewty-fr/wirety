@@ -3,6 +3,7 @@ package group
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -458,14 +459,16 @@ func (a *networkGetterAdapter) DeleteSecurityConfig(ctx context.Context, network
 func genValidGroupName() gopter.Gen {
 	return gen.Identifier().SuchThat(func(v interface{}) bool {
 		s := v.(string)
-		return len(s) > 0 && len(s) <= 255
+		// Must match validateGroupName requirements: non-empty, ≤64 chars, no newlines/tabs
+		return len(s) > 0 && len(s) <= 64 && !strings.ContainsAny(s, "\n\r\t")
 	})
 }
 
 func genDescription() gopter.Gen {
 	return gen.AlphaString().SuchThat(func(v interface{}) bool {
 		s := v.(string)
-		return len(s) <= 100
+		// Keep descriptions reasonable and without problematic characters
+		return len(s) <= 100 && !strings.ContainsAny(s, "\n\r\t")
 	})
 }
 

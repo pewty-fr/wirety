@@ -13,6 +13,7 @@ func TestNewClient(t *testing.T) {
 	client := NewClient()
 	if client == nil {
 		t.Error("Expected client to be created, got nil")
+		return
 	}
 	if client.conn != nil {
 		t.Error("Expected connection to be nil initially")
@@ -33,7 +34,7 @@ func TestClient_ConnectAndClose(t *testing.T) {
 			t.Errorf("Failed to upgrade connection: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		// Echo messages back
 		for {
@@ -85,7 +86,7 @@ func TestClient_WriteAndReadMessage(t *testing.T) {
 			t.Errorf("Failed to upgrade connection: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		// Echo messages back
 		for {
@@ -108,7 +109,7 @@ func TestClient_WriteAndReadMessage(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to connect: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Test WriteMessage
 	testMessage := []byte("Hello, WebSocket!")
@@ -190,7 +191,7 @@ func TestClient_MultipleMessages(t *testing.T) {
 			t.Errorf("Failed to upgrade connection: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		// Echo messages back
 		for {
@@ -213,7 +214,7 @@ func TestClient_MultipleMessages(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to connect: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Test multiple messages
 	messages := []string{"message1", "message2", "message3"}

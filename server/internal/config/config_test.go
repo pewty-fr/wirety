@@ -62,16 +62,16 @@ func TestLoadConfig_EnvironmentVariables(t *testing.T) {
 	clearEnvVars()
 
 	// Set environment variables
-	os.Setenv("HTTP_PORT", "9090")
-	os.Setenv("ALLOWED_ORIGIN", "https://example.com")
-	os.Setenv("AUTH_ENABLED", "true")
-	os.Setenv("AUTH_ISSUER_URL", "https://keycloak.example.com/realms/test")
-	os.Setenv("AUTH_CLIENT_ID", "test-client")
-	os.Setenv("AUTH_CLIENT_SECRET", "secret123")
-	os.Setenv("AUTH_JWKS_CACHE_TTL", "7200")
-	os.Setenv("DB_ENABLED", "true")
-	os.Setenv("DB_DSN", "postgres://test:test@localhost:5433/testdb")
-	os.Setenv("KO_DATA_PATH", "/custom/path")
+	_ = os.Setenv("HTTP_PORT", "9090")
+	_ = os.Setenv("ALLOWED_ORIGIN", "https://example.com")
+	_ = os.Setenv("AUTH_ENABLED", "true")
+	_ = os.Setenv("AUTH_ISSUER_URL", "https://keycloak.example.com/realms/test")
+	_ = os.Setenv("AUTH_CLIENT_ID", "test-client")
+	_ = os.Setenv("AUTH_CLIENT_SECRET", "secret123")
+	_ = os.Setenv("AUTH_JWKS_CACHE_TTL", "7200")
+	_ = os.Setenv("DB_ENABLED", "true")
+	_ = os.Setenv("DB_DSN", "postgres://test:test@localhost:5433/testdb")
+	_ = os.Setenv("KO_DATA_PATH", "/custom/path")
 
 	defer clearEnvVars() // Clean up after test
 
@@ -156,12 +156,12 @@ func TestGetEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clean up
-			os.Unsetenv(tt.key)
+			_ = os.Unsetenv(tt.key)
 
 			// Set environment variable if provided
 			if tt.envValue != "" {
-				os.Setenv(tt.key, tt.envValue)
-				defer os.Unsetenv(tt.key)
+				_ = os.Setenv(tt.key, tt.envValue)
+				defer func() { _ = os.Unsetenv(tt.key) }()
 			}
 
 			result := getEnv(tt.key, tt.defaultValue)
@@ -227,12 +227,12 @@ func TestGetEnvAsInt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clean up
-			os.Unsetenv(tt.key)
+			_ = os.Unsetenv(tt.key)
 
 			// Set environment variable if provided
 			if tt.envValue != "" {
-				os.Setenv(tt.key, tt.envValue)
-				defer os.Unsetenv(tt.key)
+				_ = os.Setenv(tt.key, tt.envValue)
+				defer func() { _ = os.Unsetenv(tt.key) }()
 			}
 
 			result := getEnvAsInt(tt.key, tt.defaultValue)
@@ -259,12 +259,12 @@ func TestAuthConfig_BooleanParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Unsetenv("AUTH_ENABLED")
-			os.Unsetenv("DB_ENABLED")
+			_ = os.Unsetenv("AUTH_ENABLED")
+			_ = os.Unsetenv("DB_ENABLED")
 
 			if tt.envValue != "" {
-				os.Setenv("AUTH_ENABLED", tt.envValue)
-				os.Setenv("DB_ENABLED", tt.envValue)
+				_ = os.Setenv("AUTH_ENABLED", tt.envValue)
+				_ = os.Setenv("DB_ENABLED", tt.envValue)
 			}
 
 			config := LoadConfig()
@@ -277,8 +277,8 @@ func TestAuthConfig_BooleanParsing(t *testing.T) {
 				t.Errorf("Expected Database.Enabled to be %v, got %v", tt.expected, config.Database.Enabled)
 			}
 
-			os.Unsetenv("AUTH_ENABLED")
-			os.Unsetenv("DB_ENABLED")
+			_ = os.Unsetenv("AUTH_ENABLED")
+			_ = os.Unsetenv("DB_ENABLED")
 		})
 	}
 }
@@ -299,6 +299,6 @@ func clearEnvVars() {
 	}
 
 	for _, env := range envVars {
-		os.Unsetenv(env)
+		_ = os.Unsetenv(env)
 	}
 }

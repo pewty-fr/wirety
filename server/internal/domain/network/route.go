@@ -119,8 +119,8 @@ func validateDomainSuffix(suffix string) error {
 	}
 	// Must be a valid domain format (letters, numbers, dots, hyphens)
 	for _, char := range suffix {
-		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') || char == '.' || char == '-') {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '.' && char != '-' {
 			return errors.New("domain suffix can only contain alphanumeric characters, dots, and hyphens")
 		}
 	}
