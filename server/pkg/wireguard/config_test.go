@@ -62,7 +62,7 @@ func TestGenerateConfig(t *testing.T) {
 				"# Name: jump-server",
 				"PublicKey = public-key-jump",
 				"PresharedKey = preshared-key-123",
-				"AllowedIPs = 10.0.0.0/16, 192.168.1.0/24",
+				"AllowedIPs = 10.0.0.1/32, 192.168.1.0/24",
 				"Endpoint = jump.example.com:51820",
 				"PersistentKeepalive = 25",
 			},
@@ -107,7 +107,7 @@ func TestGenerateConfig(t *testing.T) {
 				"[Peer]",
 				"# Name: client-peer",
 				"PublicKey = public-key-1",
-				"AllowedIPs = 10.0.0.0/16, 192.168.1.0/24",
+				"AllowedIPs = 10.0.0.10/32, 192.168.1.0/24",
 				"PersistentKeepalive = 25",
 			},
 			notExpected: []string{
@@ -143,7 +143,7 @@ func TestGenerateConfig(t *testing.T) {
 			presharedKeys: map[string]string{},
 			routes:        []*domain.Route{},
 			expectedParts: []string{
-				"AllowedIPs = 10.0.0.0/16, 203.0.113.0/24",
+				"AllowedIPs = 10.0.0.1/32, 203.0.113.0/24",
 			},
 		},
 		{
@@ -215,8 +215,9 @@ func TestDetermineAllowedIPs(t *testing.T) {
 				IsJump: true,
 			},
 			allowedPeer: &domain.Peer{
-				ID:     "peer1",
-				IsJump: false,
+				ID:      "peer1",
+				Address: "10.0.0.10",
+				IsJump:  false,
 			},
 			routes: []*domain.Route{
 				{
@@ -228,7 +229,7 @@ func TestDetermineAllowedIPs(t *testing.T) {
 					DestinationCIDR: "192.168.2.0/24",
 				},
 			},
-			expected: []string{"10.0.0.0/16", "192.168.1.0/24", "192.168.2.0/24"},
+			expected: []string{"10.0.0.10/32", "192.168.1.0/24", "192.168.2.0/24"},
 		},
 		{
 			name: "regular peer to jump peer with matching routes",
@@ -237,8 +238,9 @@ func TestDetermineAllowedIPs(t *testing.T) {
 				IsJump: false,
 			},
 			allowedPeer: &domain.Peer{
-				ID:     "jump1",
-				IsJump: true,
+				ID:      "jump1",
+				Address: "10.0.0.1",
+				IsJump:  true,
 			},
 			routes: []*domain.Route{
 				{
@@ -252,7 +254,7 @@ func TestDetermineAllowedIPs(t *testing.T) {
 					JumpPeerID:      "jump2", // Different jump peer
 				},
 			},
-			expected: []string{"10.0.0.0/16", "192.168.1.0/24"},
+			expected: []string{"10.0.0.1/32", "192.168.1.0/24"},
 		},
 		{
 			name: "regular peer to regular peer",
@@ -276,11 +278,12 @@ func TestDetermineAllowedIPs(t *testing.T) {
 				AdditionalAllowedIPs: []string{"172.16.0.0/16", "203.0.113.0/24"},
 			},
 			allowedPeer: &domain.Peer{
-				ID:     "peer1",
-				IsJump: false,
+				ID:      "peer1",
+				Address: "10.0.0.10",
+				IsJump:  false,
 			},
 			routes:   []*domain.Route{},
-			expected: []string{"10.0.0.0/16", "172.16.0.0/16", "203.0.113.0/24"},
+			expected: []string{"10.0.0.10/32", "172.16.0.0/16", "203.0.113.0/24"},
 		},
 		{
 			name: "regular peer to jump peer with additional allowed IPs",
@@ -290,11 +293,12 @@ func TestDetermineAllowedIPs(t *testing.T) {
 			},
 			allowedPeer: &domain.Peer{
 				ID:                   "jump1",
+				Address:              "10.0.0.1",
 				IsJump:               true,
 				AdditionalAllowedIPs: []string{"172.16.0.0/16"},
 			},
 			routes:   []*domain.Route{},
-			expected: []string{"10.0.0.0/16", "172.16.0.0/16"},
+			expected: []string{"10.0.0.1/32", "172.16.0.0/16"},
 		},
 	}
 

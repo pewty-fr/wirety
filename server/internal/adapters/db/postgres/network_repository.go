@@ -108,7 +108,7 @@ func (r *NetworkRepository) DeleteNetwork(ctx context.Context, networkID string)
 }
 
 func (r *NetworkRepository) ListNetworks(ctx context.Context) ([]*network.Network, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT n.id,n.name,n.cidr,n.dns,n.created_at,n.updated_at, COALESCE(p.peer_count,0) AS peer_count FROM networks n LEFT JOIN (SELECT network_id, COUNT(*) AS peer_count FROM peers GROUP BY network_id) p ON p.network_id = n.id ORDER BY n.created_at ASC`)
+	rows, err := r.db.QueryContext(ctx, `SELECT n.id,n.name,n.cidr,n.dns,n.created_at,n.updated_at,domain_suffix COALESCE(p.peer_count,0) AS peer_count FROM networks n LEFT JOIN (SELECT network_id, COUNT(*) AS peer_count FROM peers GROUP BY network_id) p ON p.network_id = n.id ORDER BY n.created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
@@ -118,7 +118,7 @@ func (r *NetworkRepository) ListNetworks(ctx context.Context) ([]*network.Networ
 	out := make([]*network.Network, 0)
 	for rows.Next() {
 		var n network.Network
-		err = rows.Scan(&n.ID, &n.Name, &n.CIDR, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt, &n.PeerCount)
+		err = rows.Scan(&n.ID, &n.Name, &n.CIDR, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt, &n.DomainSuffix, &n.PeerCount)
 		if err != nil {
 			return nil, err
 		}
