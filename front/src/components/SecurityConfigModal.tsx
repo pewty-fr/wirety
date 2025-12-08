@@ -33,7 +33,7 @@ export default function SecurityConfigModal({
     if (isOpen) {
       setSelectedNetworkId(networkId || '');
       if (networkId) {
-        loadData();
+        loadData(networkId);
       } else {
         // Reset to defaults when no network is selected
         setEnabled(true);
@@ -46,16 +46,16 @@ export default function SecurityConfigModal({
 
   useEffect(() => {
     if (selectedNetworkId) {
-      loadData();
+      loadData(selectedNetworkId);
     }
   }, [selectedNetworkId]);
 
-  const loadData = async () => {
-    if (!selectedNetworkId) return;
+  const loadData = async (targetNetworkId: string) => {
+    if (!targetNetworkId) return;
     
     setIsLoading(true);
     try {
-      const config = await api.getSecurityConfig(selectedNetworkId);
+      const config = await api.getSecurityConfig(targetNetworkId);
       setEnabled(config.enabled);
       setSessionConflictThreshold(config.session_conflict_threshold_minutes);
       setEndpointChangeThreshold(config.endpoint_change_threshold_minutes);

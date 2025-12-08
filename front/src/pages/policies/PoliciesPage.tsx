@@ -18,6 +18,12 @@ export default function PoliciesPage() {
 
   const isAdmin = user?.role === 'administrator';
 
+  // Memoized network options for SearchableSelect
+  const networkOptions = useMemo(() => networks.map(network => ({
+    value: network.id,
+    label: `${network.name} (${network.cidr})`
+  })), [networks]);
+
   useEffect(() => {
     const loadNetworks = async () => {
       try {
@@ -128,10 +134,7 @@ export default function PoliciesPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Network</label>
               <SearchableSelect
-                options={useMemo(() => networks.map(network => ({
-                  value: network.id,
-                  label: `${network.name} (${network.cidr})`
-                })), [networks])}
+                options={networkOptions}
                 value={selectedNetworkId}
                 onChange={setSelectedNetworkId}
                 placeholder="Select a network..."
@@ -266,8 +269,8 @@ function PolicyModal({
   const [isAddRuleModalOpen, setIsAddRuleModalOpen] = useState(false);
   
   // Groups management
-  const [attachedGroups, setAttachedGroups] = useState<any[]>([]);
-  const [availableGroups, setAvailableGroups] = useState<any[]>([]);
+  const [attachedGroups, setAttachedGroups] = useState<{ id: string; name: string; network_name?: string; description?: string }[]>([]);
+  const [availableGroups, setAvailableGroups] = useState<{ id: string; name: string; network_name?: string; description?: string }[]>([]);
   
   // Staged attachments for creation mode
   const [stagedRules, setStagedRules] = useState<Omit<PolicyRule, 'id'>[]>([]);
@@ -934,19 +937,30 @@ function AddRuleModal({
   useEffect(() => {
     if (!isOpen || !networkId) return;
     
-    // Load network CIDR
-    api.getNetwork(networkId)
-      .then((network) => setNetworkCIDR(network.cidr))
-      .catch((error) => console.error('Failed to load network:', error));
+    const loadData = async () => {
+      try {
+        // Load network CIDR
+        const network = await api.getNetwork(networkId);
+        setNetworkCIDR(network.cidr);
+        
+        // Load routes if needed
+        if (targetType === 'route') {
+          setLoadingRoutes(true);
+          try {
+            const routesData = await api.getRoutes(networkId);
+            setRoutes(routesData);
+          } catch (error) {
+            console.error('Failed to load routes:', error);
+          } finally {
+            setLoadingRoutes(false);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load network:', error);
+      }
+    };
     
-    // Load routes if needed
-    if (targetType === 'route') {
-      setLoadingRoutes(true);
-      api.getRoutes(networkId)
-        .then(setRoutes)
-        .catch((error) => console.error('Failed to load routes:', error))
-        .finally(() => setLoadingRoutes(false));
-    }
+    void loadData();
   }, [targetType, networkId, isOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {

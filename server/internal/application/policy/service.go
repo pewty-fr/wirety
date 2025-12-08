@@ -315,7 +315,8 @@ func (s *Service) generateIPTablesRulesForPeer(peerIP string, rule network.Polic
 	switch rule.TargetType {
 	case "cidr":
 		// For CIDR targets, generate FORWARD rules
-		if rule.Direction == "input" {
+		switch rule.Direction {
+		case "input":
 			// "input" means traffic coming TO the peer (peer is receiving)
 			// This translates to:
 			// 1. Allow traffic FROM peer TO destination (outbound from peer's perspective)
@@ -331,7 +332,7 @@ func (s *Service) generateIPTablesRulesForPeer(peerIP string, rule network.Polic
 				// Deny inbound from destination to peer
 				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -s %s -d %s -j DROP", rule.Target, peerIP))
 			}
-		} else if rule.Direction == "output" {
+		case "output":
 			// "output" means traffic going FROM the peer (peer is sending)
 			// This translates to:
 			// 1. Control traffic FROM peer TO destination

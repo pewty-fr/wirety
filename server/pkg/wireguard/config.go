@@ -82,10 +82,10 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network, routes []*domain.Route) []string {
 	var allowedIPs []string
 
-	// For jump peers: include all peer addresses and all route CIDRs
+	// For jump peers: include network CIDR and all route CIDRs
 	if peer.IsJump {
-		// Include network CIDR for peer-to-peer communication
-		allowedIPs = []string{fmt.Sprintf("%s/32", allowedPeer.Address)}
+		// Include network CIDR for peer-to-peer communication within the network
+		allowedIPs = []string{network.CIDR}
 
 		// Include all route destination CIDRs for external network access
 		for _, route := range routes {
@@ -100,8 +100,8 @@ func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network
 
 	// For regular peers connecting to a jump peer
 	if allowedPeer.IsJump {
-		// Include network CIDR for peer-to-peer communication
-		allowedIPs = []string{fmt.Sprintf("%s/32", allowedPeer.Address)}
+		// Include network CIDR for peer-to-peer communication within the network
+		allowedIPs = []string{network.CIDR}
 
 		// Include route CIDRs that use this jump peer as gateway
 		for _, route := range routes {
@@ -179,15 +179,15 @@ func isNetworkOrBroadcast(ip net.IP, ipnet *net.IPNet) bool {
 }
 
 // extractDNSServer extracts a DNS server IP from the CIDR (typically .1)
-func extractDNSServer(cidr string) string {
-	ip, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return ""
-	}
+// func extractDNSServer(cidr string) string {
+// 	ip, ipnet, err := net.ParseCIDR(cidr)
+// 	if err != nil {
+// 		return ""
+// 	}
 
-	// Use the first IP in the range as DNS server (typically .1)
-	ip = ip.Mask(ipnet.Mask)
-	incIP(ip)
+// 	// Use the first IP in the range as DNS server (typically .1)
+// 	ip = ip.Mask(ipnet.Mask)
+// 	incIP(ip)
 
-	return ip.String()
-}
+// 	return ip.String()
+// }

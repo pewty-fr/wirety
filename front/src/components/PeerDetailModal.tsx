@@ -26,9 +26,18 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
   const [configError, setConfigError] = useState<string | null>(null);
   const [configCopied, setConfigCopied] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
-  const [groups, setGroups] = useState<any[]>([]);
-  const [policies, setPolicies] = useState<any[]>([]);
-  const [routes, setRoutes] = useState<any[]>([]);
+  const [groups, setGroups] = useState<{ id: string; name: string; description?: string }[]>([]);
+  const [policies, setPolicies] = useState<Array<{
+    direction: string;
+    action: string;
+    target_type: string;
+    target: string;
+    description?: string;
+    _policyName: string;
+    _groupName: string;
+    _groupPriority: number;
+  }>>([]);
+  const [routes, setRoutes] = useState<{ id: string; name: string; destination_cidr: string; description?: string }[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const { user } = useAuth();
 
@@ -72,13 +81,13 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
         
         // Filter to only groups this peer belongs to and sort by priority (lower = higher priority)
         const peerGroups = allGroups
-          .filter((g: any) => displayPeer.group_ids?.includes(g.id))
-          .sort((a: any, b: any) => a.priority - b.priority);
+          .filter((g: { id: string; priority: number }) => displayPeer.group_ids?.includes(g.id))
+          .sort((a: { priority: number }, b: { priority: number }) => a.priority - b.priority);
         setGroups(peerGroups);
 
         // Collect route IDs from peer's groups
         const routeIds = new Set<string>();
-        peerGroups.forEach((group: any) => {
+        peerGroups.forEach((group: { route_ids?: string[] }) => {
           group.route_ids?.forEach((id: string) => routeIds.add(id));
         });
 
@@ -89,7 +98,16 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
         // 1. Groups are already sorted by priority (lower number = higher priority)
         // 2. Within each group, policies are in their defined order
         // 3. Within each policy, rules are in their defined order
-        const effectiveRules: any[] = [];
+        const effectiveRules: Array<{
+          direction: string;
+          action: string;
+          target_type: string;
+          target: string;
+          description?: string;
+          _policyName: string;
+          _groupName: string;
+          _groupPriority: number;
+        }> = [];
         const seenPolicyIds = new Set<string>();
         
         for (const group of peerGroups) {
@@ -101,10 +119,22 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
             if (seenPolicyIds.has(policyId)) continue;
             seenPolicyIds.add(policyId);
             
-            const policy = allPolicies.find((p: any) => p.id === policyId);
+            const policy = allPolicies.find((p: { id: string; name: string; rules?: Array<{
+              direction: string;
+              action: string;
+              target_type: string;
+              target: string;
+              description?: string;
+            }> }) => p.id === policyId);
             if (policy && policy.rules) {
               // Add each rule with metadata about which group/policy it comes from
-              policy.rules.forEach((rule: any) => {
+              policy.rules.forEach((rule: {
+                direction: string;
+                action: string;
+                target_type: string;
+                target: string;
+                description?: string;
+              }) => {
                 effectiveRules.push({
                   ...rule,
                   _policyName: policy.name,
@@ -121,7 +151,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
         // Fetch routes
         if (routeIds.size > 0) {
           const allRoutes = await api.getRoutes(peer.network_id);
-          const peerRoutes = allRoutes.filter((r: any) => routeIds.has(r.id));
+          const peerRoutes = allRoutes.filter((r: { id: string }) => routeIds.has(r.id));
           setRoutes(peerRoutes);
         } else {
           setRoutes([]);
@@ -134,7 +164,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     };
 
     void loadPeerDetails();
-  }, [isOpen, peer?.network_id, displayPeer?.id, JSON.stringify(displayPeer?.group_ids)]);
+  }, [isOpen, peer?.network_id, displayPeer]);
 
   const handleClose = () => {
     // Reset state before closing
@@ -498,7 +528,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
               ) : policies.length > 0 ? (
                 <div className="space-y-2">
                   {policies.map((rule, index) => (
-                    <div key={`${rule._policyName}-${rule.id}-${index}`} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                    <div key={`${rule._policyName}-${index}`} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
                       <div className="flex items-start gap-2">
                         <span className="text-xs font-mono text-gray-400 dark:text-gray-500 mt-0.5">#{index + 1}</span>
                         <div className="flex-1">

@@ -18,6 +18,12 @@ export default function GroupsPage() {
 
   const isAdmin = user?.role === 'administrator';
 
+  // Memoized network options for SearchableSelect
+  const networkOptions = useMemo(() => networks.map(network => ({
+    value: network.id,
+    label: `${network.name} (${network.cidr})`
+  })), [networks]);
+
   // Load networks on mount
   useEffect(() => {
     const loadNetworks = async () => {
@@ -123,10 +129,7 @@ export default function GroupsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Network</label>
               <SearchableSelect
-                options={useMemo(() => networks.map(network => ({
-                  value: network.id,
-                  label: `${network.name} (${network.cidr})`
-                })), [networks])}
+                options={networkOptions}
                 value={selectedNetworkId}
                 onChange={setSelectedNetworkId}
                 placeholder="Select a network..."
@@ -541,9 +544,11 @@ function GroupModal({
         Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Failed to add peer:', error);
-        if (error.response?.data?.error) {
+        if (error && typeof error === 'object' && 'response' in error && 
+            error.response && typeof error.response === 'object' && 'data' in error.response &&
+            error.response.data && typeof error.response.data === 'object' && 'error' in error.response.data) {
           alert(error.response.data.error);
         } else {
           alert('Failed to add peer to group');
@@ -693,9 +698,11 @@ function GroupModal({
         Object.assign(group, updatedGroup); // Update the group object with fresh data
         await loadAttachments();
         onSuccess();
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Failed to attach route:', error);
-        if (error.response?.data?.error) {
+        if (error && typeof error === 'object' && 'response' in error && 
+            error.response && typeof error.response === 'object' && 'data' in error.response &&
+            error.response.data && typeof error.response.data === 'object' && 'error' in error.response.data) {
           alert(error.response.data.error);
         } else {
           alert('Failed to attach route to group');

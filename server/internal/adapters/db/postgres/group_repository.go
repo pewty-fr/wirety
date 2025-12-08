@@ -44,7 +44,9 @@ func (r *GroupRepository) CreateGroup(ctx context.Context, networkID string, gro
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	// Insert the group
 	_, err = tx.ExecContext(ctx, `

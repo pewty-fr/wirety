@@ -130,14 +130,14 @@ func (a *Adapter) run(args ...string) error {
 }
 
 // runIPv6 runs an ip6tables command
-func (a *Adapter) runIPv6(args ...string) error {
-	cmd := exec.Command("ip6tables", args...) // #nosec G204
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ip6tables %v failed: %v output=%s", args, err, string(out))
-	}
-	return nil
-}
+// func (a *Adapter) runIPv6(args ...string) error {
+// 	cmd := exec.Command("ip6tables", args...) // #nosec G204
+// 	out, err := cmd.CombinedOutput()
+// 	if err != nil {
+// 		return fmt.Errorf("ip6tables %v failed: %v output=%s", args, err, string(out))
+// 	}
+// 	return nil
+// }
 
 // ruleExists checks if an iptables rule exists by parsing the rule arguments
 func (a *Adapter) ruleExists(args ...string) bool {

@@ -19,6 +19,12 @@ export default function RoutesPage() {
 
   const isAdmin = user?.role === 'administrator';
 
+  // Memoized network options for SearchableSelect
+  const networkOptions = useMemo(() => networks.map(network => ({
+    value: network.id,
+    label: `${network.name} (${network.cidr})`
+  })), [networks]);
+
   // Create a map of jump peer IDs to names
   const jumpPeerMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -137,10 +143,7 @@ export default function RoutesPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Network</label>
               <SearchableSelect
-                options={useMemo(() => networks.map(network => ({
-                  value: network.id,
-                  label: `${network.name} (${network.cidr})`
-                })), [networks])}
+                options={networkOptions}
                 value={selectedNetworkId}
                 onChange={setSelectedNetworkId}
                 placeholder="Select a network..."
@@ -284,8 +287,8 @@ function RouteModal({
   const [isAddDNSModalOpen, setIsAddDNSModalOpen] = useState(false);
   
   // Groups management
-  const [attachedGroups, setAttachedGroups] = useState<any[]>([]);
-  const [availableGroups, setAvailableGroups] = useState<any[]>([]);
+  const [attachedGroups, setAttachedGroups] = useState<{ id: string; name: string; network_name?: string; description?: string }[]>([]);
+  const [availableGroups, setAvailableGroups] = useState<{ id: string; name: string; network_name?: string; description?: string }[]>([]);
   const [stagedGroupIds, setStagedGroupIds] = useState<string[]>([]);
 
   // Individual edit modes
