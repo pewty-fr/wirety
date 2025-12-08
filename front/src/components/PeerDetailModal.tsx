@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faServer, faLaptop, faRocket, faCopy } from '@fortawesome/free-solid-svg-icons';
 import Modal from './Modal';
@@ -18,6 +18,7 @@ interface PeerDetailModalProps {
 }
 
 export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users = [] }: PeerDetailModalProps) {
+  const [activeTab, setActiveTab] = useState<'configuration' | 'access'>('configuration');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
@@ -25,6 +26,19 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
   const [configError, setConfigError] = useState<string | null>(null);
   const [configCopied, setConfigCopied] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
+  const [groups, setGroups] = useState<{ id: string; name: string; description?: string }[]>([]);
+  const [policies, setPolicies] = useState<Array<{
+    direction: string;
+    action: string;
+    target_type: string;
+    target: string;
+    description?: string;
+    _policyName: string;
+    _groupName: string;
+    _groupPriority: number;
+  }>>([]);
+  const [routes, setRoutes] = useState<{ id: string; name: string; destination_cidr: string; description?: string }[]>([]);
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const { user } = useAuth();
 
   // Get owner name from users list
@@ -47,8 +61,114 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     isOpen && !!peer?.network_id
   );
 
+  // Determine which peer data to display
+  const displayPeer = currentPeer || peer;
+
+  // Load groups, policies, and routes for this peer
+  useEffect(() => {
+    const loadPeerDetails = async () => {
+      if (!isOpen || !peer?.network_id || !displayPeer || !displayPeer.group_ids || displayPeer.group_ids.length === 0) {
+        setGroups([]);
+        setPolicies([]);
+        setRoutes([]);
+        return;
+      }
+
+      setLoadingDetails(true);
+      try {
+        // Fetch all groups for the network
+        const allGroups = await api.getGroups(peer.network_id);
+        
+        // Filter to only groups this peer belongs to and sort by priority (lower = higher priority)
+        const peerGroups = allGroups
+          .filter((g: { id: string; priority: number }) => displayPeer.group_ids?.includes(g.id))
+          .sort((a: { priority: number }, b: { priority: number }) => a.priority - b.priority);
+        setGroups(peerGroups);
+
+        // Collect route IDs from peer's groups
+        const routeIds = new Set<string>();
+        peerGroups.forEach((group: { route_ids?: string[] }) => {
+          group.route_ids?.forEach((id: string) => routeIds.add(id));
+        });
+
+        // Fetch all policies for the network
+        const allPolicies = await api.getPolicies(peer.network_id);
+        
+        // Collect effective rules in the correct order:
+        // 1. Groups are already sorted by priority (lower number = higher priority)
+        // 2. Within each group, policies are in their defined order
+        // 3. Within each policy, rules are in their defined order
+        const effectiveRules: Array<{
+          direction: string;
+          action: string;
+          target_type: string;
+          target: string;
+          description?: string;
+          _policyName: string;
+          _groupName: string;
+          _groupPriority: number;
+        }> = [];
+        const seenPolicyIds = new Set<string>();
+        
+        for (const group of peerGroups) {
+          if (!group.policy_ids || group.policy_ids.length === 0) continue;
+          
+          // Get policies for this group in order
+          for (const policyId of group.policy_ids) {
+            // Skip if we've already processed this policy from a higher priority group
+            if (seenPolicyIds.has(policyId)) continue;
+            seenPolicyIds.add(policyId);
+            
+            const policy = allPolicies.find((p: { id: string; name: string; rules?: Array<{
+              direction: string;
+              action: string;
+              target_type: string;
+              target: string;
+              description?: string;
+            }> }) => p.id === policyId);
+            if (policy && policy.rules) {
+              // Add each rule with metadata about which group/policy it comes from
+              policy.rules.forEach((rule: {
+                direction: string;
+                action: string;
+                target_type: string;
+                target: string;
+                description?: string;
+              }) => {
+                effectiveRules.push({
+                  ...rule,
+                  _policyName: policy.name,
+                  _groupName: group.name,
+                  _groupPriority: group.priority,
+                });
+              });
+            }
+          }
+        }
+        
+        setPolicies(effectiveRules);
+
+        // Fetch routes
+        if (routeIds.size > 0) {
+          const allRoutes = await api.getRoutes(peer.network_id);
+          const peerRoutes = allRoutes.filter((r: { id: string }) => routeIds.has(r.id));
+          setRoutes(peerRoutes);
+        } else {
+          setRoutes([]);
+        }
+      } catch (error) {
+        console.error('Failed to load peer details:', error);
+      } finally {
+        setLoadingDetails(false);
+      }
+    };
+
+    void loadPeerDetails();
+  }, [isOpen, peer?.network_id, displayPeer]);
+
   const handleClose = () => {
     // Reset state before closing
+    setActiveTab('configuration');
     setIsEditModalOpen(false);
     setConfigText(null);
     setConfigError(null);
@@ -57,8 +177,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     onClose();
   };
 
-  if (!peer) return null;
-  const displayPeer = currentPeer || peer;
+  if (!peer || !displayPeer) return null;
 
   // Check if current user can edit this peer
   const canEdit = user?.role === 'administrator' || displayPeer.owner_id === user?.id;
@@ -107,12 +226,41 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                 <FontAwesomeIcon icon={displayPeer.is_jump ? faRocket : (displayPeer.use_agent ? faServer : faLaptop)} className="text-2xl text-white" />
               </div>
               <div>
-                <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{displayPeer.name}</h3>
+                <h3 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-gray-100 dark:to-gray-300 bg-clip-text text-transparent">{displayPeer.name}</h3>
                 <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {displayPeer.id}</p>
               </div>
             </div>
           </div>
 
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200 dark:border-gray-700">
+            <button
+              type="button"
+              onClick={() => setActiveTab('configuration')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'configuration'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              Configuration
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('access')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'access'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              Access Control
+            </button>
+          </div>
+
+          {/* Configuration Tab */}
+          {activeTab === 'configuration' && (
+          <div className="space-y-6">
           {/* Network Info */}
           <div>
             <p className="text-lg text-gray-900 dark:text-gray-100">{displayPeer.network_name || displayPeer.network_id}</p>
@@ -125,7 +273,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
-              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.{network?.domain_suffix || 'internal' }</p>
             </div>
             {/* Owner */}
             {displayPeer.owner_id && (
@@ -289,37 +437,6 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
             </div>
           )}
 
-          {/* Regular Peer Specific */}
-          {!displayPeer.is_jump && (
-            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Peer Configuration</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600 dark:text-gray-300">Isolated</span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{displayPeer.is_isolated ? 'Yes' : 'No'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600 dark:text-gray-300">Full Encapsulation</span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{displayPeer.full_encapsulation ? 'Yes' : 'No'}</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Additional Allowed IPs */}
-          {displayPeer.additional_allowed_ips && displayPeer.additional_allowed_ips.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">Additional Allowed IPs</label>
-              <div className="space-y-1">
-                {displayPeer.additional_allowed_ips.map((ip, index) => (
-                  <div key={index} className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 px-3 py-2 rounded text-sm font-mono text-gray-900 dark:text-gray-100">
-                    {ip}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Agent Token (if uses agent) */}
           {displayPeer.use_agent && displayPeer.token && (
             <div>
@@ -366,6 +483,116 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
               </div>
             </div>
           </div>
+          </div>
+          )}
+
+          {/* Access Control Tab */}
+          {activeTab === 'access' && (
+          <div className="space-y-6">
+          {/* Group Memberships */}
+          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
+            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Group Memberships</h4>
+              {loadingDetails ? (
+                <div className="text-sm text-gray-500">Loading groups...</div>
+              ) : groups.length > 0 ? (
+                <div className="space-y-2">
+                  {groups.map((group) => (
+                    <div key={group.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{group.name}</div>
+                      {group.description && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.description}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No groups found</div>
+              )}
+            </div>
+          )}
+
+          {/* Effective Rules */}
+          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
+            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">
+                Effective Rules ({policies.length})
+                {policies.length > 0 && (
+                  <span className="text-xs font-normal text-gray-500 dark:text-gray-400 ml-2">
+                    (Applied in order by jump server)
+                  </span>
+                )}
+              </h4>
+              {loadingDetails ? (
+                <div className="text-sm text-gray-500">Loading rules...</div>
+              ) : policies.length > 0 ? (
+                <div className="space-y-2">
+                  {policies.map((rule, index) => (
+                    <div key={`${rule._policyName}-${index}`} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                      <div className="flex items-start gap-2">
+                        <span className="text-xs font-mono text-gray-400 dark:text-gray-500 mt-0.5">#{index + 1}</span>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`px-2 py-0.5 text-xs font-semibold rounded ${
+                              rule.action === 'allow' 
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                            }`}>
+                              {rule.action.toUpperCase()}
+                            </span>
+                            <span className="px-2 py-0.5 text-xs font-semibold rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                              {rule.direction.toUpperCase()}
+                            </span>
+                            <span className="text-xs font-mono text-gray-900 dark:text-gray-100">
+                              {rule.target_type}: {rule.target}
+                            </span>
+                          </div>
+                          {rule.description && (
+                            <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">{rule.description}</div>
+                          )}
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            From: <span className="font-medium">{rule._policyName}</span>
+                            {' '} in <span className="font-medium">{rule._groupName}</span>
+                            {' '}(priority: {rule._groupPriority})
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No rules attached to this peer's groups</div>
+              )}
+            </div>
+          )}
+
+          {/* Effective Routes */}
+          {displayPeer.group_ids && displayPeer.group_ids.length > 0 && (
+            <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">Effective Routes</h4>
+              {loadingDetails ? (
+                <div className="text-sm text-gray-500">Loading routes...</div>
+              ) : routes.length > 0 ? (
+                <div className="space-y-2">
+                  {routes.map((route) => (
+                    <div key={route.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{route.name}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {route.destination_cidr}
+                      </div>
+                      {route.description && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{route.description}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No routes attached to this peer's groups</div>
+              )}
+            </div>
+          )}
+          </div>
+          )}
 
           {/* Actions */}
           <div className="flex justify-between gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">

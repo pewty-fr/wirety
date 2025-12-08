@@ -132,7 +132,7 @@ func (w *Writer) apply() error {
 }
 
 // syncconf applies configuration using wg syncconf with wg-quick strip
-// This updates the interface without bringing it down
+// This updates the interface without bringing it down and manually manages routes
 func (w *Writer) syncconf() error {
 	// First, ensure the interface exists (create it if needed)
 	// Check if interface exists
@@ -144,6 +144,13 @@ func (w *Writer) syncconf() error {
 			return fmt.Errorf("failed to create interface: %w", err)
 		}
 		return nil
+	}
+
+	// Get current peer routes before updating config
+	oldRoutes, err := w.getCurrentPeerRoutes()
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to get current peer routes, continuing anyway")
+		oldRoutes = make(map[string]bool)
 	}
 
 	// Interface exists, use syncconf to update it
@@ -179,7 +186,13 @@ func (w *Writer) syncconf() error {
 		return fmt.Errorf("wg syncconf failed: %v stderr=%s", err, syncErr.String())
 	}
 
-	log.Debug().Str("interface", w.Interface).Msg("configuration synced successfully")
+	// After syncconf, manually manage routes since syncconf doesn't handle them
+	if err := w.updatePeerRoutes(oldRoutes); err != nil {
+		log.Error().Err(err).Msg("failed to update peer routes after syncconf")
+		// Don't fail the entire operation, but log the error
+	}
+
+	log.Debug().Str("interface", w.Interface).Msg("configuration synced successfully with route management")
 	return nil
 }
 
@@ -203,7 +216,22 @@ func (w *Writer) FindOldWiretyConfigs() ([]string, error) {
 	searchDirs := []string{
 		"/etc/wireguard",
 		"/opt/wireguard",
-		".", // Current directory for testing
+	}
+
+	// If we have a config path, also search in its directory
+	if w.Path != "" {
+		configDir := filepath.Dir(w.Path)
+		// Add to search dirs if not already present
+		found := false
+		for _, dir := range searchDirs {
+			if dir == configDir {
+				found = true
+				break
+			}
+		}
+		if !found {
+			searchDirs = append(searchDirs, configDir)
+		}
 	}
 
 	for _, dir := range searchDirs {
@@ -345,6 +373,120 @@ func (w *Writer) UpdateInterface(newInterface string) error {
 		Str("interface", newInterface).
 		Str("path", newPath).
 		Msg("interface update completed")
+
+	return nil
+}
+
+// getCurrentPeerRoutes gets the current routes for peers on the WireGuard interface
+func (w *Writer) getCurrentPeerRoutes() (map[string]bool, error) {
+	routes := make(map[string]bool)
+
+	// Get current WireGuard peer information
+	cmd := exec.Command("wg", "show", w.Interface, "allowed-ips") // #nosec G204 - w.Interface is sanitized and controlled
+	output, err := cmd.Output()
+	if err != nil {
+		return routes, fmt.Errorf("failed to get current peer allowed-ips: %w", err)
+	}
+
+	// Parse output to extract peer routes
+	// Format: <public_key>\t<allowed_ip1>,<allowed_ip2>,...
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		parts := strings.Split(line, "\t")
+		if len(parts) != 2 {
+			continue
+		}
+
+		allowedIPs := strings.Split(parts[1], ",")
+		for _, ip := range allowedIPs {
+			ip = strings.TrimSpace(ip)
+			if ip != "" {
+				routes[ip] = true
+			}
+		}
+	}
+
+	return routes, nil
+}
+
+// updatePeerRoutes manages routes for WireGuard peers after syncconf
+func (w *Writer) updatePeerRoutes(oldRoutes map[string]bool) error {
+	// Get new peer routes after syncconf
+	newRoutes, err := w.getCurrentPeerRoutes()
+	if err != nil {
+		return fmt.Errorf("failed to get new peer routes: %w", err)
+	}
+
+	// Remove routes that are no longer needed
+	for oldRoute := range oldRoutes {
+		if !newRoutes[oldRoute] {
+			if err := w.removeRoute(oldRoute); err != nil {
+				log.Warn().Err(err).Str("route", oldRoute).Msg("failed to remove old route")
+			} else {
+				log.Debug().Str("route", oldRoute).Str("interface", w.Interface).Msg("removed old peer route")
+			}
+		}
+	}
+
+	// Add new routes
+	for newRoute := range newRoutes {
+		if !oldRoutes[newRoute] {
+			if err := w.addRoute(newRoute); err != nil {
+				log.Warn().Err(err).Str("route", newRoute).Msg("failed to add new route")
+			} else {
+				log.Debug().Str("route", newRoute).Str("interface", w.Interface).Msg("added new peer route")
+			}
+		}
+	}
+
+	return nil
+}
+
+// addRoute adds a route for a peer's allowed IP through the WireGuard interface
+func (w *Writer) addRoute(allowedIP string) error {
+	// Skip routes that are not single host routes (e.g., 0.0.0.0/0)
+	if strings.Contains(allowedIP, "/0") {
+		log.Debug().Str("allowed_ip", allowedIP).Msg("skipping default route")
+		return nil
+	}
+
+	// Add route: ip route add <allowed_ip> dev <interface>
+	cmd := exec.Command("ip", "route", "add", allowedIP, "dev", w.Interface) // #nosec G204 - parameters are controlled
+	if err := cmd.Run(); err != nil {
+		// Check if route already exists (not an error)
+		if strings.Contains(err.Error(), "File exists") {
+			log.Debug().Str("route", allowedIP).Str("interface", w.Interface).Msg("route already exists")
+			return nil
+		}
+		return fmt.Errorf("failed to add route %s: %w", allowedIP, err)
+	}
+
+	return nil
+}
+
+// removeRoute removes a route for a peer's allowed IP
+func (w *Writer) removeRoute(allowedIP string) error {
+	// Skip routes that are not single host routes (e.g., 0.0.0.0/0)
+	if strings.Contains(allowedIP, "/0") {
+		log.Debug().Str("allowed_ip", allowedIP).Msg("skipping default route removal")
+		return nil
+	}
+
+	// Remove route: ip route del <allowed_ip> dev <interface>
+	cmd := exec.Command("ip", "route", "del", allowedIP, "dev", w.Interface) // #nosec G204 - parameters are controlled
+	if err := cmd.Run(); err != nil {
+		// Check if route doesn't exist (not an error)
+		if strings.Contains(err.Error(), "No such process") || strings.Contains(err.Error(), "not found") {
+			log.Debug().Str("route", allowedIP).Str("interface", w.Interface).Msg("route does not exist")
+			return nil
+		}
+		return fmt.Errorf("failed to remove route %s: %w", allowedIP, err)
+	}
 
 	return nil
 }

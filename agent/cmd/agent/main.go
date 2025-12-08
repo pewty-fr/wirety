@@ -13,12 +13,10 @@ import (
 	"syscall"
 	dnsadapter "wirety/agent/internal/adapters/dns"
 	"wirety/agent/internal/adapters/firewall"
-	"wirety/agent/internal/adapters/proxy"
 	"wirety/agent/internal/adapters/wg"
 	"wirety/agent/internal/adapters/ws"
 	app "wirety/agent/internal/application/agent"
 	dom "wirety/agent/internal/domain/dns"
-	"wirety/agent/internal/ports"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -32,7 +30,7 @@ func main() {
 	token := envOr("TOKEN", "")
 	configPath := envOr("WG_CONFIG_PATH", "")
 	applyMethod := envOr("WG_APPLY_METHOD", "syncconf")
-	natIface := envOr("NAT_INTERFACE", "eth0")
+	natIface := envOr("NAT_INTERFACE", "") // Empty string enables auto-detection
 	httpPort := envOr("HTTP_PROXY_PORT", "3128")
 	httpsPort := envOr("HTTPS_PROXY_PORT", "3129")
 	portalURL := envOr("CAPTIVE_PORTAL_URL", "https://portal.example.com")
@@ -41,15 +39,21 @@ func main() {
 	flag.StringVar(&token, "token", token, "Enrollment token")
 	flag.StringVar(&configPath, "config", configPath, "Path to wireguard config file")
 	flag.StringVar(&applyMethod, "apply", applyMethod, "Apply method: wg-quick|syncconf")
-	flag.StringVar(&natIface, "nat", natIface, "NAT interface (eth0, etc.)")
-	flag.StringVar(&httpPort, "http-port", httpPort, "HTTP proxy port for captive portal")
-	flag.StringVar(&httpsPort, "https-port", httpsPort, "HTTPS proxy port for captive portal")
+	flag.StringVar(&natIface, "nat", natIface, "NAT interface override (empty for auto-detection)")
 	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal URL")
 	flag.Parse()
 
 	if token == "" {
 		log.Fatal().Msg("TOKEN is required (env or flag)")
 	}
+
+	log.Info().Msg("starting DNS server")
+	dnsServer := dnsadapter.NewServer("", []dom.DNSPeer{})
+	go func() {
+		if err := dnsServer.Start(":53"); err != nil {
+			log.Error().Err(err).Msg("dns server exited")
+		}
+	}()
 
 	// First resolve token to get peer name for interface/config naming
 	networkID, peerID, peerName, cfg, err := resolveToken(server, token)
@@ -89,9 +93,6 @@ func main() {
 	wsURL := fmt.Sprintf("%s/api/v1/ws?token=%s", wsServer, token)
 
 	wsClient := ws.NewClient()
-	dnsFactory := func(domain string, peers []dom.DNSPeer) ports.DNSStarterPort {
-		return dnsadapter.NewServer(domain, peers)
-	}
 
 	// Parse proxy ports
 	httpPortInt := 3128
@@ -107,35 +108,7 @@ func main() {
 	fwAdapter := firewall.NewAdapter(iface, natIface)
 	fwAdapter.SetProxyPorts(httpPortInt, httpsPortInt)
 
-	// Initialize captive portal
-	// Use server URL as portal URL if not explicitly set
-	if portalURL == "https://portal.example.com" {
-		portalURL = server
-	}
-	captivePortal := proxy.NewCaptivePortal(httpPortInt, portalURL, server, token)
-	if err := captivePortal.Start(); err != nil {
-		log.Fatal().Err(err).Msg("failed to start captive portal")
-	}
-	log.Info().
-		Int("http_port", httpPortInt).
-		Str("portal_url", portalURL).
-		Msg("captive portal HTTP proxy started")
-
-	// Initialize TLS-SNI gateway for HTTPS filtering
-	// This gateway only allows connections to the server domain for non-authenticated users
-	tlsGateway, err := proxy.NewTLSSNIGateway(httpsPortInt, server)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create TLS-SNI gateway")
-	}
-	if err := tlsGateway.Start(); err != nil {
-		log.Fatal().Err(err).Msg("failed to start TLS-SNI gateway")
-	}
-	log.Info().
-		Int("https_port", httpsPortInt).
-		Str("allowed_domain", server).
-		Msg("TLS-SNI gateway started (HTTPS filtering)")
-
-	runner := app.NewRunner(wsClient, writer, dnsFactory, fwAdapter, captivePortal, tlsGateway, wsURL, iface)
+	runner := app.NewRunner(wsClient, writer, dnsServer, fwAdapter, wsURL, iface)
 
 	// Set the initial peer name in the runner
 	runner.SetCurrentPeerName(peerName)
@@ -148,20 +121,6 @@ func main() {
 	go func() {
 		<-sigCh
 		log.Info().Msg("shutdown signal received, stopping services...")
-
-		// Stop captive portal
-		if err := captivePortal.Stop(); err != nil {
-			log.Error().Err(err).Msg("failed to stop captive portal")
-		} else {
-			log.Info().Msg("captive portal stopped")
-		}
-
-		// Stop TLS gateway
-		if err := tlsGateway.Stop(); err != nil {
-			log.Error().Err(err).Msg("failed to stop TLS gateway")
-		} else {
-			log.Info().Msg("TLS gateway stopped")
-		}
 
 		close(stop)
 	}()
@@ -181,16 +140,18 @@ func envOr(k, def string) string {
 // sanitizeInterfaceName converts a peer name to a valid WireGuard interface name
 // Interface names must be alphanumeric, underscore, or dash, max 15 chars
 func sanitizeInterfaceName(peerName string) string {
-	// Replace invalid characters with underscores
-	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	sanitized := re.ReplaceAllString(peerName, "_")
+	// Convert to lowercase for consistency first
+	sanitized := strings.ToLower(peerName)
 
-	// Convert to lowercase for consistency
-	sanitized = strings.ToLower(sanitized)
+	// Replace invalid characters with underscores
+	re := regexp.MustCompile(`[^a-z0-9_-]`)
+	sanitized = re.ReplaceAllString(sanitized, "_")
 
 	// Truncate to max 15 characters (Linux interface name limit)
 	if len(sanitized) > 15 {
 		sanitized = sanitized[:15]
+		// Remove trailing underscores or dashes after truncation
+		sanitized = strings.TrimRight(sanitized, "_-")
 	}
 
 	// If empty after sanitization, use default

@@ -41,9 +41,6 @@ func ValidateDNSName(name string) error {
 		return ErrNameTooLong
 	}
 
-	// Convert to lowercase for validation (we'll enforce this)
-	name = strings.ToLower(name)
-
 	// Check if it starts with hyphen
 	if strings.HasPrefix(name, "-") {
 		return ErrNameStartsWithHyphen
@@ -54,7 +51,7 @@ func ValidateDNSName(name string) error {
 		return ErrNameEndsWithHyphen
 	}
 
-	// Check against regex pattern
+	// Check against regex pattern (must be lowercase already)
 	if !dnsNameRegex.MatchString(name) {
 		return ErrInvalidDNSName
 	}

@@ -3,6 +3,7 @@ package firewall
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	dom "wirety/agent/internal/domain/policy"
 
 	"github.com/rs/zerolog/log"
@@ -19,12 +20,15 @@ type Adapter struct {
 	httpsPort    int
 }
 
+// NewAdapter creates a new firewall adapter
+// wgIface: WireGuard interface name (e.g., "wg0")
+// natIface: NAT interface override (empty string for auto-detection)
 func NewAdapter(wgIface, natIface string) *Adapter {
 	return &Adapter{
 		iface:        wgIface,
-		natInterface: natIface,
-		httpPort:     3128, // Default HTTP proxy port
-		httpsPort:    3129, // Default HTTPS proxy port
+		natInterface: natIface, // Empty string means auto-detect
+		httpPort:     3128,     // Default HTTP proxy port
+		httpsPort:    3129,     // Default HTTPS proxy port
 	}
 }
 
@@ -32,6 +36,77 @@ func NewAdapter(wgIface, natIface string) *Adapter {
 func (a *Adapter) SetProxyPorts(httpPort, httpsPort int) {
 	a.httpPort = httpPort
 	a.httpsPort = httpsPort
+}
+
+// detectDefaultNATInterface detects the default network interface for NAT
+// Returns the interface with the default route (usually the one with internet access)
+func (a *Adapter) detectDefaultNATInterface() string {
+	// Try to get the default route interface
+	cmd := exec.Command("ip", "route", "show", "default") // #nosec G204 - static command
+	output, err := cmd.Output()
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to detect default route, falling back to common interfaces")
+		return a.fallbackNATInterface()
+	}
+
+	// Parse output like: "default via 192.168.1.1 dev eth0 proto dhcp metric 100"
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "default") && strings.Contains(line, "dev") {
+			parts := strings.Fields(line)
+			for i, part := range parts {
+				if part == "dev" && i+1 < len(parts) {
+					iface := parts[i+1]
+					log.Info().Str("interface", iface).Msg("detected default NAT interface")
+					return iface
+				}
+			}
+		}
+	}
+
+	log.Warn().Msg("could not parse default route, falling back to common interfaces")
+	return a.fallbackNATInterface()
+}
+
+// fallbackNATInterface tries common interface names as fallback
+func (a *Adapter) fallbackNATInterface() string {
+	commonInterfaces := []string{"eth0", "ens3", "ens18", "enp0s3", "wlan0", "wlp2s0"}
+
+	for _, iface := range commonInterfaces {
+		// Check if interface exists and is up
+		cmd := exec.Command("ip", "link", "show", iface) // #nosec G204 - controlled interface names
+		if err := cmd.Run(); err == nil {
+			// Check if interface has an IP address
+			cmd = exec.Command("ip", "addr", "show", iface) // #nosec G204 - controlled interface names
+			output, err := cmd.Output()
+			if err == nil && strings.Contains(string(output), "inet ") {
+				log.Info().Str("interface", iface).Msg("using fallback NAT interface")
+				return iface
+			}
+		}
+	}
+
+	log.Warn().Msg("no suitable NAT interface found")
+	return ""
+}
+
+// getNATInterface returns the NAT interface to use (config override or auto-detected)
+func (a *Adapter) getNATInterface() string {
+	// If explicitly configured, use that
+	if a.natInterface != "" {
+		log.Debug().Str("interface", a.natInterface).Msg("using configured NAT interface")
+		return a.natInterface
+	}
+
+	// Otherwise, auto-detect
+	detected := a.detectDefaultNATInterface()
+	if detected != "" {
+		log.Info().Str("interface", detected).Msg("auto-detected NAT interface")
+		return detected
+	}
+
+	log.Warn().Msg("no NAT interface available - NAT rules will be skipped")
+	return ""
 }
 
 // EnableDebugLogging adds LOG rules to help debug packet drops
@@ -53,6 +128,16 @@ func (a *Adapter) run(args ...string) error {
 	}
 	return nil
 }
+
+// runIPv6 runs an ip6tables command
+// func (a *Adapter) runIPv6(args ...string) error {
+// 	cmd := exec.Command("ip6tables", args...) // #nosec G204
+// 	out, err := cmd.CombinedOutput()
+// 	if err != nil {
+// 		return fmt.Errorf("ip6tables %v failed: %v output=%s", args, err, string(out))
+// 	}
+// 	return nil
+// }
 
 // ruleExists checks if an iptables rule exists by parsing the rule arguments
 func (a *Adapter) ruleExists(args ...string) bool {
@@ -154,7 +239,60 @@ func (a *Adapter) runIfNotExists(args ...string) error {
 	return a.run(args...)
 }
 
-// Sync applies forwarding/NAT plus isolation & ACL blocks.
+// applyIPTablesRule parses and applies a single iptables rule to the specified chain
+// The rule string should be in the format: "iptables -A CHAIN [options]"
+// We extract the options and apply them to our custom chain
+func (a *Adapter) applyIPTablesRule(chain, rule string) error {
+	// Parse the rule string to extract iptables arguments
+	// Expected format: "iptables -A CHAIN [options]" or just the options part
+	// We'll replace any chain reference with our custom chain
+
+	// Split the rule into tokens
+	tokens := strings.Fields(rule)
+	if len(tokens) == 0 {
+		return fmt.Errorf("empty iptables rule")
+	}
+
+	// Build the arguments for our iptables command
+	args := make([]string, 0, len(tokens)+2)
+
+	// Skip "iptables" if it's the first token
+	startIdx := 0
+	if tokens[0] == "iptables" {
+		startIdx = 1
+	}
+
+	// Look for -A or -I and replace the chain name
+	foundChain := false
+	for i := startIdx; i < len(tokens); i++ {
+		if tokens[i] == "-A" || tokens[i] == "-I" {
+			args = append(args, "-A") // Always use -A for appending
+			if i+1 < len(tokens) {
+				// Skip the original chain name and use our custom chain
+				i++
+				foundChain = true
+			}
+			args = append(args, chain)
+		} else {
+			args = append(args, tokens[i])
+		}
+	}
+
+	// If no chain was specified, prepend -A CHAIN
+	if !foundChain {
+		args = append([]string{"-A", chain}, args...)
+	}
+
+	// Apply the rule
+	if err := a.run(args...); err != nil {
+		return fmt.Errorf("failed to apply rule: %w", err)
+	}
+
+	log.Debug().Str("rule", rule).Strs("args", args).Msg("applied iptables rule")
+	return nil
+}
+
+// Sync applies forwarding/NAT plus policy-based iptables rules.
 // This method is called periodically when policy updates are received.
 // To avoid dropping active connections, we check if rules exist before adding them.
 func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string) error {
@@ -165,73 +303,20 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	if err := exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1").Run(); err != nil {
 		log.Warn().Err(err).Msg("failed enabling ip_forward")
 	}
+
+	// Enable IPv6 forwarding for dual-stack support
+	if err := exec.Command("sysctl", "-w", "net.ipv6.conf.all.forwarding=1").Run(); err != nil {
+		log.Warn().Err(err).Msg("failed enabling ipv6 forwarding")
+	}
+
+	// TODO: Apply IPv6 firewall rules (ip6tables) based on policies
+	// For now, IPv6 traffic is allowed but not filtered by policies
+	// This should be implemented as part of full dual-stack support
 	// Create custom chain if it doesn't exist, then flush it
 	chain := "WIRETY_JUMP"
 	// Try to create the chain (will fail silently if it already exists)
 	_ = a.run("-N", chain)
 	_ = a.run("-F", chain)
-
-	// Base accept rules (will be appended after drop rules)
-	// Isolation logic:
-	isolated := map[string]bool{}
-	for _, peer := range p.Peers {
-		if peer.Isolated {
-			isolated[peer.IP] = true
-		}
-	}
-
-	// Rule sets: isolated<->isolated, non->isolated, jump->isolated
-	ips := make([]string, 0, len(p.Peers))
-	for _, peer := range p.Peers {
-		ips = append(ips, peer.IP)
-	}
-
-	// isolated <-> isolated
-	for i := 0; i < len(ips); i++ {
-		for j := i + 1; j < len(ips); j++ {
-			ip1, ip2 := ips[i], ips[j]
-			if isolated[ip1] && isolated[ip2] {
-				_ = a.run("-A", chain, "-s", ip1, "-d", ip2, "-m", "state", "--state", "NEW", "-j", "DROP")
-				_ = a.run("-A", chain, "-s", ip2, "-d", ip1, "-m", "state", "--state", "NEW", "-j", "DROP")
-			}
-		}
-	}
-	// non-isolated -> isolated
-	for _, src := range ips {
-		if !isolated[src] {
-			for _, dst := range ips {
-				if isolated[dst] {
-					_ = a.run("-A", chain, "-s", src, "-d", dst, "-m", "state", "--state", "NEW", "-j", "DROP")
-				}
-			}
-		}
-	}
-	// jump -> isolated
-	// for _, dst := range ips {
-	// 	if isolated[dst] {
-	// 		_ = a.run("-A", chain, "-s", selfIP, "-d", dst, "-m", "state", "--state", "NEW", "-j", "DROP")
-	// 	}
-	// }
-
-	// ACL blocked: treat as bidirectional drop pairs
-	blockedSet := map[string]bool{}
-	for _, id := range p.ACLBlocked {
-		blockedSet[id] = true
-	}
-	// Need mapping from peer ID to IP
-	idToIP := map[string]string{}
-	for _, peer := range p.Peers {
-		idToIP[peer.ID] = peer.IP
-	}
-	for _, srcPeer := range p.Peers {
-		if blockedSet[srcPeer.ID] {
-			for _, dstPeer := range p.Peers {
-				if blockedSet[dstPeer.ID] && srcPeer.ID != dstPeer.ID {
-					_ = a.run("-A", chain, "-s", srcPeer.IP, "-d", dstPeer.IP, "-m", "state", "--state", "NEW", "-j", "DROP")
-				}
-			}
-		}
-	}
 
 	// Build whitelist map for quick lookup (needed for blocking rules)
 	whitelisted := make(map[string]bool)
@@ -239,104 +324,50 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 		whitelisted[ip] = true
 	}
 
-	// Block all traffic from unauthenticated non-agent peers (except to proxy ports)
-	// This ensures they can only access the captive portal
-	for _, peer := range p.Peers {
-		if !peer.UseAgent && !whitelisted[peer.IP] {
-			// Allow traffic to proxy ports (for captive portal redirect)
-			_ = a.run("-A", chain,
-				"-i", a.iface,
-				"-s", peer.IP,
-				"-p", "tcp",
-				"--dport", fmt.Sprintf("%d", a.httpPort),
-				"-j", "ACCEPT")
-
-			_ = a.run("-A", chain,
-				"-i", a.iface,
-				"-s", peer.IP,
-				"-p", "tcp",
-				"--dport", fmt.Sprintf("%d", a.httpsPort),
-				"-j", "ACCEPT")
-
-			// Allow DNS (port 53) for captive portal to work
-			_ = a.run("-A", chain,
-				"-i", a.iface,
-				"-s", peer.IP,
-				"-p", "udp",
-				"--dport", "53",
-				"-j", "ACCEPT")
-
-			// Block all other traffic from unauthenticated non-agent peers
-			_ = a.run("-A", chain,
-				"-i", a.iface,
-				"-s", peer.IP,
-				"-j", "DROP")
-
-			log.Debug().
-				Str("peer_ip", peer.IP).
-				Str("peer_name", peer.Name).
-				Msg("blocking all traffic from unauthenticated non-agent peer")
+	// Apply policy-based iptables rules in order
+	// These rules are generated by the server based on policies attached to groups
+	if len(p.IPTablesRules) > 0 {
+		log.Info().Int("rule_count", len(p.IPTablesRules)).Msg("applying policy-based iptables rules")
+		for i, rule := range p.IPTablesRules {
+			if err := a.applyIPTablesRule(chain, rule); err != nil {
+				log.Error().Err(err).Int("rule_index", i).Str("rule", rule).Msg("failed to apply iptables rule")
+				// Continue applying other rules even if one fails
+			}
 		}
+	} else {
+		log.Debug().Msg("no policy-based iptables rules to apply")
 	}
 
-	// Accept passes for authenticated peers and agent peers
-	_ = a.run("-A", chain, "-i", a.iface, "-j", "ACCEPT")
-	_ = a.run("-A", chain, "-o", a.iface, "-j", "ACCEPT")
+	_ = a.run("-A", chain,
+		"-i", a.iface,
+		"-j", "DROP")
+
+	// Default deny rule at the end for policy-based access control
+	// This ensures that any traffic not explicitly allowed by policies is denied
+	// Note: The server generates the final "iptables -A FORWARD -j DROP" rule
+	// which will be applied to our custom chain
+
+	log.Debug().Msg("applied policy-based iptables rules")
 
 	// Attach chain to FORWARD (insert at top, only if not already attached)
 	_ = a.runIfNotExists("-I", "FORWARD", "1", "-j", chain)
 
-	// Captive portal redirection for non-agent peers
-	// Create a custom chain for captive portal redirects
-	// We flush the chain content but keep chain attachments to avoid dropping connections
-	captiveChain := "WIRETY_CAPTIVE"
-	_ = a.run("-t", "nat", "-N", captiveChain)
-	_ = a.run("-t", "nat", "-F", captiveChain)
-
-	// Redirect HTTP and HTTPS traffic from non-agent peers
-	// HTTP (port 80) → HTTP proxy (port from --http-port flag)
-	// HTTPS (port 443) → TLS-SNI gateway (port from --https-port flag)
-	for _, peer := range p.Peers {
-		if !peer.UseAgent && !whitelisted[peer.IP] {
-			// Redirect HTTP traffic (port 80) to HTTP proxy
-			_ = a.run("-t", "nat", "-A", captiveChain,
-				"-i", a.iface,
-				"-s", peer.IP,
-				"-p", "tcp",
-				"--dport", "80",
-				"-j", "REDIRECT",
-				"--to-port", fmt.Sprintf("%d", a.httpPort))
-
-			// Redirect HTTPS traffic (port 443) to TLS-SNI gateway
-			// The TLS-SNI gateway will parse SNI and only allow server domain
-			_ = a.run("-t", "nat", "-A", captiveChain,
-				"-i", a.iface,
-				"-s", peer.IP,
-				"-p", "tcp",
-				"--dport", "443",
-				"-j", "REDIRECT",
-				"--to-port", fmt.Sprintf("%d", a.httpsPort))
-
-			log.Debug().
-				Str("peer_ip", peer.IP).
-				Str("peer_name", peer.Name).
-				Int("http_redirect_port", a.httpPort).
-				Int("https_redirect_port", a.httpsPort).
-				Msg("added captive portal redirect for non-agent peer")
-		} else if !peer.UseAgent && whitelisted[peer.IP] {
-			log.Debug().
-				Str("peer_ip", peer.IP).
-				Str("peer_name", peer.Name).
-				Msg("skipping captive portal redirect for whitelisted peer")
+	// NAT (MASQUERADE) for internet access (only add if not already present)
+	natIface := a.getNATInterface()
+	if natIface != "" {
+		if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
+			log.Warn().Err(err).Str("interface", natIface).Msg("failed to add NAT rule")
+		} else {
+			log.Debug().Str("interface", natIface).Msg("NAT rule configured")
 		}
-	}
 
-	// Attach captive portal chain to PREROUTING (only if not already attached)
-	_ = a.runIfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-j", captiveChain)
-
-	// NAT (MASQUERADE) if needed (only add if not already present)
-	if a.natInterface != "" {
-		_ = a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", a.natInterface, "-j", "MASQUERADE")
+		// TODO: Add IPv6 NAT (MASQUERADE) support
+		// IPv6 NAT requires ip6tables -t nat which may not be available on all systems
+		// if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
+		//     log.Debug().Err(err).Msg("IPv6 NAT not available (normal on many systems)")
+		// }
+	} else {
+		log.Info().Msg("no NAT interface configured - peers will not have internet access")
 	}
 	return nil
 }

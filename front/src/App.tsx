@@ -8,6 +8,9 @@ import PeersPage from './pages/peers/PeersPage';
 import IPAMPage from './pages/ipam/IPAMPage';
 import SecurityPage from './pages/security/SecurityPage';
 import UsersPage from './pages/users/UsersPage';
+import GroupsPage from './pages/groups/GroupsPage';
+import PoliciesPage from './pages/policies/PoliciesPage';
+import RoutesPage from './pages/routes/RoutesPage';
 import LoginPage from './pages/auth/LoginPage';
 import CaptivePortalPage from './pages/captive-portal/CaptivePortalPage';
 
@@ -33,6 +36,9 @@ function ProtectedRoutes() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/networks" element={<NetworksPage />} />
         <Route path="/peers" element={<PeersPage />} />
+        <Route path="/groups" element={<GroupsPage />} />
+        <Route path="/policies" element={<PoliciesPage />} />
+        <Route path="/routes" element={<RoutesPage />} />
         <Route path="/ipam" element={<IPAMPage />} />
         <Route path="/security" element={<SecurityPage />} />
         <Route path="/users" element={<UsersPage />} />

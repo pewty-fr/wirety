@@ -1,0 +1,79 @@
+# Multi-architecture Dockerfile for Kubernetes deployment
+# Supports linux/amd64, linux/arm64, linux/arm/v7
+
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+
+# Build arguments
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+ARG VERSION=dev
+ARG BUILDTIME
+ARG COMMIT
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the binary for target architecture
+RUN CGO_ENABLED=0 \
+    GOOS=${TARGETOS} \
+    GOARCH=${TARGETARCH} \
+    GOARM=${TARGETVARIANT#v} \
+    go build \
+    -ldflags="-w -s -X main.version=${VERSION} -X main.buildTime=${BUILDTIME} -X main.commit=${COMMIT}" \
+    -o wirety-agent ./cmd/agent
+
+# Final stage - minimal runtime image with all necessary tools for Kubernetes
+FROM alpine:3.19
+
+# Install all necessary packages for Kubernetes deployment
+RUN apk add --no-cache \
+    # Core WireGuard and networking tools
+    wireguard-tools \
+    iptables \
+    ip6tables \
+    iproute2 \
+    && rm -rf /var/cache/apk/*
+
+# Create non-root user for security
+RUN addgroup -g 1000 wirety && \
+    adduser -D -u 1000 -G wirety wirety
+
+# Create necessary directories
+RUN mkdir -p /app && \
+    chown -R wirety:wirety /app
+
+WORKDIR /app
+
+# Copy the binary from builder stage
+COPY --from=builder /build/wirety-agent /app/wirety-agent
+
+# Make binary executable
+RUN chmod +x /app/wirety-agent
+
+
+# Switch to non-root user
+USER wirety
+
+# Set environment variables with defaults
+ENV SERVER_URL="" \
+    TOKEN="" \
+    WG_CONFIG_PATH="/etc/wireguard" \
+    WG_APPLY_METHOD="syncconf" \
+    NAT_INTERFACE="" \
+    LOG_LEVEL="info"
+
+# Expose default ports
+EXPOSE 53/udp
+
+# Use tini as init system for proper signal handling
+ENTRYPOINT ["/app/wirety-agent"]

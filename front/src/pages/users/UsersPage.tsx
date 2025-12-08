@@ -65,22 +65,21 @@ export default function UsersPage() {
       <PageHeader 
         title="Users" 
         subtitle={`${total} user${total !== 1 ? 's' : ''} total`}
+        action={
+          isAdmin ? (
+            <div className="mb-6">
+              <button
+                onClick={() => setIsDefaultPermissionsModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                <FontAwesomeIcon icon={faCog} />
+              </button>
+            </div>
+          ) : undefined
+        }
       />
 
       <div className="p-8">
-        {/* Default Permissions Button */}
-        {isAdmin && (
-          <div className="mb-6">
-            <button
-              onClick={() => setIsDefaultPermissionsModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
-              <FontAwesomeIcon icon={faCog} />
-              Default Permissions for New Users
-            </button>
-          </div>
-        )}
-
         {loading ? (
           <div className="flex flex-col items-center justify-center py-16">
             <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-solid border-current border-r-transparent align-[-0.125em] text-primary-600 dark:text-primary-400 motion-reduce:animate-[spin_1.5s_linear_infinite] mb-4"></div>

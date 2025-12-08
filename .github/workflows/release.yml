@@ -51,6 +51,33 @@ jobs:
           (cd build && sha256sum * > checksums.txt)
           ls -lh build
       
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Scaleway
+        uses: docker/login-action@v3
+        with:
+          registry: rg.fr-par.scw.cloud
+          username: nologin
+          password: ${{ secrets.SCW_SECRET_KEY }}
+      
+      - name: Build and Push Agent Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./agent
+          file: ./agent/Dockerfile.multiarch
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: |
+            rg.fr-par.scw.cloud/wirety/agent:${{ needs.detect-component.outputs.version }}
+            rg.fr-par.scw.cloud/wirety/agent:latest
+          build-args: |
+            VERSION=${{ needs.detect-component.outputs.version }}
+            BUILDTIME=${{ github.event.repository.updated_at }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
       - name: Upload release assets (binaries + checksums)
         uses: softprops/action-gh-release@v2
         with:

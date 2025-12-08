@@ -70,7 +70,7 @@ func TestSanitizeDNSName(t *testing.T) {
 		{"complex sanitization", "My_Complex@Host#Name!", "my-complex-host-name"},
 		{"empty string", "", ""},
 		{"only special chars", "@#$%", ""},
-		{"truncate long name", "verylonghostnamethatexceedsthemaximumlengthof63charactersallowedindnsnames", "verylonghostnamethatexceedsthemaximumlengthof63charactersallo"},
+		{"truncate long name", "verylonghostnamethatexceedsthemaximumlengthof63charactersallowedindnsnames", "verylonghostnamethatexceedsthemaximumlengthof63charactersallowe"},
 		{"truncate with trailing hyphen", "verylonghostnamethatexceedsthemaximumlengthof63characters-", "verylonghostnamethatexceedsthemaximumlengthof63characters"},
 	}
 
