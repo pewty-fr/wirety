@@ -12,7 +12,7 @@ export interface Network {
 
 // Helper function to compute domain for a network
 export const getNetworkDomain = (network: Network): string => {
-  return `${network.name}.local`;
+  return `${network.name}.${network.domain_suffix}`;
 };
 
 export interface Peer {

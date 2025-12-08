@@ -273,7 +273,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
-              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.local</p>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.{network?.domain_suffix || 'internal' }</p>
             </div>
             {/* Owner */}
             {displayPeer.owner_id && (
