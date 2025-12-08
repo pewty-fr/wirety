@@ -20,7 +20,7 @@ jobs:
     if: github.event.issue.pull_request && (github.event.comment.body == '/help')
     steps:
       - name: Update comment
-        uses: peter-evans/create-or-update-comment@v3
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ github.event.comment.id }}
           body: |
@@ -58,7 +58,7 @@ jobs:
           helm push wirety-v0.0.0-${{ steps.vars.outputs.date }}.tgz oci://rg.fr-par.scw.cloud/wirety/chart
       - name: Update comment
         if: always()
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ github.event.comment.id }}
           body: |
@@ -110,7 +110,7 @@ jobs:
       
       - name: Update comment
         if: always()
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ github.event.comment.id }}
           body: |
@@ -150,7 +150,7 @@ jobs:
           KO_DOCKER_REPO=rg.fr-par.scw.cloud/wirety/server ko publish ./cmd --bare --tags ${{ steps.vars.outputs.date }}-SNAPSHOT --platform=all
       - name: Update comment
         if: always()
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ github.event.comment.id }}
           body: |
@@ -188,7 +188,7 @@ jobs:
           docker push rg.fr-par.scw.cloud/wirety/front:${{ steps.vars.outputs.date }}-SNAPSHOT
       - name: Update comment
         if: always()
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ github.event.comment.id }}
           body: |
@@ -226,7 +226,7 @@ jobs:
           docker push rg.fr-par.scw.cloud/wirety/doc:${{ steps.vars.outputs.date }}-SNAPSHOT
       - name: Update comment
         if: always()
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ github.event.comment.id }}
           body: |
