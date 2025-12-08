@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/pewty-fr/wirety/compare/wirety-agent/v1.1.0...wirety-agent/v2.0.0) (2025-12-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* add group, policy, route & dns ([#51](https://github.com/pewty-fr/wirety/issues/51))
+
+### Features
+
+* add group, policy, route & dns ([#51](https://github.com/pewty-fr/wirety/issues/51)) ([6f00cec](https://github.com/pewty-fr/wirety/commit/6f00cec2ec8d58784c435b8ad315759133e257fc))
+
 ## [1.1.0](https://github.com/pewty-fr/wirety/compare/wirety-agent/v1.0.0...wirety-agent/v1.1.0) (2025-11-27)
 
 
