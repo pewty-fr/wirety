@@ -74,8 +74,11 @@ func (m *mockDNSRepository) ListDNSMappings(ctx context.Context, routeID string)
 }
 
 func (m *mockDNSRepository) GetNetworkDNSMappings(ctx context.Context, networkID string) ([]*network.DNSMapping, error) {
-	// For this test, we don't need to implement this
-	return nil, nil
+	var mappings []*network.DNSMapping
+	for _, mapping := range m.mappings {
+		mappings = append(mappings, mapping)
+	}
+	return mappings, nil
 }
 
 type mockRouteRepository struct {

@@ -102,12 +102,24 @@ func validateDNSName(name string) error {
 	if name == "" {
 		return errors.New("DNS name cannot be empty")
 	}
-	if len(name) > 255 {
-		return errors.New("DNS name cannot exceed 255 characters")
+	// DNS labels should be max 63 characters according to RFC 1035
+	if len(name) > 63 {
+		return errors.New("DNS name cannot exceed 63 characters")
 	}
 	// Check for invalid characters - DNS names should be alphanumeric with hyphens
 	if strings.ContainsAny(name, " \n\r\t") {
 		return errors.New("DNS name cannot contain spaces, newlines, or tabs")
+	}
+	// Additional RFC compliance: no special characters except hyphens
+	for _, char := range name {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-') {
+			return errors.New("DNS name can only contain alphanumeric characters and hyphens")
+		}
+	}
+	// Cannot start or end with hyphen
+	if strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") {
+		return errors.New("DNS name cannot start or end with a hyphen")
 	}
 	return nil
 }

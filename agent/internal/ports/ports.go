@@ -32,24 +32,3 @@ type FirewallPort interface {
 	Sync(policy *pol.JumpPolicy, selfIP string, whitelistedIPs []string) error
 	SetProxyPorts(httpPort, httpsPort int)
 }
-
-// CaptivePortalPort defines capability to run a captive portal proxy.
-type CaptivePortalPort interface {
-	Start() error
-	Stop() error
-	UpdateNonAgentPeers(peerIPs []string)
-	AddWhitelistedPeer(ip string)
-	RemoveWhitelistedPeer(ip string)
-	ClearWhitelist()
-}
-
-// TLSSNIGatewayPort defines capability to run a TLS-SNI gateway for HTTPS filtering.
-type TLSSNIGatewayPort interface {
-	Start() error
-	Stop() error
-	UpdateNonAgentPeers(peerIPs []string)
-	AddWhitelistedPeer(ip string)
-	RemoveWhitelistedPeer(ip string)
-	ClearWhitelist()
-	AddAllowedDomain(domain string)
-}

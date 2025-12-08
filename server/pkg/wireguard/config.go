@@ -170,8 +170,8 @@ func isNetworkOrBroadcast(ip net.IP, ipnet *net.IPNet) bool {
 	}
 
 	// Broadcast address check
-	broadcast := make(net.IP, len(ip))
-	for i := range ip {
+	broadcast := make(net.IP, len(ipnet.IP))
+	for i := range ipnet.IP {
 		broadcast[i] = ipnet.IP[i] | ^ipnet.Mask[i]
 	}
 

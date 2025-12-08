@@ -110,12 +110,24 @@ func validateDomainSuffix(suffix string) error {
 	if suffix == "" {
 		return nil // Empty is allowed, will use default
 	}
-	if len(suffix) > 255 {
-		return errors.New("domain suffix cannot exceed 255 characters")
+	if len(suffix) > 253 {
+		return errors.New("domain suffix cannot exceed 253 characters")
 	}
 	// Basic domain validation - should not contain spaces or invalid characters
-	if strings.ContainsAny(suffix, " \n\r\t") {
-		return errors.New("domain suffix cannot contain spaces, newlines, or tabs")
+	if strings.ContainsAny(suffix, " \n\r\t_") {
+		return errors.New("domain suffix cannot contain spaces, newlines, tabs, or underscores")
+	}
+	// Must be a valid domain format (letters, numbers, dots, hyphens)
+	for _, char := range suffix {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '.' || char == '-') {
+			return errors.New("domain suffix can only contain alphanumeric characters, dots, and hyphens")
+		}
+	}
+	// Cannot start or end with dot or hyphen
+	if strings.HasPrefix(suffix, ".") || strings.HasSuffix(suffix, ".") ||
+		strings.HasPrefix(suffix, "-") || strings.HasSuffix(suffix, "-") {
+		return errors.New("domain suffix cannot start or end with a dot or hyphen")
 	}
 	return nil
 }

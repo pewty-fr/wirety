@@ -67,8 +67,8 @@ func validateGroupName(name string) error {
 	if name == "" {
 		return errors.New("group name cannot be empty")
 	}
-	if len(name) > 255 {
-		return errors.New("group name cannot exceed 255 characters")
+	if len(name) > 64 {
+		return errors.New("group name cannot exceed 64 characters")
 	}
 	// Check for invalid characters
 	if strings.ContainsAny(name, "\n\r\t") {

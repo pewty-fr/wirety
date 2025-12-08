@@ -219,47 +219,11 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				}
 				r.dnsServerMu.Unlock()
 			}
-			// Handle OAuth issuer for TLS-SNI gateway
-			// if payload.OAuthIssuer != "" && r.tlsGateway != nil {
-			// 	r.tlsGateway.AddAllowedDomain(payload.OAuthIssuer)
-			// }
-
-			// Handle whitelist updates
-			// if payload.Whitelist != nil {
-			// 	log.Info().Int("count", len(payload.Whitelist)).Msg("updating whitelist")
-			// 	// Clear existing whitelist and add new ones
-			// 	if r.captivePortal != nil {
-			// 		r.captivePortal.ClearWhitelist()
-			// 		for _, ip := range payload.Whitelist {
-			// 			r.captivePortal.AddWhitelistedPeer(ip)
-			// 		}
-			// 	}
-			// 	if r.tlsGateway != nil {
-			// 		r.tlsGateway.ClearWhitelist()
-			// 		for _, ip := range payload.Whitelist {
-			// 			r.tlsGateway.AddWhitelistedPeer(ip)
-			// 		}
-			// 	}
-			// }
 
 			if payload.Policy != nil && r.fwAdapter != nil {
 				log.Info().
 					Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
 					Msg("applying firewall policy update")
-
-				// Update captive portal and TLS gateway with non-agent peers
-				// nonAgentIPs := make([]string, 0)
-				// for _, peer := range payload.Policy.Peers {
-				// 	if !peer.UseAgent {
-				// 		nonAgentIPs = append(nonAgentIPs, peer.IP)
-				// 	}
-				// }
-				// if r.captivePortal != nil {
-				// 	r.captivePortal.UpdateNonAgentPeers(nonAgentIPs)
-				// }
-				// if r.tlsGateway != nil {
-				// 	r.tlsGateway.UpdateNonAgentPeers(nonAgentIPs)
-				// }
 
 				// Get whitelisted IPs for firewall rules
 				whitelistedIPs := payload.Whitelist
