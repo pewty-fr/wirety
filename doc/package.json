@@ -23,7 +23,7 @@
     "@fortawesome/react-fontawesome": "^3.1.1",
     "@fortawesome/free-solid-svg-icons": "^7.1.0",
     "prism-react-renderer": "^2.3.0",
-    "react": "^19.0.0",
+    "react": "^19.2.3",
     "react-dom": "^19.2.1"
   },
   "devDependencies": {
