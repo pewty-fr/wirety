@@ -33,7 +33,7 @@ RUN CGO_ENABLED=0 \
     -o wirety-agent ./cmd/agent
 
 # Final stage - minimal runtime image with all necessary tools for Kubernetes
-FROM alpine:3.19
+FROM alpine:3.23
 
 # Install all necessary packages for Kubernetes deployment
 RUN apk add --no-cache \
