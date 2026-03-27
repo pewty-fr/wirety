@@ -112,7 +112,7 @@ jobs:
           password: ${{ secrets.SCW_SECRET_KEY }}
       
       - name: Build and Push Agent Docker Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./agent
           file: ./agent/Dockerfile.multiarch
