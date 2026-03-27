@@ -1,7 +1,7 @@
 # Multi-architecture Dockerfile for Kubernetes deployment
 # Supports linux/amd64, linux/arm64, linux/arm/v7
 
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 # Build arguments
 ARG TARGETOS
