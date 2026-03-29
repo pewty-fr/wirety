@@ -46,7 +46,7 @@ export default function UserDetailModal({ isOpen, onClose, user, onUpdate }: Use
     setIsLoading(true);
     try {
       const response = await api.getNetworks(1, 100);
-      setAvailableNetworks(response.data);
+      setAvailableNetworks(response.data ?? []);
     } catch (error) {
       console.error('Failed to load networks:', error);
     } finally {

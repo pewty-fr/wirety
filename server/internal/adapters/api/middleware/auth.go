@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const apiTokenPrefix = "wirety_"
+
 const (
 	// UserContextKey is the key used to store user in gin context
 	UserContextKey = "user"
@@ -21,53 +24,87 @@ const (
 // AuthMiddleware creates a middleware for authentication
 func AuthMiddleware(authService *auth.Service, userRepo domainAuth.Repository, cfg *config.AuthConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// If auth is disabled, set a default admin user and continue
-		if !cfg.Enabled {
-			// Create a virtual admin user for no-auth mode
-			adminUser := &domainAuth.User{
-				ID:    "admin",
-				Email: "admin@wirety.local",
-				Name:  "Administrator",
-				Role:  domainAuth.RoleAdministrator,
+		// API tokens (wirety_*) are accepted in both auth modes via Authorization: Bearer
+		if authHeader := c.GetHeader("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+			raw := strings.TrimPrefix(authHeader, "Bearer ")
+			if strings.HasPrefix(raw, apiTokenPrefix) {
+				user, err := handleAPITokenAuth(userRepo, raw)
+				if err != nil {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+					c.Abort()
+					return
+				}
+				c.Set(UserContextKey, user)
+				c.Next()
+				return
 			}
-			c.Set(UserContextKey, adminUser)
+		}
+
+		// If OIDC auth is disabled, use simple session-based auth
+		if !cfg.Enabled {
+			// Try cookie first, then Authorization: Session header
+			var sessionHash string
+			if cookie, err := c.Cookie("wirety_session"); err == nil && cookie != "" {
+				sessionHash = cookie
+			} else {
+				authHeader := c.GetHeader("Authorization")
+				parts := strings.SplitN(authHeader, " ", 2)
+				if len(parts) == 2 && strings.ToLower(parts[0]) == "session" {
+					sessionHash = parts[1]
+				}
+			}
+			if sessionHash == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session cookie or authorization header"})
+				c.Abort()
+				return
+			}
+
+			user, err := handleSimpleSessionAuth(userRepo, sessionHash)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+				c.Abort()
+				return
+			}
+
+			c.Set(UserContextKey, user)
 			c.Next()
 			return
 		}
 
-		// Extract token from Authorization header
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
-			c.Abort()
-			return
-		}
-
-		// Extract Bearer token or Session hash
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
-			c.Abort()
-			return
-		}
-
-		authType := strings.ToLower(parts[0])
-		authValue := parts[1]
-
+		// Resolve session: cookie takes priority, then Authorization header
 		var user *domainAuth.User
 		var err error
 
-		switch authType {
-		case "session":
-			// Session-based authentication (preferred)
-			user, err = handleSessionAuth(c, authService, userRepo, authValue)
-		case "bearer":
-			// Legacy token-based authentication (for backward compatibility)
-			user, err = handleTokenAuth(c, authService, authValue)
-		default:
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization type. Use 'Session' or 'Bearer'"})
-			c.Abort()
-			return
+		if cookie, cookieErr := c.Cookie("wirety_session"); cookieErr == nil && cookie != "" {
+			user, err = handleSessionAuth(c, authService, userRepo, cookie)
+		} else {
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
+				c.Abort()
+				return
+			}
+
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
+				c.Abort()
+				return
+			}
+
+			authType := strings.ToLower(parts[0])
+			authValue := parts[1]
+
+			switch authType {
+			case "session":
+				user, err = handleSessionAuth(c, authService, userRepo, authValue)
+			case "bearer":
+				user, err = handleTokenAuth(c, authService, authValue)
+			default:
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization type. Use 'Session' or 'Bearer'"})
+				c.Abort()
+				return
+			}
 		}
 
 		if err != nil {
@@ -80,6 +117,29 @@ func AuthMiddleware(authService *auth.Service, userRepo domainAuth.Repository, c
 		c.Set(UserContextKey, user)
 		c.Next()
 	}
+}
+
+// handleSimpleSessionAuth handles session-based auth for simple (non-OIDC) mode
+func handleSimpleSessionAuth(userRepo domainAuth.Repository, sessionHash string) (*domainAuth.User, error) {
+	session, err := userRepo.GetSession(sessionHash)
+	if err != nil {
+		return nil, fmt.Errorf("invalid session")
+	}
+
+	if !session.IsValid() {
+		_ = userRepo.DeleteSession(sessionHash)
+		return nil, fmt.Errorf("session expired")
+	}
+
+	user, err := userRepo.GetUser(session.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	session.LastUsedAt = time.Now()
+	_ = userRepo.UpdateSession(session)
+
+	return user, nil
 }
 
 // handleSessionAuth handles session-based authentication
@@ -148,6 +208,25 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 	session.LastUsedAt = time.Now()
 	_ = userRepo.UpdateSession(session)
 
+	return user, nil
+}
+
+// handleAPITokenAuth handles API token authentication (wirety_* tokens)
+func handleAPITokenAuth(userRepo domainAuth.Repository, rawToken string) (*domainAuth.User, error) {
+	h := sha256.Sum256([]byte(rawToken))
+	hash := fmt.Sprintf("%x", h)
+	token, err := userRepo.GetAPITokenByHash(hash)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API token")
+	}
+	if token.ExpiresAt != nil && token.ExpiresAt.Before(time.Now()) {
+		return nil, fmt.Errorf("API token expired")
+	}
+	user, err := userRepo.GetUser(token.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+	_ = userRepo.TouchAPIToken(token.ID)
 	return user, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	appgroup "wirety/internal/application/group"
+	"wirety/internal/audit"
 	"wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,14 @@ func (h *Handler) CreateGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "group.create").
+		Str("network_id", networkID).
+		Str("group_id", group.ID).
+		Str("group_name", group.Name).
+		Msg("audit")
 
 	c.JSON(http.StatusCreated, group)
 }
@@ -125,6 +134,14 @@ func (h *Handler) UpdateGroup(c *gin.Context) {
 		return
 	}
 
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "group.update").
+		Str("network_id", networkID).
+		Str("group_id", groupID).
+		Str("group_name", group.Name).
+		Msg("audit")
+
 	c.JSON(http.StatusOK, group)
 }
 
@@ -148,6 +165,13 @@ func (h *Handler) DeleteGroup(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "group.delete").
+		Str("network_id", networkID).
+		Str("group_id", groupID).
+		Msg("audit")
 
 	c.Status(http.StatusNoContent)
 }
@@ -188,6 +212,14 @@ func (h *Handler) AddPeerToGroup(c *gin.Context) {
 		return
 	}
 
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "group.peer.add").
+		Str("network_id", networkID).
+		Str("group_id", groupID).
+		Str("peer_id", peerID).
+		Msg("audit")
+
 	c.Status(http.StatusOK)
 }
 
@@ -213,6 +245,14 @@ func (h *Handler) RemovePeerFromGroup(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "group.peer.remove").
+		Str("network_id", networkID).
+		Str("group_id", groupID).
+		Str("peer_id", peerID).
+		Msg("audit")
 
 	c.Status(http.StatusNoContent)
 }

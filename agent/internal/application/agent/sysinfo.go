@@ -85,6 +85,29 @@ func getWireGuardUptime(iface string) int64 {
 	return 0
 }
 
+// GetWireGuardHandshakes returns the latest handshake time per peer public key.
+// Keys with no handshake yet (time zero) are omitted.
+func GetWireGuardHandshakes(iface string) map[string]time.Time {
+	cmd := exec.Command("wg", "show", iface, "latest-handshakes") // #nosec G204
+	output, err := cmd.Output()
+	if err != nil {
+		return make(map[string]time.Time)
+	}
+	result := make(map[string]time.Time)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			continue
+		}
+		ts, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || ts == 0 {
+			continue
+		}
+		result[parts[0]] = time.Unix(ts, 0)
+	}
+	return result
+}
+
 // getWireGuardEndpoints returns a map of peer public keys to their endpoints
 func getWireGuardEndpoints(iface string) map[string]string {
 	// Get peer endpoints using wg show

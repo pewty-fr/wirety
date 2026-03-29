@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	net_http "net/http"
 	"testing"
 	"time"
 	dom "wirety/agent/internal/domain/dns"
@@ -21,7 +22,7 @@ type mockWebSocketClient struct {
 	writeErr   error
 }
 
-func (m *mockWebSocketClient) Connect(url string) error {
+func (m *mockWebSocketClient) Connect(url string, _ net_http.Header) error {
 	if m.connectErr != nil {
 		return m.connectErr
 	}

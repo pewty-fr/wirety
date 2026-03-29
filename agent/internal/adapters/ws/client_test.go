@@ -56,7 +56,7 @@ func TestClient_ConnectAndClose(t *testing.T) {
 	client := NewClient()
 
 	// Test Connect
-	err := client.Connect(wsURL)
+	err := client.Connect(wsURL, nil)
 	if err != nil {
 		t.Errorf("Failed to connect: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestClient_WriteAndReadMessage(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
 
 	client := NewClient()
-	err := client.Connect(wsURL)
+	err := client.Connect(wsURL, nil)
 	if err != nil {
 		t.Errorf("Failed to connect: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestClient_ConnectInvalidURL(t *testing.T) {
 	client := NewClient()
 
 	// Test Connect with invalid URL
-	err := client.Connect("invalid-url")
+	err := client.Connect("invalid-url", nil)
 	if err == nil {
 		t.Error("Expected error when connecting to invalid URL")
 	}
@@ -210,7 +210,7 @@ func TestClient_MultipleMessages(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
 
 	client := NewClient()
-	err := client.Connect(wsURL)
+	err := client.Connect(wsURL, nil)
 	if err != nil {
 		t.Errorf("Failed to connect: %v", err)
 	}

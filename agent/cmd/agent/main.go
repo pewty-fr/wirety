@@ -16,6 +16,7 @@ import (
 	"wirety/agent/internal/adapters/wg"
 	"wirety/agent/internal/adapters/ws"
 	app "wirety/agent/internal/application/agent"
+	"wirety/agent/internal/audit"
 	dom "wirety/agent/internal/domain/dns"
 
 	"github.com/rs/zerolog"
@@ -25,6 +26,9 @@ import (
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+
+	auditEnabled := envOr("AUDIT_LOG", "false") == "true"
+	audit.Init(auditEnabled)
 
 	server := envOr("SERVER_URL", "http://localhost:8080")
 	token := envOr("TOKEN", "")
@@ -90,8 +94,7 @@ func main() {
 	} else if len(server) > 8 && server[:8] == "https://" {
 		wsServer = "wss://" + server[8:]
 	}
-	wsURL := fmt.Sprintf("%s/api/v1/ws?token=%s", wsServer, token)
-
+	wsURL := fmt.Sprintf("%s/api/v1/ws", wsServer)
 	wsClient := ws.NewClient()
 
 	// Parse proxy ports
@@ -108,7 +111,12 @@ func main() {
 	fwAdapter := firewall.NewAdapter(iface, natIface)
 	fwAdapter.SetProxyPorts(httpPortInt, httpsPortInt)
 
-	runner := app.NewRunner(wsClient, writer, dnsServer, fwAdapter, wsURL, iface)
+	runner := app.NewRunner(wsClient, writer, dnsServer, fwAdapter, wsURL, iface, peerID, networkID)
+
+	// Pass enrollment token as Authorization header (keeps it out of access logs)
+	wsHeaders := http.Header{}
+	wsHeaders.Set("Authorization", "Bearer "+token)
+	runner.SetHeaders(wsHeaders)
 
 	// Set the initial peer name in the runner
 	runner.SetCurrentPeerName(peerName)
@@ -170,8 +178,13 @@ type resolveResponse struct {
 }
 
 func resolveToken(server, token string) (string, string, string, string, error) {
-	url := fmt.Sprintf("%s/api/v1/agent/resolve?token=%s", server, token)
-	resp, err := http.Get(url) // #nosec G107 - server is trusted input
+	resolveURL := fmt.Sprintf("%s/api/v1/agent/resolve", server)
+	req, err := http.NewRequest(http.MethodGet, resolveURL, nil) // #nosec G107 - server is trusted input
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("resolve new request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("resolve http get: %w", err)
 	}

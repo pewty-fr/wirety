@@ -1,6 +1,8 @@
 package ports
 
 import (
+	"net/http"
+
 	dom "wirety/agent/internal/domain/dns"
 	pol "wirety/agent/internal/domain/policy"
 )
@@ -21,7 +23,7 @@ type DNSStarterPort interface {
 
 // WebSocketClientPort defines capability to connect and receive messages.
 type WebSocketClientPort interface {
-	Connect(url string) error
+	Connect(url string, header http.Header) error
 	ReadMessage() ([]byte, error)
 	WriteMessage(data []byte) error
 	Close() error

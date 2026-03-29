@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faServer, faLaptop, faRocket, faCopy } from '@fortawesome/free-solid-svg-icons';
+import { faServer, faLaptop, faRocket, faCopy, faCheckCircle, faTimesCircle, faRoute, faNetworkWired } from '@fortawesome/free-solid-svg-icons';
+import type { PeerReachability } from '../types';
 import Modal from './Modal';
 import JumpPeerModal from './JumpPeerModal';
 import RegularPeerModal from './RegularPeerModal';
@@ -18,7 +19,7 @@ interface PeerDetailModalProps {
 }
 
 export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users = [] }: PeerDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<'configuration' | 'access'>('configuration');
+  const [activeTab, setActiveTab] = useState<'configuration' | 'access' | 'reachability'>('configuration');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
@@ -39,6 +40,8 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
   }>>([]);
   const [routes, setRoutes] = useState<{ id: string; name: string; destination_cidr: string; description?: string }[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [reachability, setReachability] = useState<PeerReachability | null>(null);
+  const [loadingReachability, setLoadingReachability] = useState(false);
   const { user } = useAuth();
 
   // Get owner name from users list
@@ -166,14 +169,32 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     void loadPeerDetails();
   }, [isOpen, peer?.network_id, displayPeer]);
 
+  // Load reachability data when the reachability tab is opened
+  useEffect(() => {
+    if (activeTab !== 'reachability' || !isOpen || !peer?.network_id || !peer?.id) return;
+    const load = async () => {
+      setLoadingReachability(true);
+      try {
+        const data = await api.getPeerReachability(peer.network_id!, peer.id);
+        setReachability(data);
+      } catch (error) {
+        console.error('Failed to load reachability:', error);
+        setReachability(null);
+      } finally {
+        setLoadingReachability(false);
+      }
+    };
+    void load();
+  }, [activeTab, isOpen, peer?.network_id, peer?.id]);
+
   const handleClose = () => {
-    // Reset state before closing
     setActiveTab('configuration');
     setIsEditModalOpen(false);
     setConfigText(null);
     setConfigError(null);
     setConfigCopied(false);
     setTokenCopied(false);
+    setReachability(null);
     onClose();
   };
 
@@ -255,6 +276,17 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
               }`}
             >
               Access Control
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('reachability')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'reachability'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              Reachability
             </button>
           </div>
 
@@ -591,6 +623,152 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
               )}
             </div>
           )}
+          </div>
+          )}
+
+          {/* Reachability Tab */}
+          {activeTab === 'reachability' && (
+          <div className="space-y-6">
+            {loadingReachability ? (
+              <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">Computing reachability...</div>
+            ) : !reachability ? (
+              <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">Failed to load reachability data.</div>
+            ) : (
+              <>
+                {/* Jump peer note */}
+                {reachability.is_jump && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
+                    This is a jump peer. It acts as the gateway and enforces iptables firewall rules for all other peers in the network.
+                  </div>
+                )}
+
+                {/* Peer Access (ACL layer) */}
+                <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3 flex items-center gap-2">
+                    <FontAwesomeIcon icon={faNetworkWired} className="text-primary-500" />
+                    Peer Access ({(reachability.peer_access ?? []).filter(p => p.allowed).length} allowed, {(reachability.peer_access ?? []).filter(p => !p.allowed).length} denied)
+                  </h4>
+                  {(reachability.peer_access ?? []).length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-gray-400">No other peers in this network.</div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {(reachability.peer_access ?? []).map(pa => (
+                        <div key={pa.peer_id} className="flex items-center justify-between bg-white dark:bg-gray-700 px-3 py-2 rounded gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FontAwesomeIcon
+                              icon={pa.allowed ? faCheckCircle : faTimesCircle}
+                              className={pa.allowed ? 'text-green-500 shrink-0' : 'text-red-500 shrink-0'}
+                            />
+                            <div className="min-w-0">
+                              <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate block">{pa.peer_name}</span>
+                              <span className="text-xs font-mono text-gray-500 dark:text-gray-400">{pa.address}</span>
+                            </div>
+                            {pa.is_jump && (
+                              <span className="px-1.5 py-0.5 text-xs rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 shrink-0">jump</span>
+                            )}
+                          </div>
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${
+                            pa.allowed
+                              ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                              : 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
+                          }`}>
+                            {pa.reason === 'acl_disabled' ? 'allowed (no ACL)' :
+                             pa.reason === 'blocked' ? 'blocked' :
+                             pa.reason === 'deny_rule' ? 'deny rule' :
+                             pa.reason === 'allow_rule' ? 'allow rule' : 'default allow'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Policy Rules (firewall layer on jump peer) */}
+                {(reachability.rules ?? []).length > 0 && (
+                  <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3">
+                      Firewall Rules ({(reachability.rules ?? []).length})
+                      <span className="text-xs font-normal text-gray-500 dark:text-gray-400 ml-2">enforced on jump peer</span>
+                    </h4>
+                    <div className="space-y-2">
+                      {(reachability.rules ?? []).map((rule, i) => (
+                        <div key={i} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                          <div className="flex items-start gap-2">
+                            <FontAwesomeIcon
+                              icon={rule.action === 'allow' ? faCheckCircle : faTimesCircle}
+                              className={`mt-0.5 shrink-0 ${rule.action === 'allow' ? 'text-green-500' : 'text-red-500'}`}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                                <span className={`px-1.5 py-0.5 text-xs font-semibold rounded ${
+                                  rule.action === 'allow'
+                                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                    : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                                }`}>{rule.action.toUpperCase()}</span>
+                                <span className="px-1.5 py-0.5 text-xs font-semibold rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                                  {rule.direction.toUpperCase()}
+                                </span>
+                                <span className="text-xs font-mono text-gray-700 dark:text-gray-200">
+                                  {rule.target_type}: {rule.target}
+                                </span>
+                              </div>
+                              {rule.addresses && rule.addresses.length > 0 && rule.target_type !== 'cidr' && (
+                                <div className="flex flex-wrap gap-1 mb-1">
+                                  {rule.addresses.map(addr => (
+                                    <span key={addr} className="px-1.5 py-0.5 text-xs font-mono bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded">
+                                      {addr}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {rule.description && (
+                                <div className="text-xs text-gray-500 dark:text-gray-400">{rule.description}</div>
+                              )}
+                              <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                                {rule.policy_name} · {rule.group_name}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* External Routes */}
+                {(reachability.routes ?? []).length > 0 && (
+                  <div className="bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4">
+                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3 flex items-center gap-2">
+                      <FontAwesomeIcon icon={faRoute} className="text-primary-500" />
+                      External Routes ({(reachability.routes ?? []).length})
+                    </h4>
+                    <div className="space-y-1.5">
+                      {(reachability.routes ?? []).map(route => (
+                        <div key={route.route_id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{route.route_name}</span>
+                              <span className="text-xs font-mono text-gray-500 dark:text-gray-400 ml-2">{route.destination_cidr}</span>
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
+                              via <span className="font-medium text-gray-700 dark:text-gray-200">{route.jump_peer_name}</span>
+                            </div>
+                          </div>
+                          <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{route.group_name}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* No DB services note */}
+                {(reachability.rules ?? []).length === 0 && (reachability.routes ?? []).length === 0 && !reachability.is_jump && (
+                  <div className="text-sm text-gray-500 dark:text-gray-400 text-center">
+                    No policy rules or routes configured for this peer.
+                  </div>
+                )}
+              </>
+            )}
           </div>
           )}
 

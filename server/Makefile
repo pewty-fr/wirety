@@ -40,6 +40,9 @@ test: ## Run tests
 	go test -v -race -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
+test-integration: ## Run rule-generation integration tests (no root required)
+	go test -v -tags integration ./internal/application/policy/...
+
 clean: ## Clean build artifacts
 	rm -rf bin/ $(DIST_DIR)
 	rm -f coverage.out coverage.html

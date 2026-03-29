@@ -201,6 +201,47 @@ export interface Route {
   updated_at: string;
 }
 
+// Peer reachability — computed server-side from ACL + policies + routes
+export interface PeerAccess {
+  peer_id: string;
+  peer_name: string;
+  address: string;
+  is_jump: boolean;
+  allowed: boolean;
+  /** "acl_disabled" | "blocked" | "deny_rule" | "allow_rule" | "default_allow" */
+  reason: string;
+}
+
+export interface RuleAccess {
+  direction: 'input' | 'output';
+  action: 'allow' | 'deny';
+  target_type: 'cidr' | 'peer' | 'group';
+  target: string;
+  addresses: string[];
+  policy_name: string;
+  group_name: string;
+  description?: string;
+}
+
+export interface RouteAccess {
+  route_id: string;
+  route_name: string;
+  destination_cidr: string;
+  jump_peer_id: string;
+  jump_peer_name: string;
+  group_name: string;
+}
+
+export interface PeerReachability {
+  peer_id: string;
+  peer_name: string;
+  peer_address: string;
+  is_jump: boolean;
+  peer_access: PeerAccess[] | null;
+  rules: RuleAccess[] | null;
+  routes: RouteAccess[] | null;
+}
+
 export interface DNSMapping {
   id: string;
   route_id: string;
@@ -208,4 +249,13 @@ export interface DNSMapping {
   ip_address: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface APIToken {
+  id: string;
+  name: string;
+  token?: string; // only present on creation
+  created_at: string;
+  expires_at?: string;
+  last_used_at?: string;
 }

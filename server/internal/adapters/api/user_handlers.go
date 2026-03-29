@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"wirety/internal/adapters/api/middleware"
+	"wirety/internal/audit"
 	"wirety/internal/domain/auth"
 
 	"github.com/gin-gonic/gin"
@@ -97,6 +98,12 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		return
 	}
 
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "user.update").
+		Str("target_user_id", userID).
+		Msg("audit")
+
 	c.JSON(http.StatusOK, user)
 }
 
@@ -117,6 +124,12 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "user.delete").
+		Str("target_user_id", userID).
+		Msg("audit")
 
 	c.Status(http.StatusNoContent)
 }
@@ -183,6 +196,11 @@ func (h *Handler) UpdateDefaultPermissions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "user.defaults.update").
+		Msg("audit")
 
 	c.JSON(http.StatusOK, perms)
 }

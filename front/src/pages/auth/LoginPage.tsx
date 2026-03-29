@@ -1,20 +1,35 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faShield } from '@fortawesome/free-solid-svg-icons';
+import { faShield, faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons';
 
 export default function LoginPage() {
-  const { login, authConfig, isLoading } = useAuth();
+  const { login, simpleLogin, authConfig, isLoading } = useAuth();
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [showPassword, setShowPassword] = useState(false);
+  const sessionExpired = new URLSearchParams(window.location.search).get('session_expired') === '1';
 
   // Check if we're in the middle of OAuth callback
   const hasAuthCode = new URLSearchParams(window.location.search).has('code');
 
   useEffect(() => {
-    // If auth is not enabled (no-auth mode), redirect to dashboard
-    if (authConfig && !authConfig.enabled) {
-      window.location.href = '/dashboard';
-    }
+    // If already authenticated via session in localStorage, AuthContext handles redirect
   }, [authConfig]);
+
+  const handleSimpleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    setIsSubmitting(true);
+    const ok = await simpleLogin(password);
+    if (!ok) {
+      setLoginError('Invalid password. Please try again.');
+      setPassword('');
+    }
+    setIsSubmitting(false);
+  };
 
   // Show loading state during OAuth callback processing
   if (isLoading || hasAuthCode) {
@@ -44,17 +59,73 @@ export default function LoginPage() {
             <p className="text-gray-600 dark:text-gray-400">WireGuard Network Management</p>
           </div>
 
-          <div className="space-y-4">
-            <button
-              onClick={login}
-              className="w-full btn-brand font-medium py-3 px-4 rounded-lg transition-all"
-            >
-              Sign in with SSO
-            </button>
-            <p className="text-sm text-center text-gray-600 dark:text-gray-400">
-              You will be redirected to your organization's login page
-            </p>
-          </div>
+          {sessionExpired && (
+            <div className="mb-4 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-lg text-sm text-amber-700 dark:text-amber-400 text-center">
+              Your session has expired. Please sign in again.
+            </div>
+          )}
+
+          {authConfig?.simple_auth ? (
+            <form onSubmit={handleSimpleLogin} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  value="admin"
+                  readOnly
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter admin password"
+                    required
+                    autoFocus
+                    className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    tabIndex={-1}
+                  >
+                    <FontAwesomeIcon icon={showPassword ? faEyeSlash : faEye} className="text-sm" />
+                  </button>
+                </div>
+              </div>
+              {loginError && (
+                <p className="text-sm text-red-500 dark:text-red-400">{loginError}</p>
+              )}
+              <button
+                type="submit"
+                disabled={isSubmitting || !password}
+                className="w-full btn-brand font-medium py-3 px-4 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? 'Signing in...' : 'Sign in'}
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-4">
+              <button
+                onClick={login}
+                className="w-full btn-brand font-medium py-3 px-4 rounded-lg transition-all"
+              >
+                Sign in with SSO
+              </button>
+              <p className="text-sm text-center text-gray-600 dark:text-gray-400">
+                You will be redirected to your organization's login page
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

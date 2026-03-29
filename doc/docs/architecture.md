@@ -412,18 +412,22 @@ Server generates peer-specific configs:
 - Kubernetes-ready
 - Horizontal scaling support
 
+## Implemented Features (formerly roadmap)
+
+The following items were previously listed as future work and are now implemented:
+
+- ✅ **PostgreSQL backend** — enable with `DB_ENABLED=true` + `DB_DSN`
+- ✅ **Database migrations** — applied automatically at startup via `cmd/kodata/migrations/`
+- ✅ **Peer groups** — full Groups/Policies/Routes system
+- ✅ **Audit logging** — structured JSON audit trail on server and agent (enable with `AUDIT_LOG=true`)
+- ✅ **API tokens** — long-lived personal access tokens (`wirety_` prefix, SHA-256 hashed)
+- ✅ **MCP server** — embedded at `GET/POST /mcp` with Streamable HTTP transport
+
 ## Future Roadmap
 
-### Storage & Persistence
-- PostgreSQL backend
-- Database migrations
-- Multi-instance support
-
 ### Security Enhancements
-- Role-based access control (RBAC)
-- Token expiration
 - Automatic key rotation
-- Audit logging
+- Token expiration enforcement per-policy
 
 ### Monitoring & Observability
 - Prometheus metrics
@@ -432,11 +436,11 @@ Server generates peer-specific configs:
 - Health checks
 
 ### Features
-- Peer groups
 - Network templates
 - Bulk operations
 - Config versioning
 - Backup/restore
+- Multi-instance support (requires shared storage)
 
 ## Related Documentation
 
