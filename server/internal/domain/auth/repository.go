@@ -47,4 +47,20 @@ type Repository interface {
 
 	// CleanupExpiredSessions removes sessions with expired refresh tokens
 	CleanupExpiredSessions() error
+
+	// API token management
+	// CreateAPIToken persists a new API token (TokenHash must already be set).
+	CreateAPIToken(token *APIToken) error
+
+	// GetAPITokenByHash looks up a token by its SHA-256 hash.
+	GetAPITokenByHash(hash string) (*APIToken, error)
+
+	// ListAPITokens returns all tokens owned by the given user.
+	ListAPITokens(userID string) ([]*APIToken, error)
+
+	// DeleteAPIToken revokes a token by its ID.
+	DeleteAPIToken(tokenID string) error
+
+	// TouchAPIToken records that a token was just used (updates last_used_at).
+	TouchAPIToken(tokenID string) error
 }

@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync"
@@ -12,6 +14,8 @@ import (
 	"wirety/agent/internal/ports"
 
 	"github.com/rs/zerolog/log"
+
+	"wirety/agent/internal/audit"
 )
 
 // WebSocket message shape from server
@@ -30,6 +34,13 @@ type WSMessage struct {
 	OAuthIssuer string          `json:"oauth_issuer,omitempty"` // OAuth issuer URL for TLS-SNI gateway
 }
 
+// tunnelActive is the threshold below which a peer is considered connected.
+// WireGuard sends a keepalive every 25s and considers a peer inactive after ~180s.
+const tunnelActiveThreshold = 180 * time.Second
+
+// tunnelPollInterval is how often the runner checks for handshake changes.
+const tunnelPollInterval = 15 * time.Second
+
 type Runner struct {
 	wsClient          ports.WebSocketClientPort
 	cfgWriter         ports.ConfigWriterPort
@@ -37,14 +48,20 @@ type Runner struct {
 	dnsServerMu       sync.Mutex           // protects dnsServer
 	fwAdapter         ports.FirewallPort
 	wsURL             string
+	wsHeaders         http.Header
 	wgInterface       string
 	currentPeerName   string // Track current peer name to detect changes
+	peerID            string // for audit logging
+	networkID         string // for audit logging
+	// peerNames maps WireGuard public key → peer name (updated on each WSMessage).
+	peerNames   map[string]string
+	peerNamesMu sync.RWMutex
 	backoffBase       time.Duration
 	backoffMax        time.Duration
 	heartbeatInterval time.Duration
 }
 
-func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string) *Runner {
+func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string, peerID string, networkID string) *Runner {
 	return &Runner{
 		wsClient:          wsClient,
 		cfgWriter:         writer,
@@ -53,10 +70,18 @@ func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort
 		wsURL:             wsURL,
 		wgInterface:       wgInterface,
 		currentPeerName:   "", // Will be set when first message is received
+		peerID:            peerID,
+		networkID:         networkID,
+		peerNames:         make(map[string]string),
 		backoffBase:       time.Second,
 		backoffMax:        30 * time.Second,
 		heartbeatInterval: 30 * time.Second, // Send heartbeat every 30 seconds
 	}
+}
+
+// SetHeaders sets HTTP headers to send on WebSocket connection (e.g. Authorization).
+func (r *Runner) SetHeaders(header http.Header) {
+	r.wsHeaders = header
 }
 
 func (r *Runner) Start(stop <-chan struct{}) {
@@ -68,7 +93,7 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			return
 		default:
 		}
-		if err := r.wsClient.Connect(r.wsURL); err != nil {
+		if err := r.wsClient.Connect(r.wsURL, r.wsHeaders); err != nil {
 			log.Error().Err(err).Dur("retry", backoff).Msg("websocket connect failed")
 			select {
 			case <-stop:
@@ -91,6 +116,13 @@ func (r *Runner) Start(stop <-chan struct{}) {
 		defer endpointCheckTicker.Stop()
 		heartbeatDone := make(chan struct{})
 		var heartbeatWg sync.WaitGroup
+
+		// Start tunnel connection monitor
+		heartbeatWg.Add(1)
+		go func() {
+			defer heartbeatWg.Done()
+			r.monitorTunnels(heartbeatDone)
+		}()
 
 		// Track last known peer endpoints
 		var lastPeerEndpoints map[string]string
@@ -187,10 +219,18 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				}
 			}
 
+			// Update pubkey → name map used by the tunnel monitor
+			if payload.DNS != nil {
+				r.updatePeerNames(payload.Config, payload.DNS.Peers)
+			}
+
 			if err := r.cfgWriter.WriteAndApply(payload.Config); err != nil {
 				log.Error().Err(err).Msg("failed applying config")
 			} else {
 				log.Debug().Msg("config applied")
+				audit.Agent(r.peerID, r.networkID).
+					Str("action", "config.sync").
+					Msg("audit")
 			}
 
 			// Handle DNS server: start once, update on subsequent messages
@@ -211,6 +251,11 @@ func (r *Runner) Start(stop <-chan struct{}) {
 						Strs("upstream_servers", payload.DNS.UpstreamServers).
 						Msg("updating DNS server configuration")
 					r.dnsServer.Update(payload.DNS.Domain, payload.DNS.Peers)
+					audit.Agent(r.peerID, r.networkID).
+						Str("action", "dns.update").
+						Str("domain", payload.DNS.Domain).
+						Int("peer_count", len(payload.DNS.Peers)).
+						Msg("audit")
 
 					// Update upstream DNS servers
 					if len(payload.DNS.UpstreamServers) > 0 {
@@ -239,6 +284,10 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					log.Info().
 						Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
 						Msg("firewall policy update applied successfully")
+					audit.Agent(r.peerID, r.networkID).
+						Str("action", "firewall.sync").
+						Int("rule_count", len(payload.Policy.IPTablesRules)).
+						Msg("audit")
 				}
 			}
 		}
@@ -336,9 +385,18 @@ func (r *Runner) handlePeerNameChange(newPeerName string) error {
 		return fmt.Errorf("failed to update interface: %w", err)
 	}
 
+	oldName := r.currentPeerName
+
 	// Update our tracking variables
 	r.currentPeerName = newPeerName
 	r.wgInterface = newInterface
+
+	audit.Agent(r.peerID, r.networkID).
+		Str("action", "peer.rename").
+		Str("old_name", oldName).
+		Str("new_name", newPeerName).
+		Str("new_interface", newInterface).
+		Msg("audit")
 
 	// Update the firewall adapter to use the new interface
 	if r.fwAdapter != nil {
@@ -348,4 +406,161 @@ func (r *Runner) handlePeerNameChange(newPeerName string) error {
 	}
 
 	return nil
+}
+
+// updatePeerNames rebuilds the pubkey → peer name map from the WireGuard config and
+// DNS peers list. Called each time a new WSMessage arrives with DNS data.
+func (r *Runner) updatePeerNames(wgConfig string, dnsPeers []dom.DNSPeer) {
+	// Build IP → name from DNS peers.
+	ipToName := make(map[string]string, len(dnsPeers))
+	for _, p := range dnsPeers {
+		ip := strings.TrimSuffix(p.IP, "/32")
+		ipToName[ip] = p.Name
+	}
+
+	// Parse [Peer] sections from the WireGuard config to get pubkey → allowedIP.
+	names := make(map[string]string)
+	scanner := bufio.NewScanner(strings.NewReader(wgConfig))
+	var currentKey string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "PublicKey") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				currentKey = strings.TrimSpace(parts[1])
+			}
+		} else if strings.HasPrefix(line, "AllowedIPs") && currentKey != "" {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				for _, cidr := range strings.Split(parts[1], ",") {
+					ip := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cidr), "/32"))
+					if name, ok := ipToName[ip]; ok {
+						names[currentKey] = name
+						break
+					}
+				}
+			}
+			currentKey = ""
+		}
+	}
+
+	r.peerNamesMu.Lock()
+	r.peerNames = names
+	r.peerNamesMu.Unlock()
+}
+
+// peerNameFor returns the human-readable name for a WireGuard public key, or a
+// truncated key as fallback.
+func (r *Runner) peerNameFor(pubkey string) string {
+	r.peerNamesMu.RLock()
+	name := r.peerNames[pubkey]
+	r.peerNamesMu.RUnlock()
+	if name != "" {
+		return name
+	}
+	if len(pubkey) > 12 {
+		return pubkey[:12] + "..."
+	}
+	return pubkey
+}
+
+// monitorTunnels polls WireGuard handshake timestamps and emits log/audit events
+// whenever a peer transitions between connected and disconnected.
+func (r *Runner) monitorTunnels(done <-chan struct{}) {
+	ticker := time.NewTicker(tunnelPollInterval)
+	defer ticker.Stop()
+
+	// pubkey → was connected on last poll
+	states := make(map[string]bool)
+	// pubkey → time the current session started
+	connectedSince := make(map[string]time.Time)
+
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+
+		handshakes := GetWireGuardHandshakes(r.wgInterface)
+		endpoints := getWireGuardEndpoints(r.wgInterface)
+		now := time.Now()
+
+		// Mark peers that still appear in handshakes as seen.
+		seen := make(map[string]bool, len(handshakes))
+		for pubkey, ts := range handshakes {
+			seen[pubkey] = true
+			isActive := now.Sub(ts) < tunnelActiveThreshold
+			wasActive := states[pubkey]
+
+			if isActive && !wasActive {
+				// Peer just connected.
+				connectedSince[pubkey] = ts
+				name := r.peerNameFor(pubkey)
+				endpoint := endpoints[pubkey]
+				log.Info().
+					Str("event", "tunnel.connected").
+					Str("peer_name", name).
+					Str("peer_pubkey", pubkey).
+					Str("endpoint", endpoint).
+					Time("handshake_at", ts).
+					Msg("WireGuard tunnel connected")
+				audit.Agent(r.peerID, r.networkID).
+					Str("action", "tunnel.connected").
+					Str("peer_name", name).
+					Str("peer_pubkey", pubkey).
+					Str("endpoint", endpoint).
+					Time("handshake_at", ts).
+					Msg("audit")
+			} else if !isActive && wasActive {
+				// Peer just disconnected.
+				name := r.peerNameFor(pubkey)
+				endpoint := endpoints[pubkey]
+				since := connectedSince[pubkey]
+				duration := now.Sub(since)
+				log.Info().
+					Str("event", "tunnel.disconnected").
+					Str("peer_name", name).
+					Str("peer_pubkey", pubkey).
+					Str("endpoint", endpoint).
+					Time("last_handshake", ts).
+					Dur("session_duration", duration).
+					Msg("WireGuard tunnel disconnected")
+				audit.Agent(r.peerID, r.networkID).
+					Str("action", "tunnel.disconnected").
+					Str("peer_name", name).
+					Str("peer_pubkey", pubkey).
+					Str("endpoint", endpoint).
+					Time("last_handshake", ts).
+					Dur("session_duration", duration).
+					Msg("audit")
+				delete(connectedSince, pubkey)
+			}
+			states[pubkey] = isActive
+		}
+
+		// Detect peers that disappeared entirely from handshakes (removed from config).
+		for pubkey, wasActive := range states {
+			if !seen[pubkey] {
+				if wasActive {
+					name := r.peerNameFor(pubkey)
+					since := connectedSince[pubkey]
+					log.Info().
+						Str("event", "tunnel.disconnected").
+						Str("peer_name", name).
+						Str("peer_pubkey", pubkey).
+						Dur("session_duration", now.Sub(since)).
+						Msg("WireGuard tunnel disconnected (peer removed)")
+					audit.Agent(r.peerID, r.networkID).
+						Str("action", "tunnel.disconnected").
+						Str("peer_name", name).
+						Str("peer_pubkey", pubkey).
+						Dur("session_duration", now.Sub(since)).
+						Msg("audit")
+					delete(connectedSince, pubkey)
+				}
+				delete(states, pubkey)
+			}
+		}
+	}
 }

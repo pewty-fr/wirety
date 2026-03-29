@@ -64,35 +64,11 @@ Automatically assign groups to peers created by non-administrator users.
 
 **Learn More:** [User Guide - Default Groups](./user-guide.md#default-groups-configuration)
 
-## Breaking Changes
-
-This is a **major breaking change** with no backward compatibility:
-
-### Removed
-- ❌ ACL system (tables: `acls`, `acl_rules`)
-- ❌ Peer flags: `is_isolated`, `full_encapsulation`
-- ❌ Legacy access control endpoints
-
-### Migration Required
-All existing ACLs and peer flags must be manually recreated using the new system.
-
-**See:** [Migration Guide](./migration-guide.md)
-
 ## Getting Started
-
-### For New Users
 
 1. Read the [User Guide](./user-guide.md) introduction
 2. Follow the [Common Workflows](./user-guide.md#common-workflows)
 3. Explore the [API Reference](./api-reference.md)
-
-### For Existing Users
-
-1. **Backup your data** - See [Migration Guide - Step 1](./migration-guide.md#step-1-backup-your-data)
-2. **Review breaking changes** - See [Migration Guide - Breaking Changes](./migration-guide.md#breaking-changes)
-3. **Follow migration steps** - See [Migration Guide - Migration Steps](./migration-guide.md#migration-steps)
-4. **Convert ACLs to policies** - See [Converting ACLs to Policies](./migration-guide.md#converting-acls-to-policies)
-5. **Convert peer flags** - See [Converting Peer Flags to Policies](./migration-guide.md#converting-peer-flags-to-policies)
 
 ## Architecture
 
@@ -296,7 +272,6 @@ wg show
 
 ### Documentation
 - [API Reference](./api-reference.md)
-- [Migration Guide](./migration-guide.md)
 - [User Guide](./user-guide.md)
 - [Troubleshooting](./troubleshooting.md)
 
@@ -306,10 +281,3 @@ wg show
 3. Check agent logs: `journalctl -u wireguard-agent`
 4. Open GitHub issue with details
 
-## Version Information
-
-This documentation covers the groups, policies, and routes architecture introduced in version 2.0.
-
-**Previous Version:** Legacy ACL and peer flag system (deprecated)
-**Current Version:** Groups, policies, and routes architecture
-**Migration Required:** Yes - see [Migration Guide](./migration-guide.md)

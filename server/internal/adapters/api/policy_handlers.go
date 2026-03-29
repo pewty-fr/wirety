@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"wirety/internal/audit"
 	"wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
@@ -37,6 +38,14 @@ func (h *Handler) CreatePolicy(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "policy.create").
+		Str("network_id", networkID).
+		Str("policy_id", policy.ID).
+		Str("policy_name", policy.Name).
+		Msg("audit")
 
 	c.JSON(http.StatusCreated, policy)
 }
@@ -123,6 +132,14 @@ func (h *Handler) UpdatePolicy(c *gin.Context) {
 		return
 	}
 
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "policy.update").
+		Str("network_id", networkID).
+		Str("policy_id", policyID).
+		Str("policy_name", policy.Name).
+		Msg("audit")
+
 	c.JSON(http.StatusOK, policy)
 }
 
@@ -146,6 +163,13 @@ func (h *Handler) DeletePolicy(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "policy.delete").
+		Str("network_id", networkID).
+		Str("policy_id", policyID).
+		Msg("audit")
 
 	c.Status(http.StatusNoContent)
 }
@@ -181,6 +205,14 @@ func (h *Handler) AddRuleToPolicy(c *gin.Context) {
 		return
 	}
 
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "policy.rule.add").
+		Str("network_id", networkID).
+		Str("policy_id", policyID).
+		Str("rule_id", rule.ID).
+		Msg("audit")
+
 	c.JSON(http.StatusCreated, rule)
 }
 
@@ -206,6 +238,14 @@ func (h *Handler) RemoveRuleFromPolicy(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "policy.rule.remove").
+		Str("network_id", networkID).
+		Str("policy_id", policyID).
+		Str("rule_id", ruleID).
+		Msg("audit")
 
 	c.Status(http.StatusNoContent)
 }
@@ -233,6 +273,14 @@ func (h *Handler) AttachPolicyToGroup(c *gin.Context) {
 		return
 	}
 
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "policy.group.attach").
+		Str("network_id", networkID).
+		Str("group_id", groupID).
+		Str("policy_id", policyID).
+		Msg("audit")
+
 	c.Status(http.StatusOK)
 }
 
@@ -258,6 +306,14 @@ func (h *Handler) DetachPolicyFromGroup(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "policy.group.detach").
+		Str("network_id", networkID).
+		Str("group_id", groupID).
+		Str("policy_id", policyID).
+		Msg("audit")
 
 	c.Status(http.StatusNoContent)
 }
@@ -323,6 +379,13 @@ func (h *Handler) ReorderGroupPolicies(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "policy.group.reorder").
+		Str("network_id", networkID).
+		Str("group_id", groupID).
+		Msg("audit")
 
 	c.JSON(http.StatusOK, gin.H{"message": "Policies reordered successfully"})
 }

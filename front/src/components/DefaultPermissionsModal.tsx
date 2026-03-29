@@ -37,7 +37,7 @@ export default function DefaultPermissionsModal({
       ]);
       setSelectedRole(permissions.default_role);
       setSelectedNetworks(permissions.default_authorized_networks || []);
-      setAvailableNetworks(networksResponse.data);
+      setAvailableNetworks(networksResponse.data ?? []);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {

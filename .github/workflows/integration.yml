@@ -1,0 +1,70 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+    paths:
+      - 'server/internal/application/policy/**'
+      - 'agent/internal/adapters/firewall/**'
+      - '.github/workflows/integration.yml'
+  push:
+    branches:
+      - main
+
+jobs:
+  # ── Server: rule-generation integration tests ─────────────────────────────
+  # These tests exercise GenerateIPTablesRules() using in-memory mock repos.
+  # They do NOT require root or iptables.
+  test-rule-generation:
+    name: Server — Rule Generation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./server
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '>=1.25.0'
+          cache-dependency-path: server/go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run rule-generation integration tests
+        run: go test -v -tags integration ./internal/application/policy/...
+
+  # ── Agent: iptables integration tests ─────────────────────────────────────
+  # These tests call real iptables against the Linux kernel.
+  # They require NET_ADMIN capability (available on ubuntu-latest via sudo).
+  test-agent-firewall:
+    name: Agent — iptables Firewall
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./agent
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '>=1.25.0'
+          cache-dependency-path: agent/go.sum
+
+      - name: Ensure iptables is available
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq iptables
+          sudo iptables --version
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run agent firewall integration tests (root)
+        # sudo is needed for iptables; PATH is forwarded so the Go binary is found.
+        run: sudo env "PATH=$PATH" go test -v -tags integration ./internal/adapters/firewall/...

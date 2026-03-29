@@ -13,6 +13,7 @@ import PoliciesPage from './pages/policies/PoliciesPage';
 import RoutesPage from './pages/routes/RoutesPage';
 import LoginPage from './pages/auth/LoginPage';
 import CaptivePortalPage from './pages/captive-portal/CaptivePortalPage';
+import ProfilePage from './pages/profile/ProfilePage';
 
 function ProtectedRoutes() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -42,6 +43,7 @@ function ProtectedRoutes() {
         <Route path="/ipam" element={<IPAMPage />} />
         <Route path="/security" element={<SecurityPage />} />
         <Route path="/users" element={<UsersPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
       </Routes>
     </Layout>
   );

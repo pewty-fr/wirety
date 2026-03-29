@@ -3,6 +3,7 @@ package memory
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"wirety/internal/domain/auth"
 )
@@ -10,9 +11,11 @@ import (
 // UserRepository is an in-memory implementation of the auth repository
 type UserRepository struct {
 	mu           sync.RWMutex
-	users        map[string]*auth.User // userID -> User
-	usersByEmail map[string]*auth.User // email -> User
-	sessions     map[string]*auth.Session // sessionHash -> Session
+	users        map[string]*auth.User            // userID -> User
+	usersByEmail map[string]*auth.User            // email -> User
+	sessions     map[string]*auth.Session         // sessionHash -> Session
+	apiTokens    map[string]*auth.APIToken        // tokenID -> APIToken
+	tokensByHash map[string]*auth.APIToken        // tokenHash -> APIToken
 	defaultPerms *auth.DefaultNetworkPermissions
 }
 
@@ -21,6 +24,8 @@ func NewUserRepository() *UserRepository {
 	return &UserRepository{
 		users:        make(map[string]*auth.User),
 		usersByEmail: make(map[string]*auth.User),
+		apiTokens:    make(map[string]*auth.APIToken),
+		tokensByHash: make(map[string]*auth.APIToken),
 		defaultPerms: &auth.DefaultNetworkPermissions{
 			DefaultRole:               auth.RoleUser,
 			DefaultAuthorizedNetworks: []string{},
@@ -231,6 +236,63 @@ func (r *UserRepository) DeleteUserSessions(userID string) error {
 			delete(r.sessions, hash)
 		}
 	}
+	return nil
+}
+
+// API token methods
+
+func (r *UserRepository) CreateAPIToken(token *auth.APIToken) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	token.CreatedAt = time.Now()
+	r.apiTokens[token.ID] = token
+	r.tokensByHash[token.TokenHash] = token
+	return nil
+}
+
+func (r *UserRepository) GetAPITokenByHash(hash string) (*auth.APIToken, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, ok := r.tokensByHash[hash]
+	if !ok {
+		return nil, fmt.Errorf("api token not found")
+	}
+	return t, nil
+}
+
+func (r *UserRepository) ListAPITokens(userID string) ([]*auth.APIToken, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []*auth.APIToken
+	for _, t := range r.apiTokens {
+		if t.UserID == userID {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (r *UserRepository) DeleteAPIToken(tokenID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.apiTokens[tokenID]
+	if !ok {
+		return fmt.Errorf("api token not found")
+	}
+	delete(r.tokensByHash, t.TokenHash)
+	delete(r.apiTokens, tokenID)
+	return nil
+}
+
+func (r *UserRepository) TouchAPIToken(tokenID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.apiTokens[tokenID]
+	if !ok {
+		return nil
+	}
+	now := time.Now()
+	t.LastUsedAt = &now
 	return nil
 }
 

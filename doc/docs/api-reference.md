@@ -4,11 +4,16 @@ This document provides detailed information about the WireGuard network manageme
 
 ## Authentication
 
-All API endpoints require authentication via JWT token in the Authorization header:
+All API endpoints require authentication via a Bearer token in the `Authorization` header. Two token types are accepted:
+
+- **Session token** (OIDC JWT or simple-auth session): obtained from the login flow.
+- **API token** (`wirety_` prefix): long-lived personal access token created via `/users/me/tokens`.
 
 ```
 Authorization: Bearer <token>
 ```
+
+Both token types carry the same permissions as the user who owns them.
 
 ## Admin-Only Endpoints
 
@@ -757,6 +762,65 @@ Networks now support custom domain suffixes and default groups.
 **Default Values:**
 - `domain_suffix`: "internal"
 - `default_group_ids`: []
+
+---
+
+## API Tokens API
+
+Long-lived personal access tokens for scripting, CI/CD pipelines, and MCP integration. Tokens carry the same permissions as the user who created them.
+
+### List Tokens
+
+**Endpoint:** `GET /api/v1/users/me/tokens`
+
+**Response:** `200 OK`
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "CI/CD pipeline",
+    "created_at": "2025-03-01T10:00:00Z",
+    "expires_at": null,
+    "last_used_at": "2025-03-29T08:12:00Z"
+  }
+]
+```
+
+---
+
+### Create Token
+
+**Endpoint:** `POST /api/v1/users/me/tokens`
+
+**Request Body:**
+```json
+{
+  "name": "CI/CD pipeline",
+  "expires_at": "2026-01-01T00:00:00Z"
+}
+```
+`expires_at` is optional. If omitted, the token never expires.
+
+**Response:** `201 Created`
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "CI/CD pipeline",
+  "token": "wirety_a3f4b2c1...",
+  "created_at": "2025-03-29T10:00:00Z",
+  "expires_at": null
+}
+```
+
+> ⚠️ The `token` field is only returned at creation time. Store it securely — it cannot be retrieved again.
+
+---
+
+### Revoke Token
+
+**Endpoint:** `DELETE /api/v1/users/me/tokens/:tokenId`
+
+**Response:** `204 No Content`
 
 ---
 

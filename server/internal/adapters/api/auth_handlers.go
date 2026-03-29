@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"wirety/internal/config"
+	"wirety/internal/audit"
 	"wirety/internal/domain/auth"
 	"wirety/internal/infrastructure/oidc"
 
@@ -23,9 +24,10 @@ import (
 
 // AuthConfigResponse contains public authentication configuration
 type AuthConfigResponse struct {
-	Enabled   bool   `json:"enabled"`
-	IssuerURL string `json:"issuer_url"`
-	ClientID  string `json:"client_id"`
+	Enabled    bool   `json:"enabled"`
+	IssuerURL  string `json:"issuer_url"`
+	ClientID   string `json:"client_id"`
+	SimpleAuth bool   `json:"simple_auth"` // true when AUTH_ENABLED=false (admin/password login)
 }
 
 // GetAuthConfig godoc
@@ -36,12 +38,11 @@ type AuthConfigResponse struct {
 // @Success      200 {object} AuthConfigResponse
 // @Router       /auth/config [get]
 func (h *Handler) GetAuthConfig(c *gin.Context) {
-	cfg := config.LoadConfig()
-
 	c.JSON(http.StatusOK, AuthConfigResponse{
-		Enabled:   cfg.Auth.Enabled,
-		IssuerURL: cfg.Auth.IssuerURL,
-		ClientID:  cfg.Auth.ClientID,
+		Enabled:    h.authConfig.Enabled,
+		IssuerURL:  h.authConfig.IssuerURL,
+		ClientID:   h.authConfig.ClientID,
+		SimpleAuth: !h.authConfig.Enabled,
 	})
 }
 
@@ -69,9 +70,7 @@ type TokenResponse struct {
 // @Failure      500 {object} map[string]string
 // @Router       /auth/token [post]
 func (h *Handler) ExchangeToken(c *gin.Context) {
-	cfg := config.LoadConfig()
-
-	if !cfg.Auth.Enabled {
+	if !h.authConfig.Enabled {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Authentication is not enabled"})
 		return
 	}
@@ -83,7 +82,7 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	}
 
 	// Discover OIDC endpoints via shared adapter
-	discovery, err := oidc.Discover(c.Request.Context(), cfg.Auth.IssuerURL)
+	discovery, err := oidc.Discover(c.Request.Context(), h.authConfig.IssuerURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to discover OIDC endpoints: %v", err)})
 		return
@@ -94,8 +93,8 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", req.Code)
 	data.Set("redirect_uri", req.RedirectURI)
-	data.Set("client_id", cfg.Auth.ClientID)
-	data.Set("client_secret", cfg.Auth.ClientSecret)
+	data.Set("client_id", h.authConfig.ClientID)
+	data.Set("client_secret", h.authConfig.ClientSecret)
 
 	// Make request to token endpoint from discovery
 	resp, err := http.DefaultClient.Post(discovery.TokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
@@ -155,15 +154,16 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
+	setSessionCookie(c, session.SessionHash, 30*24*3600)
 	c.JSON(http.StatusOK, TokenResponse{
 		SessionHash: session.SessionHash,
 		ExpiresIn:   oidcTokenResp.ExpiresIn,
 	})
 }
 
-// createSession creates a new session with a secure hash
+// createSession creates a new session with a secure hash.
+// For OIDC sessions pass the real tokens and expiresIn; for simple auth pass empty strings and 0.
 func (h *Handler) createSession(userID, accessToken, refreshToken string, expiresIn int) (*auth.Session, error) {
-	// Generate a secure random session hash
 	randomBytes := make([]byte, 32)
 	if _, err := rand.Read(randomBytes); err != nil {
 		return nil, fmt.Errorf("failed to generate session hash: %w", err)
@@ -171,10 +171,13 @@ func (h *Handler) createSession(userID, accessToken, refreshToken string, expire
 	hash := sha256.Sum256(randomBytes)
 	sessionHash := hex.EncodeToString(hash[:])
 
-	// Calculate expiration times
-	accessTokenExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
-	// Refresh tokens typically last much longer (e.g., 30 days)
-	refreshTokenExpiresAt := time.Now().Add(30 * 24 * time.Hour)
+	var accessTokenExpiresAt time.Time
+	if expiresIn > 0 {
+		accessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+	} else {
+		// Simple auth: access token never expires (no OIDC token to refresh)
+		accessTokenExpiresAt = time.Now().Add(100 * 365 * 24 * time.Hour)
+	}
 
 	session := &auth.Session{
 		SessionHash:           sessionHash,
@@ -182,7 +185,7 @@ func (h *Handler) createSession(userID, accessToken, refreshToken string, expire
 		AccessToken:           accessToken,
 		RefreshToken:          refreshToken,
 		AccessTokenExpiresAt:  accessTokenExpiresAt,
-		RefreshTokenExpiresAt: refreshTokenExpiresAt,
+		RefreshTokenExpiresAt: time.Now().Add(30 * 24 * time.Hour),
 	}
 
 	if err := h.userRepo.CreateSession(session); err != nil {
@@ -192,9 +195,9 @@ func (h *Handler) createSession(userID, accessToken, refreshToken string, expire
 	return session, nil
 }
 
-// LogoutRequest contains the session hash to logout
+// LogoutRequest contains the session hash to logout (optional when using cookie-based auth)
 type LogoutRequest struct {
-	SessionHash string `json:"session_hash" binding:"required"`
+	SessionHash string `json:"session_hash"`
 }
 
 // Logout godoc
@@ -209,16 +212,91 @@ type LogoutRequest struct {
 // @Failure      500 {object} map[string]string
 // @Router       /auth/logout [post]
 func (h *Handler) Logout(c *gin.Context) {
-	var req LogoutRequest
+	// Resolve session hash: prefer cookie, fall back to request body
+	sessionHash := c.GetHeader("Authorization")
+	if strings.HasPrefix(sessionHash, "Session ") {
+		sessionHash = strings.TrimPrefix(sessionHash, "Session ")
+	} else if cookie, err := c.Cookie("wirety_session"); err == nil {
+		sessionHash = cookie
+	} else {
+		var req LogoutRequest
+		if err := c.ShouldBindJSON(&req); err == nil {
+			sessionHash = req.SessionHash
+		}
+	}
+
+	if sessionHash != "" {
+		_ = h.userRepo.DeleteSession(sessionHash)
+	}
+
+	clearSessionCookie(c)
+	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
+}
+
+// SimpleLoginRequest contains credentials for simple auth login
+type SimpleLoginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+// SimpleLogin godoc
+// @Summary      Login with admin password
+// @Description  Authenticate using admin credentials when OIDC is disabled (AUTH_ENABLED=false)
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request body SimpleLoginRequest true "Login credentials"
+// @Success      200 {object} TokenResponse
+// @Failure      400 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Router       /auth/login [post]
+func (h *Handler) SimpleLogin(c *gin.Context) {
+	if h.authConfig.Enabled {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "simple auth is not available when OIDC is enabled"})
+		return
+	}
+
+	var req SimpleLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.userRepo.DeleteSession(req.SessionHash); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to logout"})
+	// Constant-time comparison to prevent timing attacks
+	usernameMatch := subtle.ConstantTimeCompare([]byte(req.Username), []byte("admin"))
+	passwordMatch := subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.authConfig.AdminPassword))
+	if usernameMatch != 1 || passwordMatch != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
+	session, err := h.createSession("admin", "", "", 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
+		return
+	}
+
+	audit.Server("admin", "admin@wirety.local", c.ClientIP()).
+		Str("action", "auth.login").
+		Str("username", req.Username).
+		Msg("audit")
+
+	setSessionCookie(c, session.SessionHash, 30*24*3600)
+	c.JSON(http.StatusOK, TokenResponse{
+		SessionHash: session.SessionHash,
+		ExpiresIn:   30 * 24 * 3600,
+	})
 }
+
+const sessionCookieName = "wirety_session"
+
+// setSessionCookie sets an HttpOnly session cookie on the response.
+func setSessionCookie(c *gin.Context, sessionHash string, maxAge int) {
+	c.SetCookie(sessionCookieName, sessionHash, maxAge, "/", "", false, true)
+}
+
+// clearSessionCookie clears the session cookie.
+func clearSessionCookie(c *gin.Context) {
+	c.SetCookie(sessionCookieName, "", -1, "/", "", false, true)
+}
+
