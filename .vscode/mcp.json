@@ -1,10 +1,10 @@
 {
 	"servers": {
 		"Wirety": {
-			"url": "http://localhost:8080/mcp",
+			"url": "https://wirety-personal.pewty.fr/api/mcp",
 			"type": "http",
 			"headers": {
-        "Authorization": "Bearer wirety_9c00cb0a1bb1a09b6f38e0925d41291e6fa5d422fd7f30cd6279eb64c053367a"
+        "Authorization": "Bearer wirety_e02c551f9b7e446d4b49125feaf6a27b0de212d408cb00a1d5f582af125e9a1e"
       }
 		}
 	},

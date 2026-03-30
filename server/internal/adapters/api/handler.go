@@ -289,10 +289,10 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 
 	// MCP endpoint (SSE transport) — both GET (stream) and POST (messages) at same path
 	mcpH := h.MCPHandler()
-	r.GET("/mcp", authMiddleware, mcpH)
-	r.POST("/mcp", authMiddleware, mcpH)
+	api.GET("/mcp", authMiddleware, mcpH)
+	api.POST("/mcp", authMiddleware, mcpH)
 
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	api.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 }
 
 // dbOnlyHandler returns a 503 handler explaining a feature requires DB_ENABLED=true
