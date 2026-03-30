@@ -37,15 +37,20 @@ func main() {
 	natIface := envOr("NAT_INTERFACE", "") // Empty string enables auto-detection
 	httpPort := envOr("HTTP_PROXY_PORT", "3128")
 	httpsPort := envOr("HTTPS_PROXY_PORT", "3129")
-	portalURL := envOr("CAPTIVE_PORTAL_URL", "https://portal.example.com")
+	portalURL := envOr("CAPTIVE_PORTAL_URL", "")
 
 	flag.StringVar(&server, "server", server, "Server base URL (no trailing /)")
 	flag.StringVar(&token, "token", token, "Enrollment token")
 	flag.StringVar(&configPath, "config", configPath, "Path to wireguard config file")
 	flag.StringVar(&applyMethod, "apply", applyMethod, "Apply method: wg-quick|syncconf")
 	flag.StringVar(&natIface, "nat", natIface, "NAT interface override (empty for auto-detection)")
-	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal URL")
+	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal page URL (default: <server>/captive-portal)")
 	flag.Parse()
+
+	// Default portal URL: captive portal page served by the same Wirety server
+	if portalURL == "" {
+		portalURL = server + "/captive-portal"
+	}
 
 	if token == "" {
 		log.Fatal().Msg("TOKEN is required (env or flag)")
@@ -110,6 +115,7 @@ func main() {
 	// Initialize firewall adapter with proxy ports
 	fwAdapter := firewall.NewAdapter(iface, natIface)
 	fwAdapter.SetProxyPorts(httpPortInt, httpsPortInt)
+	fwAdapter.SetServerURL(server) // Allow peers to reach Wirety server before authentication
 
 	runner := app.NewRunner(wsClient, writer, dnsServer, fwAdapter, wsURL, iface, peerID, networkID)
 
@@ -117,6 +123,7 @@ func main() {
 	wsHeaders := http.Header{}
 	wsHeaders.Set("Authorization", "Bearer "+token)
 	runner.SetHeaders(wsHeaders)
+	runner.SetCaptivePortal(server, token, portalURL)
 
 	// Set the initial peer name in the runner
 	runner.SetCurrentPeerName(peerName)

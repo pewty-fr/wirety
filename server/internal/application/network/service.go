@@ -1679,6 +1679,61 @@ func (s *Service) detectAndHandleSuspicousActivity(ctx context.Context, networkI
 	return nil
 }
 
+// CreateCaptivePortalToken creates a short-lived token for the captive portal flow.
+// Called by the jump peer agent when a new peer connects and needs authentication.
+func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpPeerID, peerIP string) (*network.CaptivePortalToken, error) {
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	now := time.Now()
+	token := &network.CaptivePortalToken{
+		Token:      "cpt_" + base64.RawURLEncoding.EncodeToString(tokenBytes),
+		NetworkID:  networkID,
+		JumpPeerID: jumpPeerID,
+		PeerIP:     peerIP,
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(10 * time.Minute),
+	}
+
+	if err := s.repo.CreateCaptivePortalToken(ctx, token); err != nil {
+		return nil, fmt.Errorf("failed to create captive portal token: %w", err)
+	}
+
+	return token, nil
+}
+
+// AuthenticateCaptivePortal validates a captive portal token + session hash, then whitelists the peer.
+// Called by the frontend captive portal page after the user authenticates via OIDC/password.
+func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, sessionHash string) (*network.CaptivePortalToken, error) {
+	cpt, err := s.repo.GetCaptivePortalToken(ctx, captiveToken)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token")
+	}
+
+	if !cpt.IsValid() {
+		_ = s.repo.DeleteCaptivePortalToken(ctx, captiveToken)
+		return nil, fmt.Errorf("token expired")
+	}
+
+	// Validate session (either OIDC or simple-auth session)
+	session, err := s.authRepo.GetSession(sessionHash)
+	if err != nil || session == nil || !session.IsValid() {
+		return nil, fmt.Errorf("invalid session")
+	}
+
+	// Whitelist the peer — also triggers WebSocket notification to jump peer
+	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, cpt.PeerIP); err != nil {
+		return nil, fmt.Errorf("failed to whitelist peer: %w", err)
+	}
+
+	// Token is single-use
+	_ = s.repo.DeleteCaptivePortalToken(ctx, captiveToken)
+
+	return cpt, nil
+}
+
 // AddCaptivePortalWhitelist adds a peer IP to the captive portal whitelist
 func (s *Service) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
 	if err := s.repo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP); err != nil {

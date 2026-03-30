@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"wirety/agent/internal/adapters/captiveportal"
 	dom "wirety/agent/internal/domain/dns"
 	pol "wirety/agent/internal/domain/policy"
 	"wirety/agent/internal/ports"
@@ -59,6 +60,11 @@ type Runner struct {
 	backoffBase       time.Duration
 	backoffMax        time.Duration
 	heartbeatInterval time.Duration
+	// Captive portal redirect server (jump peer only)
+	serverURL        string
+	authToken        string
+	captivePortalURL string
+	captiveStarted   bool
 }
 
 func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string, peerID string, networkID string) *Runner {
@@ -82,6 +88,16 @@ func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort
 // SetHeaders sets HTTP headers to send on WebSocket connection (e.g. Authorization).
 func (r *Runner) SetHeaders(header http.Header) {
 	r.wsHeaders = header
+}
+
+// SetCaptivePortal configures the captive portal redirect server for jump peers.
+// serverURL: Wirety server HTTP URL (e.g. "https://wirety.example.com")
+// authToken: enrollment token used to call the captive-portal/token API
+// captivePortalURL: full URL of the captive portal page the peer will be redirected to
+func (r *Runner) SetCaptivePortal(serverURL, authToken, captivePortalURL string) {
+	r.serverURL = serverURL
+	r.authToken = authToken
+	r.captivePortalURL = captivePortalURL
 }
 
 func (r *Runner) Start(stop <-chan struct{}) {
@@ -288,6 +304,13 @@ func (r *Runner) Start(stop <-chan struct{}) {
 						Str("action", "firewall.sync").
 						Int("rule_count", len(payload.Policy.IPTablesRules)).
 						Msg("audit")
+				}
+
+				// Start the captive portal redirect server the first time we get a
+				// policy — that's when we know this peer is a jump peer.
+				if !r.captiveStarted && r.serverURL != "" {
+					r.captiveStarted = true
+					go r.startCaptivePortalServer()
 				}
 			}
 		}
@@ -562,5 +585,16 @@ func (r *Runner) monitorTunnels(done <-chan struct{}) {
 				delete(states, pubkey)
 			}
 		}
+	}
+}
+
+// startCaptivePortalServer starts the HTTP redirect server that intercepts
+// unauthenticated peers' HTTP traffic and redirects them to the Wirety
+// captive portal authentication page. Only called on jump peers.
+func (r *Runner) startCaptivePortalServer() {
+	srv := captiveportal.NewServer(r.serverURL, r.authToken, r.captivePortalURL, r.networkID, r.peerID)
+	log.Info().Str("portal_url", r.captivePortalURL).Msg("starting captive portal redirect server on :8081")
+	if err := srv.Start(":8081"); err != nil {
+		log.Error().Err(err).Msg("captive portal redirect server stopped")
 	}
 }
