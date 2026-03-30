@@ -1,12 +1,12 @@
 name: Test
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     branches:
       - main
-
-permissions:
-  contents: read
     paths:
       - 'agent/**'
       - 'server/**'

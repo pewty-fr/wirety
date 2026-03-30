@@ -1,12 +1,12 @@
 name: Integration Tests
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     branches:
       - main
-
-permissions:
-  contents: read
     paths:
       - 'server/internal/application/policy/**'
       - 'agent/internal/adapters/firewall/**'
