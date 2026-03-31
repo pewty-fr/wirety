@@ -24,5 +24,9 @@ See [Groups, Policies & Routes](../groups-policies-routes-overview) for full det
 - Regular peer's default route now points to the tunnel interface.
 - External IP matches the jump peer's public IP.
 
+## Captive Portal
+
+When a jump peer has the captive portal enabled, new peers are blocked until they authenticate via the Wirety web UI. See [Captive Portal](../captive-portal) for the full flow, session lifetime, and reconnect behaviour.
+
 ## Notes
 Performance depends on jump peer bandwidth and latency. Consider scaling multiple jump peers.

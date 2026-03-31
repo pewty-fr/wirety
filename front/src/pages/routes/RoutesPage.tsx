@@ -119,8 +119,9 @@ export default function RoutesPage() {
   }
 
   return (
+    <>
     <div>
-      <PageHeader 
+      <PageHeader
         title="Routes" 
         subtitle={`${routes.length} route${routes.length !== 1 ? 's' : ''} ${selectedNetworkId ? 'in selected network' : 'across all networks'}`}
         action={
@@ -1173,6 +1174,7 @@ function RouteModal({
       onAdd={handleAddDNS}
       routeCidr={destinationCidr || route?.destination_cidr || ''}
     />
+    </>
   );
 }
 
