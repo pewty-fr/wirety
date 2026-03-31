@@ -48,11 +48,11 @@ func (h *Handler) CreateCaptivePortalToken(c *gin.Context) {
 
 type authenticateCaptivePortalRequest struct {
 	CaptiveToken string `json:"captive_token" binding:"required"`
-	SessionHash  string `json:"session_hash" binding:"required"`
 }
 
 // AuthenticateCaptivePortal validates the captive portal token and session, then whitelists the peer.
 // Called by the frontend captive portal page after the user authenticates via OIDC or password.
+// The session is read from the wirety_session cookie — no need to send session_hash in the body.
 func (h *Handler) AuthenticateCaptivePortal(c *gin.Context) {
 	var req authenticateCaptivePortalRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -60,7 +60,14 @@ func (h *Handler) AuthenticateCaptivePortal(c *gin.Context) {
 		return
 	}
 
-	cpt, err := h.service.AuthenticateCaptivePortal(c.Request.Context(), req.CaptiveToken, req.SessionHash)
+	// Resolve session hash from cookie (same cookie used by every authenticated page)
+	sessionHash, err := c.Cookie(sessionCookieName)
+	if err != nil || sessionHash == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "no session found, please log in first"})
+		return
+	}
+
+	cpt, err := h.service.AuthenticateCaptivePortal(c.Request.Context(), req.CaptiveToken, sessionHash)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return

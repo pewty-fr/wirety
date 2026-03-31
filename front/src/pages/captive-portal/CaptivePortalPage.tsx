@@ -21,22 +21,17 @@ export default function CaptivePortalPage() {
     setStatus('authenticating');
 
     try {
-      // Get the user's session hash (access token)
-      const sessionHash = localStorage.getItem('session_hash');
-      if (!sessionHash) {
-        throw new Error('No session found');
-      }
-
-      // Send authentication request to server
-      // The peer IP is already embedded in the captive_token
+      // Send authentication request to server.
+      // The session is validated server-side via the wirety_session cookie.
+      // The peer IP is already embedded in the captive_token.
       const response = await fetch('/api/v1/captive-portal/authenticate', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           captive_token: captiveToken,
-          session_hash: sessionHash,
         }),
       });
 

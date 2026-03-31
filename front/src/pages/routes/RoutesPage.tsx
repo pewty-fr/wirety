@@ -564,10 +564,11 @@ function RouteModal({
   };
 
   const handleAddDNS = async (dnsName: string, ipAddress: string) => {
-    if (route && selectedNetworkId) {
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (route && networkIdToUse) {
       // Edit mode: add immediately
       try {
-        await api.createDNSMapping(selectedNetworkId, route.id, { name: dnsName, ip_address: ipAddress });
+        await api.createDNSMapping(networkIdToUse, route.id, { name: dnsName, ip_address: ipAddress });
         await loadDNSMappings();
         onSuccess();
         setIsAddDNSModalOpen(false);
@@ -583,10 +584,11 @@ function RouteModal({
   };
 
   const handleDeleteDNS = async (dnsId: string) => {
-    if (route && selectedNetworkId) {
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (route && networkIdToUse) {
       // Edit mode: delete immediately
       try {
-        await api.deleteDNSMapping(selectedNetworkId, route.id, dnsId);
+        await api.deleteDNSMapping(networkIdToUse, route.id, dnsId);
         await loadDNSMappings();
         onSuccess();
       } catch (error) {
