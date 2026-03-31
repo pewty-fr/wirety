@@ -34,7 +34,7 @@ func main() {
 	token := envOr("TOKEN", "")
 	configPath := envOr("WG_CONFIG_PATH", "")
 	applyMethod := envOr("WG_APPLY_METHOD", "syncconf")
-	natIface := envOr("NAT_INTERFACE", "") // Empty string enables auto-detection
+	natIfacesStr := envOr("NAT_INTERFACES", "") // comma-separated; empty = auto-detect all
 	httpPort := envOr("HTTP_PROXY_PORT", "3128")
 	httpsPort := envOr("HTTPS_PROXY_PORT", "3129")
 	portalURL := envOr("CAPTIVE_PORTAL_URL", "")
@@ -43,13 +43,23 @@ func main() {
 	flag.StringVar(&token, "token", token, "Enrollment token")
 	flag.StringVar(&configPath, "config", configPath, "Path to wireguard config file")
 	flag.StringVar(&applyMethod, "apply", applyMethod, "Apply method: wg-quick|syncconf")
-	flag.StringVar(&natIface, "nat", natIface, "NAT interface override (empty for auto-detection)")
+	flag.StringVar(&natIfacesStr, "nat-interfaces", natIfacesStr, "Comma-separated NAT interfaces (empty = auto-detect all egress interfaces)")
 	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal page URL (default: <server>/captive-portal)")
 	flag.Parse()
 
 	// Default portal URL: captive portal page served by the same Wirety server
 	if portalURL == "" {
 		portalURL = server + "/captive-portal"
+	}
+
+	// Parse comma-separated NAT interfaces; nil slice means auto-detect
+	var natIfaces []string
+	if natIfacesStr != "" {
+		for _, s := range strings.Split(natIfacesStr, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				natIfaces = append(natIfaces, s)
+			}
+		}
 	}
 
 	if token == "" {
@@ -113,7 +123,7 @@ func main() {
 	}
 
 	// Initialize firewall adapter with proxy ports
-	fwAdapter := firewall.NewAdapter(iface, natIface)
+	fwAdapter := firewall.NewAdapter(iface, natIfaces)
 	fwAdapter.SetProxyPorts(httpPortInt, httpsPortInt)
 	fwAdapter.SetServerURL(server) // Allow peers to reach Wirety server before authentication
 
@@ -207,3 +217,4 @@ func resolveToken(server, token string) (string, string, string, string, error) 
 	}
 	return rr.NetworkID, rr.PeerID, rr.PeerName, rr.Config, nil
 }
+

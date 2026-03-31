@@ -22,29 +22,51 @@ Options:
   -token string
         Enrollment token (required)
         (env: TOKEN)
-  -interface string
-        WireGuard interface name
-        (env: WG_INTERFACE, default: wg0)
   -config string
         Path to wireguard config file
         (env: WG_CONFIG_PATH)
   -apply string
         Apply method: wg-quick|syncconf
-        (env: WG_APPLY_METHOD, default: wg-quick)
-  -nat string
-        NAT interface (eth0, etc.)
-        (env: NAT_INTERFACE, default: eth0)
+        (env: WG_APPLY_METHOD, default: syncconf)
+  -nat-interfaces string
+        Comma-separated list of NAT interfaces (env: NAT_INTERFACES)
+        Default: auto-detect all egress interfaces from the routing table
+  -portal-url string
+        Captive portal page URL
+        (env: CAPTIVE_PORTAL_URL, default: <SERVER_URL>/captive-portal)
 ```
 
 ## Usage Example
 ```bash
-# Run agent with environment variables
+# Run agent — NAT interfaces are auto-detected from the routing table
 export TOKEN=<ENROLLMENT_TOKEN>
 export SERVER_URL=https://wirety.example.com
 wirety-agent
 
-# Or use command-line flags
-wirety-agent -server https://wirety.example.com -token <ENROLLMENT_TOKEN> -interface wg0 -nat eth0
+# Explicit NAT interfaces (jump peer with internet + private VLAN egress)
+wirety-agent -server https://wirety.example.com -token <TOKEN> -nat-interfaces ens2,ens6
+
+# Environment variable equivalent
+export NAT_INTERFACES=ens2,ens6
+wirety-agent
+```
+
+## NAT Interface Detection
+
+On jump peers, the agent adds a `MASQUERADE` rule for every egress interface so that forwarded traffic is correctly NATed regardless of which interface the routing table selects for a given destination.
+
+By default the agent **auto-detects all egress interfaces** by scanning the routing table (`ip route show`) and keeping every interface that:
+- Has an IPv4 address
+- Is not loopback (`lo`)
+- Is not the WireGuard interface itself
+
+This means a jump peer with both an internet uplink (`ens2`) and a private VLAN interface (`ens6`) will automatically get `MASQUERADE` on both, allowing peers to reach resources behind either interface.
+
+Use `NAT_INTERFACES` to override when auto-detection picks up unwanted interfaces:
+
+```bash
+# Only NAT through the private VLAN interface
+export NAT_INTERFACES=ens6
 ```
 
 ## Host Prerequisites

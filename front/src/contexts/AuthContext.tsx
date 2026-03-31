@@ -59,7 +59,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
 
         if (response.ok) {
-          // Server sets httpOnly cookie; remove code from URL then fetch user
+          // Server sets httpOnly cookie; also store session_hash for captive portal use
+          const data = await response.json();
+          if (data.session_hash) {
+            localStorage.setItem('session_hash', data.session_hash);
+          }
           window.history.replaceState({}, document.title, window.location.pathname);
           await fetchCurrentUser();
         } else {
@@ -150,7 +154,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!response.ok) return false;
 
-      // Server sets the httpOnly cookie; just re-fetch the user
+      // Server sets the httpOnly cookie; also store session_hash for captive portal use
+      const data = await response.json();
+      if (data.session_hash) {
+        localStorage.setItem('session_hash', data.session_hash);
+      }
       await fetchCurrentUser();
       return true;
     } catch (error) {
@@ -160,6 +168,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
+    // Clear session_hash used by captive portal
+    localStorage.removeItem('session_hash');
     try {
       // Server clears the cookie and invalidates the session
       await fetch(`${API_BASE}/auth/logout`, {

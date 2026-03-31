@@ -17,23 +17,23 @@ import (
 
 type Adapter struct {
 	iface             string
-	natInterface      string
+	natInterfaces     []string // explicit override; nil means auto-detect
 	httpPort          int
 	httpsPort         int
 	captivePortalPort int
 	serverURL         string // Wirety server URL — peers must always be able to reach it
 }
 
-// NewAdapter creates a new firewall adapter
+// NewAdapter creates a new firewall adapter.
 // wgIface: WireGuard interface name (e.g., "wg0")
-// natIface: NAT interface override (empty string for auto-detection)
-func NewAdapter(wgIface, natIface string) *Adapter {
+// natIfaces: explicit NAT interfaces override; nil or empty slice means auto-detect all
+func NewAdapter(wgIface string, natIfaces []string) *Adapter {
 	return &Adapter{
 		iface:             wgIface,
-		natInterface:      natIface, // Empty string means auto-detect
-		httpPort:          3128,     // Default HTTP proxy port
-		httpsPort:         3129,     // Default HTTPS proxy port
-		captivePortalPort: 8081,     // Default captive portal redirect server port
+		natInterfaces:     natIfaces,
+		httpPort:          3128,
+		httpsPort:         3129,
+		captivePortalPort: 8081,
 	}
 }
 
@@ -81,75 +81,84 @@ func (a *Adapter) resolveServerIPs() []string {
 	return addrs
 }
 
-// detectDefaultNATInterface detects the default network interface for NAT
-// Returns the interface with the default route (usually the one with internet access)
-func (a *Adapter) detectDefaultNATInterface() string {
-	// Try to get the default route interface
-	cmd := exec.Command("ip", "route", "show", "default") // #nosec G204 - static command
+// detectNATInterfaces auto-detects all physical egress interfaces that need a
+// MASQUERADE rule by scanning the full routing table. Every unique "dev" entry
+// that is not the WireGuard interface, not loopback, and has an IPv4 address is
+// considered a NAT interface. This handles multi-homed hosts where different
+// destinations exit through different interfaces (e.g. ens2 for internet,
+// ens6 for a private VLAN).
+func (a *Adapter) detectNATInterfaces() []string {
+	cmd := exec.Command("ip", "route", "show") // #nosec G204 - static command
 	output, err := cmd.Output()
 	if err != nil {
-		log.Warn().Err(err).Msg("failed to detect default route, falling back to common interfaces")
-		return a.fallbackNATInterface()
+		log.Warn().Err(err).Msg("failed to read routing table, falling back to common interfaces")
+		return a.fallbackNATInterfaces()
 	}
 
-	// Parse output like: "default via 192.168.1.1 dev eth0 proto dhcp metric 100"
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "default") && strings.Contains(line, "dev") {
-			parts := strings.Fields(line)
-			for i, part := range parts {
-				if part == "dev" && i+1 < len(parts) {
-					iface := parts[i+1]
-					log.Info().Str("interface", iface).Msg("detected default NAT interface")
-					return iface
+	seen := make(map[string]bool)
+	var ifaces []string
+
+	for _, line := range strings.Split(string(output), "\n") {
+		parts := strings.Fields(line)
+		for i, part := range parts {
+			if part == "dev" && i+1 < len(parts) {
+				iface := parts[i+1]
+				if iface == "lo" || iface == a.iface || seen[iface] {
+					continue
+				}
+				// Only include interfaces that actually have an IPv4 address
+				// (filters out WireGuard tunnels and other virtual interfaces)
+				addrOut, addrErr := exec.Command("ip", "addr", "show", iface).Output() // #nosec G204
+				if addrErr == nil && strings.Contains(string(addrOut), "inet ") {
+					seen[iface] = true
+					ifaces = append(ifaces, iface)
 				}
 			}
 		}
 	}
 
-	log.Warn().Msg("could not parse default route, falling back to common interfaces")
-	return a.fallbackNATInterface()
+	if len(ifaces) == 0 {
+		log.Warn().Msg("no NAT interfaces found in routing table, falling back to common interfaces")
+		return a.fallbackNATInterfaces()
+	}
+
+	log.Info().Strs("interfaces", ifaces).Msg("auto-detected NAT interfaces")
+	return ifaces
 }
 
-// fallbackNATInterface tries common interface names as fallback
-func (a *Adapter) fallbackNATInterface() string {
-	commonInterfaces := []string{"eth0", "ens3", "ens18", "enp0s3", "wlan0", "wlp2s0"}
+// fallbackNATInterfaces tries common interface names when routing-table detection fails
+func (a *Adapter) fallbackNATInterfaces() []string {
+	commonInterfaces := []string{"eth0", "ens2", "ens3", "ens6", "ens18", "enp0s3", "wlan0", "wlp2s0"}
 
+	var found []string
 	for _, iface := range commonInterfaces {
-		// Check if interface exists and is up
-		cmd := exec.Command("ip", "link", "show", iface) // #nosec G204 - controlled interface names
-		if err := cmd.Run(); err == nil {
-			// Check if interface has an IP address
-			cmd = exec.Command("ip", "addr", "show", iface) // #nosec G204 - controlled interface names
-			output, err := cmd.Output()
-			if err == nil && strings.Contains(string(output), "inet ") {
-				log.Info().Str("interface", iface).Msg("using fallback NAT interface")
-				return iface
-			}
+		cmd := exec.Command("ip", "addr", "show", iface) // #nosec G204 - controlled interface names
+		output, err := cmd.Output()
+		if err == nil && strings.Contains(string(output), "inet ") {
+			log.Info().Str("interface", iface).Msg("using fallback NAT interface")
+			found = append(found, iface)
 		}
 	}
 
-	log.Warn().Msg("no suitable NAT interface found")
-	return ""
+	if len(found) == 0 {
+		log.Warn().Msg("no suitable NAT interface found")
+	}
+	return found
 }
 
-// getNATInterface returns the NAT interface to use (config override or auto-detected)
-func (a *Adapter) getNATInterface() string {
-	// If explicitly configured, use that
-	if a.natInterface != "" {
-		log.Debug().Str("interface", a.natInterface).Msg("using configured NAT interface")
-		return a.natInterface
+// getNATInterfaces returns the NAT interfaces to use: the explicit override list
+// if configured, otherwise all auto-detected egress interfaces.
+func (a *Adapter) getNATInterfaces() []string {
+	if len(a.natInterfaces) > 0 {
+		log.Debug().Strs("interfaces", a.natInterfaces).Msg("using configured NAT interfaces")
+		return a.natInterfaces
 	}
 
-	// Otherwise, auto-detect
-	detected := a.detectDefaultNATInterface()
-	if detected != "" {
-		log.Info().Str("interface", detected).Msg("auto-detected NAT interface")
-		return detected
+	detected := a.detectNATInterfaces()
+	if len(detected) == 0 {
+		log.Warn().Msg("no NAT interfaces available - peers will not have internet/routed access")
 	}
-
-	log.Warn().Msg("no NAT interface available - NAT rules will be skipped")
-	return ""
+	return detected
 }
 
 // EnableDebugLogging adds LOG rules to help debug packet drops
@@ -182,104 +191,52 @@ func (a *Adapter) run(args ...string) error {
 // 	return nil
 // }
 
-// ruleExists checks if an iptables rule exists by parsing the rule arguments
-func (a *Adapter) ruleExists(args ...string) bool {
-	// Extract table, chain, and target from args
-	table := "filter"
-	var chain, target string
-
-	// Parse arguments to find table, chain, and jump target
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "-t":
-			if i+1 < len(args) {
-				table = args[i+1]
-				i++
-			}
-		case "-A", "-I":
-			if i+1 < len(args) {
-				chain = args[i+1]
-				i++
-				// Skip position number if present (for -I)
-				if args[i-1] == "-I" && i < len(args) && args[i] != "" && args[i][0] >= '0' && args[i][0] <= '9' {
-					i++
-				}
-			}
-		case "-j":
-			if i+1 < len(args) {
-				target = args[i+1]
-				i++
-			}
-		}
-	}
-
-	if chain == "" || target == "" {
-		return false
-	}
-
-	// Use iptables-save to check if rule exists
-	var cmd *exec.Cmd
-	if table == "filter" {
-		cmd = exec.Command("iptables-save", "-t", "filter") // #nosec G204
-	} else {
-		cmd = exec.Command("iptables-save", "-t", table) // #nosec G204
-	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
-	}
-
-	// Look for the rule in the output
-	// Format: -A CHAIN ... -j TARGET
-	searchPattern := fmt.Sprintf("-A %s ", chain)
-	targetPattern := fmt.Sprintf("-j %s", target)
-
-	lines := string(output)
-	for i := 0; i < len(lines); {
-		end := i
-		for end < len(lines) && lines[end] != '\n' {
-			end++
-		}
-		line := lines[i:end]
-
-		// Check if line contains both chain and target
-		if containsSubstring(line, searchPattern) && containsSubstring(line, targetPattern) {
-			return true
-		}
-
-		i = end + 1
-	}
-
-	return false
-}
-
-// containsSubstring checks if s contains substr
-func containsSubstring(s, substr string) bool {
-	if len(substr) > len(s) {
-		return false
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		match := true
-		for j := 0; j < len(substr); j++ {
-			if s[i+j] != substr[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
-	}
-	return false
-}
-
-// runIfNotExists runs an iptables command only if the rule doesn't already exist
+// runIfNotExists runs an iptables command only if the exact rule doesn't already
+// exist. It uses `iptables -C` (the built-in check command) which returns exit
+// code 0 when the rule is present, matching on every parameter — not just chain
+// and target. This avoids the false-positive bug where a rule like
+// `-o ens2 -j MASQUERADE` would mask a distinct rule `-o ens6 -j MASQUERADE`.
 func (a *Adapter) runIfNotExists(args ...string) error {
-	if a.ruleExists(args...) {
-		return nil // Rule already exists, skip
+	checkArgs := toCheckArgs(args)
+	if exec.Command("iptables", checkArgs...).Run() == nil { // #nosec G204
+		return nil // exact rule already present
 	}
 	return a.run(args...)
+}
+
+// toCheckArgs converts -A/-I arguments to their -C (check) equivalent.
+// `iptables -C` does not accept a position number, so for `-I CHAIN N …` the
+// position N is dropped, producing `-C CHAIN …`.
+func toCheckArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-A":
+			out = append(out, "-C")
+		case "-I":
+			out = append(out, "-C")
+			// -I CHAIN [position] → -C CHAIN  (skip numeric position if present)
+			if i+2 < len(args) && isPositiveInt(args[i+2]) {
+				out = append(out, args[i+1]) // chain name
+				i += 2                       // skip chain name + position
+			}
+		default:
+			out = append(out, args[i])
+		}
+	}
+	return out
+}
+
+func isPositiveInt(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // applyIPTablesRule parses and applies a single iptables rule to the specified chain
@@ -420,22 +377,19 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	// Attach chain to FORWARD (insert at top, only if not already attached)
 	_ = a.runIfNotExists("-I", "FORWARD", "1", "-j", chain)
 
-	// NAT (MASQUERADE) for internet access (only add if not already present)
-	natIface := a.getNATInterface()
-	if natIface != "" {
+	// MASQUERADE on every egress interface so that forwarded traffic is NATed
+	// regardless of which interface the routing table selects for a given destination.
+	// Example: ens2 for internet, ens6 for a private VLAN — both need MASQUERADE.
+	natIfaces := a.getNATInterfaces()
+	if len(natIfaces) == 0 {
+		log.Info().Msg("no NAT interfaces configured — peers will not have routed access")
+	}
+	for _, natIface := range natIfaces {
 		if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
-			log.Warn().Err(err).Str("interface", natIface).Msg("failed to add NAT rule")
+			log.Warn().Err(err).Str("interface", natIface).Msg("failed to add MASQUERADE rule")
 		} else {
-			log.Debug().Str("interface", natIface).Msg("NAT rule configured")
+			log.Debug().Str("interface", natIface).Msg("MASQUERADE rule configured")
 		}
-
-		// TODO: Add IPv6 NAT (MASQUERADE) support
-		// IPv6 NAT requires ip6tables -t nat which may not be available on all systems
-		// if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
-		//     log.Debug().Err(err).Msg("IPv6 NAT not available (normal on many systems)")
-		// }
-	} else {
-		log.Info().Msg("no NAT interface configured - peers will not have internet access")
 	}
 	return nil
 }

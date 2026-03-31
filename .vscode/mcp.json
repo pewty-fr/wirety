@@ -1,7 +1,7 @@
 {
 	"servers": {
 		"Wirety": {
-			"url": "https://wirety-personal.pewty.fr/api/mcp",
+			"url": "https://wirety-personal.pewty.fr/api/v1/mcp",
 			"type": "http",
 			"headers": {
         "Authorization": "Bearer wirety_e02c551f9b7e446d4b49125feaf6a27b0de212d408cb00a1d5f582af125e9a1e"

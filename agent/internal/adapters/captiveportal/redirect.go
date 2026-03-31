@@ -11,9 +11,45 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
+
+// tokenTTL is how long a cached token is reused before a fresh one is fetched.
+// Slightly shorter than the server-side 10-minute token lifetime so we never
+// present an already-expired token to the captive portal page.
+const tokenTTL = 9 * time.Minute
+
+type cachedToken struct {
+	value     string
+	expiresAt time.Time
+}
+
+// tokenCache is a simple in-memory per-peer-IP token cache. Without it, every
+// HTTP request intercepted by the DNAT rule (browser fetches, keepalives, etc.)
+// would create a new captive portal token, flooding the database.
+type tokenCache struct {
+	mu      sync.Mutex
+	entries map[string]cachedToken
+}
+
+func (c *tokenCache) get(peerIP string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[peerIP]
+	if !ok || time.Now().After(e.expiresAt) {
+		return "", false
+	}
+	return e.value, true
+}
+
+func (c *tokenCache) set(peerIP, token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[peerIP] = cachedToken{value: token, expiresAt: time.Now().Add(tokenTTL)}
+}
 
 // Server is a local HTTP server that intercepts unauthenticated peers' HTTP traffic
 // and redirects them to the Wirety captive portal authentication page.
@@ -23,6 +59,7 @@ type Server struct {
 	portalURL string // Captive portal page URL, e.g. "https://wirety.example.com/captive-portal"
 	networkID string
 	peerID    string
+	cache     tokenCache
 }
 
 // NewServer creates a captive portal redirect server.
@@ -33,6 +70,7 @@ func NewServer(serverURL, authToken, portalURL, networkID, peerID string) *Serve
 		portalURL: portalURL,
 		networkID: networkID,
 		peerID:    peerID,
+		cache:     tokenCache{entries: make(map[string]cachedToken)},
 	}
 }
 
@@ -42,8 +80,9 @@ func (s *Server) Start(addr string) error {
 	return http.ListenAndServe(addr, s) // #nosec G114
 }
 
-// ServeHTTP handles intercepted HTTP requests. It creates a captive portal token
-// for the peer and redirects the browser to the authentication page.
+// ServeHTTP handles intercepted HTTP requests. It returns the cached token for
+// the peer if one is still valid, otherwise creates a new one, then redirects
+// the browser to the captive portal authentication page.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -51,16 +90,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	peerIP := host
 
-	log.Info().Str("peer_ip", peerIP).Str("host", r.Host).Str("uri", r.RequestURI).Msg("captive portal: intercepted HTTP request")
-
-	token, err := s.createToken(peerIP)
-	if err != nil {
-		log.Error().Err(err).Str("peer_ip", peerIP).Msg("captive portal: failed to create token")
-		// Return a simple HTML page so at least the user sees something
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = fmt.Fprintf(w, "<html><body><h1>Network access requires authentication.</h1><p>Please retry in a few seconds.</p></body></html>")
-		return
+	token, ok := s.cache.get(peerIP)
+	if !ok {
+		log.Info().Str("peer_ip", peerIP).Str("host", r.Host).Msg("captive portal: intercepted HTTP request, creating token")
+		token, err = s.createToken(peerIP)
+		if err != nil {
+			log.Error().Err(err).Str("peer_ip", peerIP).Msg("captive portal: failed to create token")
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprintf(w, "<html><body><h1>Network access requires authentication.</h1><p>Please retry in a few seconds.</p></body></html>")
+			return
+		}
+		s.cache.set(peerIP, token)
+	} else {
+		log.Debug().Str("peer_ip", peerIP).Msg("captive portal: reusing cached token")
 	}
 
 	originalURL := fmt.Sprintf("http://%s%s", r.Host, r.RequestURI)
@@ -70,7 +113,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		url.QueryEscape(originalURL),
 	)
 
-	log.Info().Str("peer_ip", peerIP).Str("redirect_to", redirectTarget).Msg("captive portal: redirecting peer to auth")
 	http.Redirect(w, r, redirectTarget, http.StatusFound)
 }
 

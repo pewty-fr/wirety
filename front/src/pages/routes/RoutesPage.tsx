@@ -1159,17 +1159,20 @@ function RouteModal({
           </div>
         )}
 
-        {/* Add DNS Modal */}
-        <AddDNSModal
-          isOpen={isAddDNSModalOpen}
-          onClose={() => setIsAddDNSModalOpen(false)}
-          onAdd={handleAddDNS}
-          routeCidr={destinationCidr || route?.destination_cidr || ''}
-        />
       </div>
       </div>
       </div>
     </div>
+
+    {/* AddDNSModal must be rendered outside the transformed/scrollable RouteModal
+        container — a CSS transform on an ancestor breaks fixed positioning, causing
+        the modal backdrop to be clipped and clicks to fall through. */}
+    <AddDNSModal
+      isOpen={isAddDNSModalOpen}
+      onClose={() => setIsAddDNSModalOpen(false)}
+      onAdd={handleAddDNS}
+      routeCidr={destinationCidr || route?.destination_cidr || ''}
+    />
   );
 }
 
