@@ -357,9 +357,10 @@ function RouteModal({
   }, [selectedNetworkId, route, isOpen]);
 
   const loadJumpPeers = async () => {
-    if (!selectedNetworkId) return;
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     try {
-      const peers = await api.getAllNetworkPeers(selectedNetworkId);
+      const peers = await api.getAllNetworkPeers(networkIdToUse);
       setJumpPeers(peers.filter(p => p.is_jump));
     } catch (error) {
       console.error('Failed to load jump peers:', error);
@@ -367,10 +368,11 @@ function RouteModal({
   };
 
   const loadDNSMappings = async () => {
-    if (!route || !selectedNetworkId) return;
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (!route || !networkIdToUse) return;
 
     try {
-      const data = await api.getDNSMappings(selectedNetworkId, route.id);
+      const data = await api.getDNSMappings(networkIdToUse, route.id);
       setDnsMappings(data || []);
     } catch (error) {
       console.error('Failed to load DNS mappings:', error);
@@ -378,10 +380,11 @@ function RouteModal({
   };
 
   const loadAvailableItems = async () => {
-    if (!selectedNetworkId) return;
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
 
     try {
-      const allGroups = await api.getGroups(selectedNetworkId);
+      const allGroups = await api.getGroups(networkIdToUse);
       setAvailableGroups(allGroups);
     } catch (error) {
       console.error('Failed to load available items:', error);
@@ -389,11 +392,12 @@ function RouteModal({
   };
 
   const loadAttachments = async () => {
-    if (!route || !selectedNetworkId) return;
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (!route || !networkIdToUse) return;
 
     try {
       // Load all groups in the network
-      const allGroups = await api.getGroups(selectedNetworkId);
+      const allGroups = await api.getGroups(networkIdToUse);
       
       // Filter groups that have this route attached
       const groupsWithRoute = allGroups.filter(g => g.route_ids?.includes(route.id));

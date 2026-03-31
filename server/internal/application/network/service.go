@@ -1723,13 +1723,20 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 		return nil, fmt.Errorf("invalid session")
 	}
 
-	// Whitelist the peer — also triggers WebSocket notification to jump peer
+	// Whitelist the peer — also triggers WebSocket notification to jump peer.
+	// AddCaptivePortalWhitelist is idempotent (ON CONFLICT DO NOTHING), so repeated
+	// calls for the same peer are safe.
 	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, cpt.PeerIP); err != nil {
 		return nil, fmt.Errorf("failed to whitelist peer: %w", err)
 	}
 
-	// Token is single-use
-	_ = s.repo.DeleteCaptivePortalToken(ctx, captiveToken)
+	// Do NOT delete the token here. The redirect server caches the token for up to
+	// 9 minutes (tokenTTL) to avoid creating a new DB token on every intercepted
+	// HTTP request. If the agent has not yet synced iptables by the time the browser
+	// follows the post-authentication redirect, the next HTTP request from the peer
+	// will be DNAT'd again and the captive portal page will attempt to authenticate
+	// with the same cached token. Keeping the token alive (it expires after 10 min)
+	// makes that second attempt succeed gracefully via the idempotent whitelist upsert.
 
 	return cpt, nil
 }
