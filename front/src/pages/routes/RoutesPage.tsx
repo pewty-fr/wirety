@@ -119,7 +119,6 @@ export default function RoutesPage() {
   }
 
   return (
-    <>
     <div>
       <PageHeader
         title="Routes" 
@@ -668,6 +667,7 @@ function RouteModal({
   }));
 
   return (
+    <>
     <div className="fixed inset-0 z-50 overflow-y-auto">
       {/* Backdrop with blur */}
       <div 
