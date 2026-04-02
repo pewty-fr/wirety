@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faShield, faEye, faEyeSlash, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
 
 export default function LoginPage() {
-  const { login, simpleLogin, authConfig, isLoading, oauthError } = useAuth();
+  const { login, simpleLogin, authConfig, isLoading, oauthError, clearOauthError } = useAuth();
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -47,7 +47,10 @@ export default function LoginPage() {
               </p>
             </div>
             <button
-              onClick={() => window.history.replaceState({}, document.title, window.location.pathname)}
+              onClick={() => {
+                window.history.replaceState({}, document.title, window.location.pathname);
+                clearOauthError();
+              }}
               className="w-full btn-brand font-medium py-3 px-4 rounded-lg transition-all"
             >
               Back to login

@@ -21,6 +21,7 @@ interface AuthContextType {
   authConfig: AuthConfig | null;
   isLoading: boolean;
   oauthError: string | null;
+  clearOauthError: () => void;
   login: () => void;
   simpleLogin: (password: string) => Promise<boolean>;
   logout: () => void;
@@ -206,8 +207,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isAuthenticated = user !== null;
 
+  const clearOauthError = () => setOauthError(null);
+
   return (
-    <AuthContext.Provider value={{ user, authConfig, isLoading, oauthError, login, simpleLogin, logout, isAuthenticated }}>
+    <AuthContext.Provider value={{ user, authConfig, isLoading, oauthError, clearOauthError, login, simpleLogin, logout, isAuthenticated }}>
       {children}
     </AuthContext.Provider>
   );

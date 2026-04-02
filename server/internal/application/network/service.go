@@ -80,8 +80,8 @@ func (s *Service) SetPolicyService(policyService PolicyService) {
 
 // CreateNetwork creates a new WireGuard network
 func (s *Service) CreateNetwork(ctx context.Context, req *network.NetworkCreateRequest) (*network.Network, error) {
-	// Validate network name follows DNS naming convention
-	if err := validation.ValidateDNSName(req.Name); err != nil {
+	// Validate network name follows DNS hostname convention (dots allowed for subdomains)
+	if err := validation.ValidateDNSHostname(req.Name); err != nil {
 		return nil, fmt.Errorf("invalid network name: %w", err)
 	}
 
@@ -91,8 +91,8 @@ func (s *Service) CreateNetwork(ctx context.Context, req *network.NetworkCreateR
 		domainSuffix = "internal"
 	}
 
-	// Validate domain suffix format (must be valid DNS name)
-	if err := validation.ValidateDNSName(domainSuffix); err != nil {
+	// Validate domain suffix (dots allowed, e.g. "corp.example.com")
+	if err := validation.ValidateDNSHostname(domainSuffix); err != nil {
 		return nil, fmt.Errorf("invalid domain suffix: %w", err)
 	}
 
@@ -134,9 +134,9 @@ func (s *Service) ListNetworks(ctx context.Context) ([]*network.Network, error) 
 
 // UpdateNetwork updates a network's configuration
 func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *network.NetworkUpdateRequest) (*network.Network, error) {
-	// Validate network name if provided
+	// Validate network name if provided (dots allowed for subdomains)
 	if req.Name != "" {
-		if err := validation.ValidateDNSName(req.Name); err != nil {
+		if err := validation.ValidateDNSHostname(req.Name); err != nil {
 			return nil, fmt.Errorf("invalid network name: %w", err)
 		}
 	}
