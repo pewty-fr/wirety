@@ -18,6 +18,28 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// flexInt unmarshals a JSON number or a quoted number string into an int.
+// Azure Entra ID returns expires_in as a string ("3600") rather than an integer.
+type flexInt int
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	var n int
+	if err := json.Unmarshal(b, &n); err == nil {
+		*f = flexInt(n)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	var n2 int
+	if _, err := fmt.Sscan(s, &n2); err != nil {
+		return fmt.Errorf("flexInt: cannot parse %q as int", s)
+	}
+	*f = flexInt(n2)
+	return nil
+}
+
 // Service handles authentication and authorization
 type Service struct {
 	config       *config.AuthConfig
@@ -302,12 +324,12 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	}
 
 	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
+		AccessToken string  `json:"access_token"`
+		ExpiresIn   flexInt `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return "", 0, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
-	return tokenResp.AccessToken, tokenResp.ExpiresIn, nil
+	return tokenResp.AccessToken, int(tokenResp.ExpiresIn), nil
 }

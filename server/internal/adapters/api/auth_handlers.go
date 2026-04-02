@@ -22,6 +22,30 @@ import (
 
 // Uses shared OIDC discovery adapter (internal/infrastructure/oidc)
 
+// flexInt unmarshals a JSON number or a quoted number string into an int.
+// Azure Entra ID returns expires_in as a string ("3600") rather than an integer.
+type flexInt int
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	// Try as a plain number first
+	var n int
+	if err := json.Unmarshal(b, &n); err == nil {
+		*f = flexInt(n)
+		return nil
+	}
+	// Fall back to a quoted string
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	var n2 int
+	if _, err := fmt.Sscan(s, &n2); err != nil {
+		return fmt.Errorf("flexInt: cannot parse %q as int", s)
+	}
+	*f = flexInt(n2)
+	return nil
+}
+
 // AuthConfigResponse contains public authentication configuration
 type AuthConfigResponse struct {
 	Enabled    bool   `json:"enabled"`
@@ -118,10 +142,10 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	}
 
 	var oidcTokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-		TokenType    string `json:"token_type"`
+		AccessToken  string  `json:"access_token"`
+		RefreshToken string  `json:"refresh_token"`
+		ExpiresIn    flexInt `json:"expires_in"`
+		TokenType    string  `json:"token_type"`
 	}
 	if err := json.Unmarshal(body, &oidcTokenResp); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to parse token response: %v", err)})
@@ -148,7 +172,7 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	}
 
 	// Create session with tokens
-	session, err := h.createSession(user.ID, oidcTokenResp.AccessToken, oidcTokenResp.RefreshToken, oidcTokenResp.ExpiresIn)
+	session, err := h.createSession(user.ID, oidcTokenResp.AccessToken, oidcTokenResp.RefreshToken, int(oidcTokenResp.ExpiresIn))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create session: %v", err)})
 		return
@@ -157,7 +181,7 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	setSessionCookie(c, session.SessionHash, 30*24*3600)
 	c.JSON(http.StatusOK, TokenResponse{
 		SessionHash: session.SessionHash,
-		ExpiresIn:   oidcTokenResp.ExpiresIn,
+		ExpiresIn:   int(oidcTokenResp.ExpiresIn),
 	})
 }
 
