@@ -143,6 +143,7 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 
 	var oidcTokenResp struct {
 		AccessToken  string  `json:"access_token"`
+		IDToken      string  `json:"id_token"`      // OIDC identity token — always a JWT
 		RefreshToken string  `json:"refresh_token"`
 		ExpiresIn    flexInt `json:"expires_in"`
 		TokenType    string  `json:"token_type"`
@@ -157,8 +158,16 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
-	// Validate the access token and get user claims
-	claims, err := h.authService.ValidateToken(c.Request.Context(), oidcTokenResp.AccessToken)
+	// Prefer id_token for validation: it is always a standard JWT per the OIDC spec.
+	// Some providers (e.g. Azure Entra ID) return an opaque, non-JWT access_token
+	// intended for Microsoft APIs — parsing it as a JWT fails with "invalid number of segments".
+	identityToken := oidcTokenResp.IDToken
+	if identityToken == "" {
+		identityToken = oidcTokenResp.AccessToken
+	}
+
+	// Validate the identity token and get user claims
+	claims, err := h.authService.ValidateToken(c.Request.Context(), identityToken)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to validate token: %v", err)})
 		return
@@ -171,8 +180,9 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
-	// Create session with tokens
-	session, err := h.createSession(user.ID, oidcTokenResp.AccessToken, oidcTokenResp.RefreshToken, int(oidcTokenResp.ExpiresIn))
+	// Store the identity token (id_token / JWT) in the session so that middleware can
+	// re-validate it without hitting the same opaque-token problem on refresh.
+	session, err := h.createSession(user.ID, identityToken, oidcTokenResp.RefreshToken, int(oidcTokenResp.ExpiresIn))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create session: %v", err)})
 		return

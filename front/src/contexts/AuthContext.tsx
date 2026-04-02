@@ -20,6 +20,7 @@ interface AuthContextType {
   user: User | null;
   authConfig: AuthConfig | null;
   isLoading: boolean;
+  oauthError: string | null;
   login: () => void;
   simpleLogin: (password: string) => Promise<boolean>;
   logout: () => void;
@@ -34,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [oauthError, setOauthError] = useState<string | null>(null);
 
   // Fetch auth config then try to restore session from cookie
   useEffect(() => {
@@ -63,12 +65,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           window.history.replaceState({}, document.title, window.location.pathname);
           await fetchCurrentUser();
         } else {
-          const errorText = await response.text();
-          console.error('Session creation failed:', response.status, errorText);
+          const body = await response.text();
+          let message = `Authentication failed (HTTP ${response.status})`;
+          try {
+            const json = JSON.parse(body);
+            if (json.error) message = json.error;
+          } catch {
+            if (body) message = body;
+          }
+          console.error('Session creation failed:', response.status, body);
+          setOauthError(message);
           setIsLoading(false);
         }
       } catch (error) {
         console.error('OAuth callback error:', error);
+        setOauthError(error instanceof Error ? error.message : 'Unexpected error during sign-in');
         setIsLoading(false);
       }
     };
@@ -196,7 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = user !== null;
 
   return (
-    <AuthContext.Provider value={{ user, authConfig, isLoading, login, simpleLogin, logout, isAuthenticated }}>
+    <AuthContext.Provider value={{ user, authConfig, isLoading, oauthError, login, simpleLogin, logout, isAuthenticated }}>
       {children}
     </AuthContext.Provider>
   );

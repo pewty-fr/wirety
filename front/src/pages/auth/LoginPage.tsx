@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faShield, faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons';
+import { faShield, faEye, faEyeSlash, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
 
 export default function LoginPage() {
-  const { login, simpleLogin, authConfig, isLoading } = useAuth();
+  const { login, simpleLogin, authConfig, isLoading, oauthError } = useAuth();
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -30,6 +30,33 @@ export default function LoginPage() {
     }
     setIsSubmitting(false);
   };
+
+  // Show error screen when OAuth callback failed
+  if (hasAuthCode && oauthError) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700 flex items-center justify-center px-4">
+        <div className="max-w-md w-full">
+          <div className="bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl p-8 border-2 border-red-400 dark:border-red-700">
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full mb-4">
+                <FontAwesomeIcon icon={faTriangleExclamation} className="text-3xl text-red-500 dark:text-red-400" />
+              </div>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">Sign-in failed</h2>
+              <p className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 text-left break-words">
+                {oauthError}
+              </p>
+            </div>
+            <button
+              onClick={() => window.history.replaceState({}, document.title, window.location.pathname)}
+              className="w-full btn-brand font-medium py-3 px-4 rounded-lg transition-all"
+            >
+              Back to login
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Show loading state during OAuth callback processing
   if (isLoading || hasAuthCode) {

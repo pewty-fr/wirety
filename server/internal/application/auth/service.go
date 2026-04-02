@@ -325,11 +325,19 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 
 	var tokenResp struct {
 		AccessToken string  `json:"access_token"`
+		IDToken     string  `json:"id_token"`  // OIDC identity token — always a JWT
 		ExpiresIn   flexInt `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return "", 0, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
-	return tokenResp.AccessToken, int(tokenResp.ExpiresIn), nil
+	// Prefer id_token: it is always a standard JWT. Some providers (e.g. Azure Entra ID)
+	// return an opaque access_token that cannot be validated as a JWT.
+	identityToken := tokenResp.IDToken
+	if identityToken == "" {
+		identityToken = tokenResp.AccessToken
+	}
+
+	return identityToken, int(tokenResp.ExpiresIn), nil
 }
