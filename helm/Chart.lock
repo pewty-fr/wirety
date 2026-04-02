@@ -1,0 +1,6 @@
+dependencies:
+- name: postgres
+  repository: https://cloudpirates-io.github.io/helm-charts
+  version: 0.18.3
+digest: sha256:4fc642a8393a7c2eea178ed2f29390f8177c3e9288b098cd447c72414a0d23b8
+generated: "2026-04-02T10:25:44.244802+02:00"

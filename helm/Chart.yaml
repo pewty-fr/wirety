@@ -15,3 +15,8 @@ sources:
 maintainers:
   - name: Wirety Team
     email: support@wirety.io
+dependencies:
+  - name: postgres
+    version: "*"
+    repository: https://cloudpirates-io.github.io/helm-charts
+    condition: postgres.enabled

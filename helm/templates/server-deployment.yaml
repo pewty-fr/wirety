@@ -1,3 +1,15 @@
+{{- /*
+Build the Postgres DSN from the subchart when postgres.enabled=true.
+The CloudPirates postgres chart names its Service after the release + chart
+name, yielding "{{ .Release.Name }}-postgres".
+*/}}
+{{- define "wirety.postgresDSN" -}}
+{{- $host := printf "%s-postgres" .Release.Name -}}
+{{- $user := .Values.postgres.auth.username | default "wirety" -}}
+{{- $pass := .Values.postgres.auth.password | default "wirety" -}}
+{{- $db   := .Values.postgres.auth.database | default "wirety" -}}
+{{- printf "postgres://%s:%s@%s:5432/%s?sslmode=disable" $user $pass $host $db -}}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,8 +49,18 @@ spec:
           protocol: TCP
         env:
         {{- range $key, $value := .Values.server.env }}
+        {{- /* Skip DB_DSN here; it is handled below so the subchart can override it. */}}
+        {{- if ne $key "DB_DSN" }}
         - name: {{ $key }}
           value: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
+        {{- if .Values.postgres.enabled }}
+        - name: DB_DSN
+          value: {{ include "wirety.postgresDSN" . | quote }}
+        {{- else if .Values.server.env.DB_DSN }}
+        - name: DB_DSN
+          value: {{ .Values.server.env.DB_DSN | quote }}
         {{- end }}
         {{- with .Values.server.envFrom }}
         envFrom:
