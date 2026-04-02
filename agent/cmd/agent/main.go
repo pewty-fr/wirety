@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"wirety/agent/internal/audit"
 	dom "wirety/agent/internal/domain/dns"
 
+	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -38,7 +40,8 @@ func main() {
 	httpPort := envOr("HTTP_PROXY_PORT", "3128")
 	httpsPort := envOr("HTTPS_PROXY_PORT", "3129")
 	portalURL := envOr("CAPTIVE_PORTAL_URL", "")
-	serverHost := envOr("SERVER_HOST", "") // optional Host header override for reverse-proxy setups
+	serverHost := envOr("SERVER_HOST", "")                  // optional Host header override for reverse-proxy setups
+	skipTLSVerify := envOr("SKIP_TLS_VERIFY", "") == "true" // skip TLS certificate verification
 
 	flag.StringVar(&server, "server", server, "Server base URL (no trailing /)")
 	flag.StringVar(&token, "token", token, "Enrollment token")
@@ -47,6 +50,7 @@ func main() {
 	flag.StringVar(&natIfacesStr, "nat-interfaces", natIfacesStr, "Comma-separated NAT interfaces (empty = auto-detect all egress interfaces)")
 	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal page URL (default: <server>/captive-portal)")
 	flag.StringVar(&serverHost, "server-host", serverHost, "Override HTTP Host header for all requests to the server (useful when accessing via IP behind a reverse proxy)")
+	flag.BoolVar(&skipTLSVerify, "skip-tls-verify", skipTLSVerify, "Skip TLS certificate verification (insecure — use only with self-signed certificates in trusted environments)")
 	flag.Parse()
 
 	// Default portal URL: captive portal page served by the same Wirety server
@@ -68,24 +72,36 @@ func main() {
 		log.Fatal().Msg("TOKEN is required (env or flag)")
 	}
 
-	log.Info().Msg("starting DNS server")
-	dnsServer := dnsadapter.NewServer("", []dom.DNSPeer{})
-	go func() {
-		if err := dnsServer.Start(":53"); err != nil {
-			log.Error().Err(err).Msg("dns server exited")
-		}
-	}()
+	if skipTLSVerify {
+		log.Warn().Msg("TLS certificate verification is DISABLED (SKIP_TLS_VERIFY=true) — use only in trusted environments")
+	}
 
 	// Build a shared HTTP client that injects the Host header on every request
 	// when SERVER_HOST is set (reverse-proxy / no-DNS setups).
-	httpClient := newHTTPClient(serverHost)
+	httpClient := newHTTPClient(serverHost, skipTLSVerify)
 
-	// First resolve token to get peer name for interface/config naming
+	// Resolve token first: we need the WireGuard config to know our VPN IP,
+	// which is the address the DNS server must bind to.
 	networkID, peerID, peerName, cfg, err := resolveToken(server, token, httpClient)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to resolve token")
 	}
 	log.Info().Str("network_id", networkID).Str("peer_id", peerID).Str("peer_name", peerName).Msg("resolved token")
+
+	// Bind the DNS server to the WireGuard interface IP so it is reachable by VPN
+	// peers through the tunnel, without conflicting with systemd-resolved (127.0.0.53:53).
+	wgIP, err := parseWireGuardAddress(cfg)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to parse WireGuard address from config")
+	}
+	dnsListenAddr := wgIP + ":53"
+	log.Info().Str("addr", dnsListenAddr).Msg("starting DNS server")
+	dnsServer := dnsadapter.NewServer("", []dom.DNSPeer{})
+	go func() {
+		if err := dnsServer.Start(dnsListenAddr); err != nil {
+			log.Error().Err(err).Msg("dns server exited")
+		}
+	}()
 
 	// Use peer name as interface name - sanitize for valid interface names
 	iface := sanitizeInterfaceName(peerName)
@@ -116,7 +132,7 @@ func main() {
 		wsServer = "wss://" + server[8:]
 	}
 	wsURL := fmt.Sprintf("%s/api/v1/ws", wsServer)
-	wsClient := ws.NewClient()
+	wsClient := ws.NewClientWithDialer(newWSDialer(skipTLSVerify))
 
 	// Parse proxy ports
 	httpPortInt := 3128
@@ -209,18 +225,61 @@ func (t *hostOverrideTransport) RoundTrip(req *http.Request) (*http.Response, er
 	return t.base.RoundTrip(r)
 }
 
-// newHTTPClient returns an *http.Client that injects the given Host header on
-// every request. If serverHost is empty the default client is returned unchanged.
-func newHTTPClient(serverHost string) *http.Client {
-	if serverHost == "" {
+// baseTLSTransport returns an http.RoundTripper with TLS verification optionally disabled.
+// When skipTLSVerify is false the standard http.DefaultTransport is returned unchanged.
+func baseTLSTransport(skipTLSVerify bool) http.RoundTripper {
+	if !skipTLSVerify {
+		return http.DefaultTransport
+	}
+	return &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 — intentional, controlled by SKIP_TLS_VERIFY
+	}
+}
+
+// newHTTPClient returns an *http.Client configured with the given options:
+//   - serverHost: when non-empty, sets the HTTP Host header on every request
+//     (reverse-proxy / no-DNS setups).
+//   - skipTLSVerify: when true, disables TLS certificate verification.
+func newHTTPClient(serverHost string, skipTLSVerify bool) *http.Client {
+	base := baseTLSTransport(skipTLSVerify)
+	if serverHost == "" && !skipTLSVerify {
 		return http.DefaultClient
 	}
-	return &http.Client{
-		Transport: &hostOverrideTransport{
-			host: serverHost,
-			base: http.DefaultTransport,
-		},
+	transport := base
+	if serverHost != "" {
+		transport = &hostOverrideTransport{host: serverHost, base: base}
 	}
+	return &http.Client{Transport: transport}
+}
+
+// newWSDialer returns a *websocket.Dialer with TLS verification optionally disabled.
+func newWSDialer(skipTLSVerify bool) *websocket.Dialer {
+	if !skipTLSVerify {
+		return websocket.DefaultDialer
+	}
+	return &websocket.Dialer{
+		TLSClientConfig:  &tls.Config{InsecureSkipVerify: true}, // #nosec G402 — intentional, controlled by SKIP_TLS_VERIFY
+		HandshakeTimeout: websocket.DefaultDialer.HandshakeTimeout,
+	}
+}
+
+// parseWireGuardAddress extracts the bare IP address from the "Address = <ip>/<prefix>"
+// line of a WireGuard configuration string.
+func parseWireGuardAddress(cfg string) (string, error) {
+	for _, line := range strings.Split(cfg, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToLower(line), "address") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		// Strip optional CIDR prefix length (e.g. "10.0.0.1/24" → "10.0.0.1")
+		addr := strings.TrimSpace(parts[1])
+		return strings.Split(addr, "/")[0], nil
+	}
+	return "", fmt.Errorf("no Address line found in WireGuard config")
 }
 
 type resolveResponse struct {
