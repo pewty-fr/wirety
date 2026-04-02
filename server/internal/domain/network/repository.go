@@ -62,8 +62,10 @@ type Repository interface {
 	// Captive portal whitelist operations
 	AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error
 	RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error
+	RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error
 	GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error)
 	ClearCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) error
+	CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error
 
 	// Captive portal token operations
 	CreateCaptivePortalToken(ctx context.Context, token *CaptivePortalToken) error

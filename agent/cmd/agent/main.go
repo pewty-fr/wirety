@@ -38,6 +38,7 @@ func main() {
 	httpPort := envOr("HTTP_PROXY_PORT", "3128")
 	httpsPort := envOr("HTTPS_PROXY_PORT", "3129")
 	portalURL := envOr("CAPTIVE_PORTAL_URL", "")
+	serverHost := envOr("SERVER_HOST", "") // optional Host header override for reverse-proxy setups
 
 	flag.StringVar(&server, "server", server, "Server base URL (no trailing /)")
 	flag.StringVar(&token, "token", token, "Enrollment token")
@@ -45,6 +46,7 @@ func main() {
 	flag.StringVar(&applyMethod, "apply", applyMethod, "Apply method: wg-quick|syncconf")
 	flag.StringVar(&natIfacesStr, "nat-interfaces", natIfacesStr, "Comma-separated NAT interfaces (empty = auto-detect all egress interfaces)")
 	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal page URL (default: <server>/captive-portal)")
+	flag.StringVar(&serverHost, "server-host", serverHost, "Override HTTP Host header for all requests to the server (useful when accessing via IP behind a reverse proxy)")
 	flag.Parse()
 
 	// Default portal URL: captive portal page served by the same Wirety server
@@ -74,8 +76,12 @@ func main() {
 		}
 	}()
 
+	// Build a shared HTTP client that injects the Host header on every request
+	// when SERVER_HOST is set (reverse-proxy / no-DNS setups).
+	httpClient := newHTTPClient(serverHost)
+
 	// First resolve token to get peer name for interface/config naming
-	networkID, peerID, peerName, cfg, err := resolveToken(server, token)
+	networkID, peerID, peerName, cfg, err := resolveToken(server, token, httpClient)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to resolve token")
 	}
@@ -132,8 +138,11 @@ func main() {
 	// Pass enrollment token as Authorization header (keeps it out of access logs)
 	wsHeaders := http.Header{}
 	wsHeaders.Set("Authorization", "Bearer "+token)
+	if serverHost != "" {
+		wsHeaders.Set("Host", serverHost)
+	}
 	runner.SetHeaders(wsHeaders)
-	runner.SetCaptivePortal(server, token, portalURL)
+	runner.SetCaptivePortal(server, token, portalURL, httpClient)
 
 	// Set the initial peer name in the runner
 	runner.SetCurrentPeerName(peerName)
@@ -187,6 +196,33 @@ func sanitizeInterfaceName(peerName string) string {
 	return sanitized
 }
 
+// hostOverrideTransport is an http.RoundTripper that sets the HTTP Host header
+// on every request. Used when the server is accessed by IP behind a reverse proxy.
+type hostOverrideTransport struct {
+	host string
+	base http.RoundTripper
+}
+
+func (t *hostOverrideTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	r.Host = t.host
+	return t.base.RoundTrip(r)
+}
+
+// newHTTPClient returns an *http.Client that injects the given Host header on
+// every request. If serverHost is empty the default client is returned unchanged.
+func newHTTPClient(serverHost string) *http.Client {
+	if serverHost == "" {
+		return http.DefaultClient
+	}
+	return &http.Client{
+		Transport: &hostOverrideTransport{
+			host: serverHost,
+			base: http.DefaultTransport,
+		},
+	}
+}
+
 type resolveResponse struct {
 	NetworkID string `json:"network_id"`
 	PeerID    string `json:"peer_id"`
@@ -194,14 +230,14 @@ type resolveResponse struct {
 	Config    string `json:"config"`
 }
 
-func resolveToken(server, token string) (string, string, string, string, error) {
+func resolveToken(server, token string, client *http.Client) (string, string, string, string, error) {
 	resolveURL := fmt.Sprintf("%s/api/v1/agent/resolve", server)
 	req, err := http.NewRequest(http.MethodGet, resolveURL, nil) // #nosec G107 - server is trusted input
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("resolve new request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("resolve http get: %w", err)
 	}

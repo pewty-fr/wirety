@@ -65,6 +65,7 @@ type Runner struct {
 	authToken        string
 	captivePortalURL string
 	captiveStarted   bool
+	httpClient       *http.Client // shared client (may override Host header)
 }
 
 func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string, peerID string, networkID string) *Runner {
@@ -94,10 +95,12 @@ func (r *Runner) SetHeaders(header http.Header) {
 // serverURL: Wirety server HTTP URL (e.g. "https://wirety.example.com")
 // authToken: enrollment token used to call the captive-portal/token API
 // captivePortalURL: full URL of the captive portal page the peer will be redirected to
-func (r *Runner) SetCaptivePortal(serverURL, authToken, captivePortalURL string) {
+// httpClient: shared HTTP client (may carry a Host-override transport for reverse-proxy setups)
+func (r *Runner) SetCaptivePortal(serverURL, authToken, captivePortalURL string, httpClient *http.Client) {
 	r.serverURL = serverURL
 	r.authToken = authToken
 	r.captivePortalURL = captivePortalURL
+	r.httpClient = httpClient
 }
 
 func (r *Runner) Start(stop <-chan struct{}) {
@@ -592,7 +595,7 @@ func (r *Runner) monitorTunnels(done <-chan struct{}) {
 // unauthenticated peers' HTTP traffic and redirects them to the Wirety
 // captive portal authentication page. Only called on jump peers.
 func (r *Runner) startCaptivePortalServer() {
-	srv := captiveportal.NewServer(r.serverURL, r.authToken, r.captivePortalURL, r.networkID, r.peerID)
+	srv := captiveportal.NewServer(r.serverURL, r.authToken, r.captivePortalURL, r.networkID, r.peerID, r.httpClient)
 	log.Info().Str("portal_url", r.captivePortalURL).Msg("starting captive portal redirect server on :8081")
 	if err := srv.Start(":8081"); err != nil {
 		log.Error().Err(err).Msg("captive portal redirect server stopped")

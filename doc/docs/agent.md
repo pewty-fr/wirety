@@ -34,6 +34,11 @@ Options:
   -portal-url string
         Captive portal page URL
         (env: CAPTIVE_PORTAL_URL, default: <SERVER_URL>/captive-portal)
+  -server-host string
+        Override the HTTP Host header for all requests to the server
+        (env: SERVER_HOST, default: derived from -server URL)
+        Useful when accessing the Wirety server by IP behind a reverse proxy
+        that routes by hostname (e.g. SERVER_URL=http://10.0.0.7 SERVER_HOST=wirety.internal)
 ```
 
 ## Usage Example
@@ -49,7 +54,40 @@ wirety-agent -server https://wirety.example.com -token <TOKEN> -nat-interfaces e
 # Environment variable equivalent
 export NAT_INTERFACES=ens2,ens6
 wirety-agent
+
+# Access server by IP (no DNS) with Host header for reverse proxy routing
+wirety-agent -server http://10.0.0.7 -server-host wirety.internal -token <TOKEN>
+
+# Environment variable equivalent
+export SERVER_URL=http://10.0.0.7
+export SERVER_HOST=wirety.internal
+wirety-agent
 ```
+
+## Reverse Proxy / No-DNS Access (`SERVER_HOST`)
+
+When the Wirety server is deployed inside a private network behind a reverse proxy and no internal DNS is available, the agent can reach the server by IP while still sending the correct `Host` header for the proxy to route the request.
+
+```bash
+# Without DNS: connect to 10.0.0.7:80, but send "Host: wirety.internal"
+# so Nginx / Caddy / Traefik routes the request to the Wirety backend.
+wirety-agent \
+  -server http://10.0.0.7 \
+  -server-host wirety.internal \
+  -token <TOKEN>
+```
+
+This is equivalent to:
+```bash
+curl http://10.0.0.7/api/v1/agent/resolve \
+  -H "Host: wirety.internal" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+The `SERVER_HOST` override is applied to **all** outbound connections from the agent:
+- Initial token resolution (`/api/v1/agent/resolve`)
+- WebSocket connection (`/api/v1/ws`)
+- Captive portal token creation (`/api/v1/captive-portal/token`)
 
 ## NAT Interface Detection
 

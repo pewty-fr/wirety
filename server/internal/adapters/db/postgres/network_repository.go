@@ -583,14 +583,21 @@ func (r *NetworkRepository) ResolveSecurityIncident(ctx context.Context, inciden
 	return nil
 }
 
+// CaptivePortalWhitelistTTL is how long a whitelist entry remains valid after authentication.
+// After this duration the peer must re-authenticate via the captive portal.
+const CaptivePortalWhitelistTTL = 24 * time.Hour
+
 // Captive portal whitelist operations
 
 func (r *NetworkRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	now := time.Now()
+	expiresAt := now.Add(CaptivePortalWhitelistTTL)
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, created_at)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (network_id, jump_peer_id, peer_ip) DO NOTHING
-	`, networkID, jumpPeerID, peerIP, time.Now())
+		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (network_id, jump_peer_id, peer_ip)
+		DO UPDATE SET expires_at = EXCLUDED.expires_at
+	`, networkID, jumpPeerID, peerIP, now, expiresAt)
 	return err
 }
 
@@ -602,10 +609,21 @@ func (r *NetworkRepository) RemoveCaptivePortalWhitelist(ctx context.Context, ne
 	return err
 }
 
+// RemoveCaptivePortalWhitelistByPeerIP removes all whitelist entries for a peer IP across
+// all jump peers in the network. Used when a security incident is detected (e.g. stolen config).
+func (r *NetworkRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_whitelist
+		WHERE network_id=$1 AND peer_ip=$2
+	`, networkID, peerIP)
+	return err
+}
+
 func (r *NetworkRepository) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT peer_ip FROM captive_portal_whitelist
 		WHERE network_id=$1 AND jump_peer_id=$2
+		  AND (expires_at IS NULL OR expires_at > NOW())
 		ORDER BY created_at ASC
 	`, networkID, jumpPeerID)
 	if err != nil {
@@ -631,6 +649,14 @@ func (r *NetworkRepository) ClearCaptivePortalWhitelist(ctx context.Context, net
 		DELETE FROM captive_portal_whitelist
 		WHERE network_id=$1 AND jump_peer_id=$2
 	`, networkID, jumpPeerID)
+	return err
+}
+
+func (r *NetworkRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_whitelist
+		WHERE expires_at IS NOT NULL AND expires_at < NOW()
+	`)
 	return err
 }
 

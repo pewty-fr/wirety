@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"wirety/internal/domain/auth"
@@ -804,7 +805,21 @@ func (s *Service) blockPeerInACL(ctx context.Context, networkID, peerID string, 
 		Str("reason", reason).
 		Msg("SECURITY: Peer quarantined successfully")
 
-	// 3. Notify all peers to regenerate configs
+	// 3. Revoke captive portal whitelist so quarantined peer loses iptables ACCEPT immediately
+	if peer != nil && peer.Address != "" {
+		// Strip CIDR suffix if present (e.g. "10.0.0.2/22" → "10.0.0.2")
+		peerIP := peer.Address
+		if idx := strings.Index(peerIP, "/"); idx != -1 {
+			peerIP = peerIP[:idx]
+		}
+		if err := s.repo.RemoveCaptivePortalWhitelistByPeerIP(ctx, networkID, peerIP); err != nil {
+			log.Warn().Err(err).Str("peer_ip", peerIP).Msg("SECURITY: failed to revoke captive portal whitelist for quarantined peer")
+		} else {
+			log.Info().Str("peer_ip", peerIP).Msg("SECURITY: captive portal whitelist revoked for quarantined peer")
+		}
+	}
+
+	// 4. Notify all peers to regenerate configs
 	if s.wsNotifier != nil {
 		s.wsNotifier.NotifyNetworkPeers(networkID)
 	}
@@ -1721,6 +1736,44 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	session, err := s.authRepo.GetSession(sessionHash)
 	if err != nil || session == nil || !session.IsValid() {
 		return nil, fmt.Errorf("invalid session")
+	}
+
+	// Verify that the authenticated user is the owner of the peer they are trying to access.
+	// Rules:
+	//   - Captive portal requires OIDC (simple-auth callers are rejected at the handler level).
+	//   - Ownerless peers (admin-created) cannot be authenticated via captive portal.
+	//   - Administrators are subject to the same ownership rules as regular users.
+	authUser, err := s.authRepo.GetUser(session.UserID)
+	if err != nil || authUser == nil {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	// Find the peer in this network whose VPN address matches the captive token's peer IP
+	peers, err := s.repo.ListPeers(ctx, cpt.NetworkID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up peer: %w", err)
+	}
+	var matchedPeer *network.Peer
+	for _, p := range peers {
+		addr := p.Address
+		if idx := strings.Index(addr, "/"); idx != -1 {
+			addr = addr[:idx]
+		}
+		if addr == cpt.PeerIP {
+			matchedPeer = p
+			break
+		}
+	}
+	if matchedPeer == nil {
+		return nil, fmt.Errorf("peer not found in network")
+	}
+	// Ownerless peers cannot use the captive portal
+	if matchedPeer.OwnerID == "" {
+		return nil, fmt.Errorf("access denied: this peer has no owner and cannot be authenticated via captive portal")
+	}
+	// The authenticated user must be the peer's owner (admins are not exempt)
+	if matchedPeer.OwnerID != authUser.ID {
+		return nil, fmt.Errorf("access denied: this peer belongs to another user")
 	}
 
 	// Whitelist the peer — also triggers WebSocket notification to jump peer.

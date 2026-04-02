@@ -54,23 +54,29 @@ func (c *tokenCache) set(peerIP, token string) {
 // Server is a local HTTP server that intercepts unauthenticated peers' HTTP traffic
 // and redirects them to the Wirety captive portal authentication page.
 type Server struct {
-	serverURL string // Wirety server HTTP URL, e.g. "https://wirety.example.com"
-	authToken string // Jump peer's enrollment token for API calls
-	portalURL string // Captive portal page URL, e.g. "https://wirety.example.com/captive-portal"
-	networkID string
-	peerID    string
-	cache     tokenCache
+	serverURL  string // Wirety server HTTP URL, e.g. "https://wirety.example.com"
+	authToken  string // Jump peer's enrollment token for API calls
+	portalURL  string // Captive portal page URL, e.g. "https://wirety.example.com/captive-portal"
+	networkID  string
+	peerID     string
+	httpClient *http.Client // shared client (may override Host header for reverse-proxy setups)
+	cache      tokenCache
 }
 
 // NewServer creates a captive portal redirect server.
-func NewServer(serverURL, authToken, portalURL, networkID, peerID string) *Server {
+// httpClient may be nil, in which case http.DefaultClient is used.
+func NewServer(serverURL, authToken, portalURL, networkID, peerID string, httpClient *http.Client) *Server {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
 	return &Server{
-		serverURL: serverURL,
-		authToken: authToken,
-		portalURL: portalURL,
-		networkID: networkID,
-		peerID:    peerID,
-		cache:     tokenCache{entries: make(map[string]cachedToken)},
+		serverURL:  serverURL,
+		authToken:  authToken,
+		portalURL:  portalURL,
+		networkID:  networkID,
+		peerID:     peerID,
+		httpClient: httpClient,
+		cache:      tokenCache{entries: make(map[string]cachedToken)},
 	}
 }
 
@@ -130,7 +136,7 @@ func (s *Server) createToken(peerIP string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.authToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("API call failed: %w", err)
 	}

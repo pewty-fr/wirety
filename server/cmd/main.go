@@ -216,13 +216,16 @@ func main() {
 	// Register routes with middleware
 	handler.RegisterRoutes(r, authMiddleware, requireAdmin, requireNetworkAccess)
 
-	// Background session cleanup (every hour)
+	// Background cleanup (every hour)
 	go func() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
 			if err := userRepo.CleanupExpiredSessions(); err != nil {
 				log.Warn().Err(err).Msg("Session cleanup failed")
+			}
+			if err := networkRepo.CleanupExpiredCaptivePortalWhitelist(context.Background()); err != nil {
+				log.Warn().Err(err).Msg("Captive portal whitelist cleanup failed")
 			}
 		}
 	}()

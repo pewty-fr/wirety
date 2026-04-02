@@ -14,6 +14,14 @@ type createCaptiveTokenRequest struct {
 // Called by the jump peer agent (authenticated via enrollment token) when a peer
 // connects to the WireGuard tunnel and needs to authenticate.
 func (h *Handler) CreateCaptivePortalToken(c *gin.Context) {
+	// Captive portal requires OIDC so that each user has a distinct identity.
+	// Simple auth (AUTH_ENABLED=false) uses a shared admin password — there is no
+	// per-user identity to enforce peer ownership, so captive portal is disabled.
+	if !h.authConfig.Enabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": "captive portal is not available when AUTH_ENABLED=false"})
+		return
+	}
+
 	token := extractBearerToken(c)
 	if token == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authorization required"})
@@ -54,6 +62,11 @@ type authenticateCaptivePortalRequest struct {
 // Called by the frontend captive portal page after the user authenticates via OIDC or password.
 // The session is read from the wirety_session cookie — no need to send session_hash in the body.
 func (h *Handler) AuthenticateCaptivePortal(c *gin.Context) {
+	if !h.authConfig.Enabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": "captive portal is not available when AUTH_ENABLED=false"})
+		return
+	}
+
 	var req authenticateCaptivePortalRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

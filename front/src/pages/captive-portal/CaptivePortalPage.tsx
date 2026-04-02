@@ -7,7 +7,7 @@ import { faWifi, faShieldAlt, faCheckCircle, faExclamationTriangle } from '@fort
 export default function CaptivePortalPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { login, user, isAuthenticated } = useAuth();
+  const { login, logout, user, isAuthenticated } = useAuth();
   const [status, setStatus] = useState<'initial' | 'authenticating' | 'success' | 'error'>('initial');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -115,12 +115,21 @@ export default function CaptivePortalPage() {
             <p className="text-gray-600 dark:text-gray-400 mb-4">
               {errorMessage}
             </p>
-            <button
-              onClick={() => navigate('/dashboard')}
-              className="btn-brand"
-            >
-              Go to Dashboard
-            </button>
+            {errorMessage.includes('belongs to another user') ? (
+              <button
+                onClick={() => { logout(); window.location.reload(); }}
+                className="btn-brand"
+              >
+                Sign in with a different account
+              </button>
+            ) : (
+              <button
+                onClick={() => navigate('/dashboard')}
+                className="btn-brand"
+              >
+                Go to Dashboard
+              </button>
+            )}
           </div>
         </div>
       </div>
