@@ -1,4 +1,18 @@
+
+nameOverride: ""
+nodeSelector: {}
+podAnnotations: {}
+podSecurityContext: {}
+replicaCount: 1
+securityContext: {}
 affinity: {}
+tolerations: []
+
+serviceAccount:
+  annotations: {}
+  create: true
+  name: ""
+
 frontend:
   # env:
   #   REACT_APP_API_URL: "/api"
@@ -30,79 +44,30 @@ frontend:
     type: ClusterIP
 fullnameOverride: ""
 imagePullSecrets: []
-ingress:
-  className: traefik
-  enabled: true
-  hosts:
-  - host: wirety-personal.pewty.fr
-    paths:
-    - backend: server
-      path: /api
-      pathType: Prefix
-    - backend: frontend
-      path: /
-      pathType: Prefix
-  tls: []
 
-# HTTPRoute (Gateway API) — disabled by default.
-# Enable this as an alternative or complement to the Ingress above.
-# Requires a Gateway API controller (e.g. Envoy Gateway, Istio, Contour).
-httpRoute:
-  enabled: false
-  annotations: {}
-  # parentRefs:
-  #   - name: my-gateway
-  #     namespace: gateway-system
-  #     sectionName: https
-  parentRefs: []
-  # hostnames:
-  #   - wirety.example.com
-  hostnames: []
-  # rules defines which paths are forwarded to which backend (server or frontend).
-  # Each rule maps a set of path matches to one Wirety backend service.
-  # Example:
-  # rules:
-  #   - matches:
-  #       - path:
-  #           type: PathPrefix
-  #           value: /api
-  #     backend: server
-  #   - matches:
-  #       - path:
-  #           type: PathPrefix
-  #           value: /
-  #     backend: frontend
-  rules: []
-
-nameOverride: ""
-nodeSelector: {}
-podAnnotations: {}
-podSecurityContext: {}
-replicaCount: 1
-securityContext: {}
 server:
-  env:
+  env: []
     # Authentication — set AUTH_ENABLED to "true" to enable OIDC.
     # When AUTH_ENABLED is "false" the server uses simple password auth.
     # Set AUTH_PASSWORD to fix the admin password; if unset a random one is
     # generated and printed to the server logs on each restart.
-    AUTH_ENABLED: "false"
-    AUTH_ISSUER_URL: ""
-    AUTH_CLIENT_ID: ""
-    AUTH_CLIENT_SECRET: ""
-    AUTH_JWKS_CACHE_TTL: "3600"
-    AUTH_PASSWORD: ""
+    # AUTH_ENABLED: "false"
+    # AUTH_ISSUER_URL: ""
+    # AUTH_CLIENT_ID: ""
+    # AUTH_CLIENT_SECRET: ""
+    # AUTH_JWKS_CACHE_TTL: "3600"
+    # AUTH_PASSWORD: ""
     # Database — DB_DSN is used when DB_ENABLED is "true".
     # When postgres.enabled=true this is automatically overridden by the
     # subchart service name in the deployment template.
-    DB_ENABLED: "true"
-    DB_DSN: ""
+    # DB_ENABLED: "true"
+    # DB_DSN: ""
     # HTTP server
-    HTTP_PORT: "8080"
+    # HTTP_PORT: "8080"
     # CORS — prefer CORS_ORIGIN; ALLOWED_ORIGIN is the legacy alias.
-    CORS_ORIGIN: ""
+    # CORS_ORIGIN: ""
     # Audit log — set to "true" to emit JSON audit events to stdout.
-    AUDIT_LOG: "false"
+    # AUDIT_LOG: "false"
   envFrom: []
   image:
     pullPolicy: IfNotPresent
@@ -130,11 +95,49 @@ server:
   service:
     port: 8080
     type: ClusterIP
-serviceAccount:
+
+# HTTPRoute (Gateway API) — disabled by default.
+# Enable this as an alternative or complement to the Ingress above.
+# Requires a Gateway API controller (e.g. Envoy Gateway, Istio, Contour).
+httpRoute:
+  enabled: false
   annotations: {}
-  create: true
-  name: ""
-tolerations: []
+  # parentRefs:
+  #   - name: my-gateway
+  #     namespace: gateway-system
+  parentRefs: []
+  # hostnames:
+  #   - wirety.example.com
+  hostnames: []
+  # rules defines which paths are forwarded to which backend (server or frontend).
+  # Each rule maps a set of path matches to one Wirety backend service.
+  # Example:
+  # rules:
+  #   - matches:
+  #       - path:
+  #           type: PathPrefix
+  #           value: /api
+  #     backend: server
+  #   - matches:
+  #       - path:
+  #           type: PathPrefix
+  #           value: /
+  #     backend: frontend
+  rules: []
+
+ingress:
+  className: traefik
+  enabled: false
+  hosts:
+  - host: wirety-personal.pewty.fr
+    paths:
+    - backend: server
+      path: /api
+      pathType: Prefix
+    - backend: frontend
+      path: /
+      pathType: Prefix
+  tls: []
 
 # PostgreSQL subchart (CloudPirates).
 # When enabled, a PostgreSQL StatefulSet is deployed alongside Wirety and
