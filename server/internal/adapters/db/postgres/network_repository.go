@@ -87,7 +87,7 @@ func (r *NetworkRepository) UpdateNetwork(ctx context.Context, n *network.Networ
 	if n.DNS == nil {
 		n.DNS = []string{}
 	}
-	_, err := r.db.ExecContext(ctx, `UPDATE networks SET name=$2,cidr=$3,dns=$4,updated_at=$5 WHERE id=$1`, n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `UPDATE networks SET name=$2,cidr=$3,dns=$4,updated_at=$5,domain_suffix=$6 WHERE id=$1`, n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.UpdatedAt, n.DomainSuffix)
 	if err != nil {
 		return fmt.Errorf("update network: %w", err)
 	}

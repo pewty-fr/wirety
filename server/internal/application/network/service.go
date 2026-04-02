@@ -141,6 +141,13 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 		}
 	}
 
+	// Validate domain suffix if provided (dots allowed, e.g. "corp.example.com")
+	if req.DomainSuffix != "" {
+		if err := validation.ValidateDNSHostname(req.DomainSuffix); err != nil {
+			return nil, fmt.Errorf("invalid domain suffix: %w", err)
+		}
+	}
+
 	net, err := s.repo.GetNetwork(ctx, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
@@ -152,6 +159,9 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 
 	if req.Name != "" {
 		net.Name = req.Name
+	}
+	if req.DomainSuffix != "" {
+		net.DomainSuffix = req.DomainSuffix
 	}
 	if req.CIDR != "" && req.CIDR != oldCIDR {
 		net.CIDR = req.CIDR
