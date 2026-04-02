@@ -709,9 +709,9 @@ func (r *NetworkRepository) CreateSecurityConfig(ctx context.Context, networkID 
 	config.UpdatedAt = time.Now()
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO security_configs (id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, config.ID, config.NetworkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.CreatedAt, config.UpdatedAt)
+		INSERT INTO security_configs (id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, port_change_threshold, max_port_changes_per_window, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, config.ID, config.NetworkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.PortChangeThreshold, config.MaxPortChangesPerWindow, config.CreatedAt, config.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create security config: %w", err)
 	}
@@ -722,10 +722,10 @@ func (r *NetworkRepository) CreateSecurityConfig(ctx context.Context, networkID 
 func (r *NetworkRepository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
 	var config network.SecurityConfig
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, created_at, updated_at
+		SELECT id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, port_change_threshold, max_port_changes_per_window, created_at, updated_at
 		FROM security_configs
 		WHERE network_id = $1
-	`, networkID).Scan(&config.ID, &config.NetworkID, &config.Enabled, &config.SessionConflictThreshold, &config.EndpointChangeThreshold, &config.MaxEndpointChangesPerDay, &config.CreatedAt, &config.UpdatedAt)
+	`, networkID).Scan(&config.ID, &config.NetworkID, &config.Enabled, &config.SessionConflictThreshold, &config.EndpointChangeThreshold, &config.MaxEndpointChangesPerDay, &config.PortChangeThreshold, &config.MaxPortChangesPerWindow, &config.CreatedAt, &config.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("security config not found")
@@ -741,9 +741,9 @@ func (r *NetworkRepository) UpdateSecurityConfig(ctx context.Context, networkID 
 
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE security_configs
-		SET enabled = $2, session_conflict_threshold = $3, endpoint_change_threshold = $4, max_endpoint_changes_per_day = $5, updated_at = $6
+		SET enabled = $2, session_conflict_threshold = $3, endpoint_change_threshold = $4, max_endpoint_changes_per_day = $5, port_change_threshold = $6, max_port_changes_per_window = $7, updated_at = $8
 		WHERE network_id = $1
-	`, networkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.UpdatedAt)
+	`, networkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.PortChangeThreshold, config.MaxPortChangesPerWindow, config.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update security config: %w", err)
 	}

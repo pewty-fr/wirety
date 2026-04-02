@@ -341,7 +341,7 @@ func TestService_RefreshAccessToken_AuthDisabled(t *testing.T) {
 	repo := newMockAuthRepository()
 	service := NewService(cfg, repo)
 
-	_, _, err := service.RefreshAccessToken(context.Background(), "refresh-token")
+	_, _, _, err := service.RefreshAccessToken(context.Background(), "refresh-token")
 
 	if err == nil {
 		t.Error("Expected error when auth is disabled")

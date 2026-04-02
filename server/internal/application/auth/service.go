@@ -284,16 +284,18 @@ func getInt64Claim(claims jwt.MapClaims, key string) int64 {
 	return 0
 }
 
-// RefreshAccessToken refreshes an access token using a refresh token
-func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (string, int, error) {
+// RefreshAccessToken refreshes an access token using a refresh token.
+// It returns the new identity token, the new refresh token (empty if the provider
+// does not rotate refresh tokens), the token lifetime in seconds, and any error.
+func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (string, string, int, error) {
 	if !s.config.Enabled {
-		return "", 0, fmt.Errorf("authentication is not enabled")
+		return "", "", 0, fmt.Errorf("authentication is not enabled")
 	}
 
 	// Discover OIDC endpoints
 	discovery, err := oidc.Discover(ctx, s.config.IssuerURL)
 	if err != nil {
-		return "", 0, fmt.Errorf("oidc discovery failed: %w", err)
+		return "", "", 0, fmt.Errorf("oidc discovery failed: %w", err)
 	}
 
 	// Prepare refresh token request (form-encoded, not JSON)
@@ -306,13 +308,13 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	// Make request to token endpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, discovery.TokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to create request: %w", err)
+		return "", "", 0, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to refresh token: %w", err)
+		return "", "", 0, fmt.Errorf("failed to refresh token: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -320,16 +322,17 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", 0, fmt.Errorf("token refresh failed: %s", string(body))
+		return "", "", 0, fmt.Errorf("token refresh failed: %s", string(body))
 	}
 
 	var tokenResp struct {
-		AccessToken string  `json:"access_token"`
-		IDToken     string  `json:"id_token"`  // OIDC identity token — always a JWT
-		ExpiresIn   flexInt `json:"expires_in"`
+		AccessToken  string  `json:"access_token"`
+		IDToken      string  `json:"id_token"`      // OIDC identity token — always a JWT
+		RefreshToken string  `json:"refresh_token"` // new refresh token (rotating providers)
+		ExpiresIn    flexInt `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", 0, fmt.Errorf("failed to parse token response: %w", err)
+		return "", "", 0, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
 	// Prefer id_token: it is always a standard JWT. Some providers (e.g. Azure Entra ID)
@@ -339,5 +342,5 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		identityToken = tokenResp.AccessToken
 	}
 
-	return identityToken, int(tokenResp.ExpiresIn), nil
+	return identityToken, tokenResp.RefreshToken, int(tokenResp.ExpiresIn), nil
 }

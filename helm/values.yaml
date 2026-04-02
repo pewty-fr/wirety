@@ -72,7 +72,7 @@ server:
   image:
     pullPolicy: IfNotPresent
     repository: rg.fr-par.scw.cloud/wirety/server
-    tag: 2026-04-02T13-07-45Z-SNAPSHOT
+    tag: 2026-04-02T14-18-21Z-SNAPSHOT
   livenessProbe:
     httpGet:
       path: /api/v1/health
