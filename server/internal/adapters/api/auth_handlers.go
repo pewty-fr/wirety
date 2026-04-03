@@ -192,10 +192,15 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 					Email         string `json:"email"`
 					EmailVerified bool   `json:"email_verified"`
 					Name          string `json:"name"`
+					UPN           string `json:"upn"` // Azure Entra ID: user principal name
 				}
 				if json.Unmarshal(body, &uiClaims) == nil {
-					if uiClaims.Email != "" {
-						claims.Email = uiClaims.Email
+					email := uiClaims.Email
+					if email == "" {
+						email = uiClaims.UPN // Azure fallback
+					}
+					if email != "" {
+						claims.Email = email
 						claims.EmailVerified = uiClaims.EmailVerified
 					}
 					if claims.Name == "" && uiClaims.Name != "" {
