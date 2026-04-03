@@ -12,7 +12,7 @@ Wirety Server provides REST + WebSocket APIs, orchestrates peers, incidents, ACL
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HTTP_PORT` | Server HTTP port | `8080` |
-| `CORS_ORIGIN` | Allowed CORS origin | `*` |
+| `CORS_ORIGIN` | Allowed CORS origin(s) — comma-separated for multiple origins (e.g. `https://app.example.com,https://admin.example.com`). `ALLOWED_ORIGIN` is a legacy alias. | `*` |
 | `AUDIT_LOG` | Enable structured JSON audit logging to stdout | `false` |
 
 ### Authentication

@@ -173,6 +173,38 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
+	// Some providers (e.g. Azure Entra ID) do not include the email claim in the
+	// id_token by default. Fall back to the userinfo endpoint using the access_token.
+	if claims.Email == "" && discovery.UserinfoEndpoint != "" {
+		uiReq, uiErr := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, discovery.UserinfoEndpoint, nil)
+		if uiErr == nil {
+			uiReq.Header.Set("Authorization", "Bearer "+oidcTokenResp.AccessToken)
+			uiResp, uiErr := http.DefaultClient.Do(uiReq)
+			if uiErr == nil {
+				defer func() { _ = uiResp.Body.Close() }()
+				var uiClaims struct {
+					Email         string `json:"email"`
+					EmailVerified bool   `json:"email_verified"`
+					Name          string `json:"name"`
+				}
+				if json.NewDecoder(uiResp.Body).Decode(&uiClaims) == nil {
+					if uiClaims.Email != "" {
+						claims.Email = uiClaims.Email
+						claims.EmailVerified = uiClaims.EmailVerified
+					}
+					if claims.Name == "" && uiClaims.Name != "" {
+						claims.Name = uiClaims.Name
+					}
+				}
+			}
+		}
+	}
+
+	if claims.Email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Your account does not have an email address. Please configure your identity provider to expose the email claim."})
+		return
+	}
+
 	// Get or create user
 	user, err := h.authService.GetOrCreateUser(c.Request.Context(), claims)
 	if err != nil {
