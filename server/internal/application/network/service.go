@@ -215,7 +215,7 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 			// Release old IP from old CIDR
 			if err := s.repo.ReleaseIP(ctx, oldCIDR, peer.Address); err != nil {
 				// Log but don't fail - old CIDR may not exist in IPAM
-				fmt.Printf("Warning: failed to release old IP %s from %s: %v\n", peer.Address, oldCIDR, err)
+				log.Warn().Err(err).Str("ip", peer.Address).Str("cidr", oldCIDR).Msg("failed to release old IP during CIDR migration")
 			}
 
 			// Allocate new IP from new CIDR
@@ -1002,12 +1002,12 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 									Resolved:     false,
 								}
 								if err := s.repo.CreateSecurityIncident(ctx, incident); err != nil {
-									fmt.Printf("failed to create security incident for session conflict: %v\n", err)
+									log.Error().Err(err).Str("peer_id", peerID).Msg("failed to create security incident for session conflict")
 								}
 
 								// Block the peer in ACL to prevent all communication
 								if err := s.blockPeerInACL(ctx, networkID, peerID, "session conflict detection"); err != nil {
-									fmt.Printf("failed to block peer in ACL: %v\n", err)
+									log.Error().Err(err).Str("peer_id", peerID).Msg("failed to block peer in ACL after session conflict")
 								}
 							}
 						}
@@ -1097,7 +1097,7 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 			}
 			if err := s.repo.RecordEndpointChange(ctx, networkID, change); err != nil {
 				// Log but don't fail on endpoint change recording error
-				fmt.Printf("failed to record endpoint change: %v\n", err)
+				log.Warn().Err(err).Msg("failed to record endpoint change")
 			}
 			continue
 		}
@@ -1137,7 +1137,7 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 			}
 			if err := s.repo.RecordEndpointChange(ctx, networkID, change); err != nil {
 				// Log but don't fail on endpoint change recording error
-				fmt.Printf("failed to record endpoint change: %v\n", err)
+				log.Warn().Err(err).Msg("failed to record endpoint change")
 			}
 
 			// Only remove from whitelist if this represents an actual endpoint change (not first time seeing)
@@ -1681,6 +1681,12 @@ func (s *Service) detectAndHandlePortChanges(ctx context.Context, networkID stri
 	return nil
 }
 
+// detectAndHandleSuspicousActivity detects peers that have exceeded the maximum
+// number of distinct IP-level endpoint changes in a 24-hour window.  Unlike
+// detectAndHandleSharedConfigs (which looks for concurrent multi-IP presence),
+// this function looks for high churn over a longer period, which may indicate
+// a compromised or widely shared key.  Peers that exceed the threshold are
+// quarantined and an incident is created.
 func (s *Service) detectAndHandleSuspicousActivity(ctx context.Context, networkID string) error {
 	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
 	if !securityConfig.Enabled {

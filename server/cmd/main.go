@@ -67,11 +67,14 @@ func main() {
 		Str("http_port", cfg.HTTPPort).
 		Bool("auth_enabled", cfg.Auth.Enabled).
 		Str("issuer_url", cfg.Auth.IssuerURL).
-		Str("cors_origin", cfg.CORSOrigin).
+		Strs("cors_origins", cfg.CORSOrigins).
 		Msg("Starting Wirety server")
 
-	if cfg.CORSOrigin == "*" && cfg.Auth.Enabled {
-		log.Warn().Msg("CORS_ORIGIN is set to '*' while OIDC auth is enabled - set CORS_ORIGIN to your frontend URL in production")
+	for _, origin := range cfg.CORSOrigins {
+		if origin == "*" && cfg.Auth.Enabled {
+			log.Warn().Msg("CORS_ORIGIN contains '*' while OIDC auth is enabled - set CORS_ORIGIN to your frontend URL(s) in production")
+			break
+		}
 	}
 
 	// Initialize repositories (choose Postgres or in-memory)
@@ -198,13 +201,20 @@ func main() {
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
 
-	// Configure CORS — enable credentials only when a specific origin is set
+	// Configure CORS — enable credentials only when no wildcard origin is present
+	allowCredentials := true
+	for _, origin := range cfg.CORSOrigins {
+		if origin == "*" {
+			allowCredentials = false
+			break
+		}
+	}
 	corsConfig := cors.Config{
-		AllowOrigins:     []string{cfg.CORSOrigin},
+		AllowOrigins:     cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: cfg.CORSOrigin != "*",
+		AllowCredentials: allowCredentials,
 	}
 	r.Use(cors.New(corsConfig))
 

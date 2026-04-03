@@ -64,6 +64,12 @@ func (m *mockPeerRepository) DeleteCaptivePortalToken(ctx context.Context, token
 func (m *mockPeerRepository) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
 	return nil
 }
+func (m *mockPeerRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error {
+	return nil
+}
+func (m *mockPeerRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
+	return nil
+}
 func (m *mockPeerRepository) CreateACL(ctx context.Context, networkID string, acl *network.ACL) error {
 	return nil
 }

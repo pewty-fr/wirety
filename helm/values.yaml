@@ -65,7 +65,8 @@ server:
     # HTTP server
     # HTTP_PORT: "8080"
     # CORS — prefer CORS_ORIGIN; ALLOWED_ORIGIN is the legacy alias.
-    # CORS_ORIGIN: ""
+    # Accepts a comma-separated list of origins (default: "*" for dev).
+    # CORS_ORIGIN: "https://app.example.com,https://admin.example.com"
     # Audit log — set to "true" to emit JSON audit events to stdout.
     # AUDIT_LOG: "false"
   envFrom: []

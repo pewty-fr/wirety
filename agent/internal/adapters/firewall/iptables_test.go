@@ -8,14 +8,14 @@ import (
 )
 
 func TestNewAdapter(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	if adapter.iface != "wg0" {
 		t.Errorf("Expected interface 'wg0', got '%s'", adapter.iface)
 	}
 
-	if adapter.natInterface != "eth0" {
-		t.Errorf("Expected NAT interface 'eth0', got '%s'", adapter.natInterface)
+	if len(adapter.natInterfaces) == 0 || adapter.natInterfaces[0] != "eth0" {
+		t.Errorf("Expected NAT interface 'eth0', got %v", adapter.natInterfaces)
 	}
 
 	if adapter.httpPort != 3128 {
@@ -28,15 +28,15 @@ func TestNewAdapter(t *testing.T) {
 }
 
 func TestNewAdapterWithEmptyNATInterface(t *testing.T) {
-	adapter := NewAdapter("wg0", "")
+	adapter := NewAdapter("wg0", nil)
 
-	if adapter.natInterface != "" {
-		t.Errorf("Expected empty NAT interface, got '%s'", adapter.natInterface)
+	if len(adapter.natInterfaces) != 0 {
+		t.Errorf("Expected empty NAT interfaces, got %v", adapter.natInterfaces)
 	}
 }
 
 func TestSetProxyPorts(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	adapter.SetProxyPorts(8080, 8443)
 
@@ -50,59 +50,59 @@ func TestSetProxyPorts(t *testing.T) {
 }
 
 func TestFallbackNATInterface(t *testing.T) {
-	adapter := NewAdapter("wg0", "")
+	adapter := NewAdapter("wg0", nil)
 
 	// This test will try to find a fallback interface
 	// The result depends on the system, so we just test that it doesn't panic
-	result := adapter.fallbackNATInterface()
+	result := adapter.fallbackNATInterfaces()
 
-	// Result can be empty string if no suitable interface is found
-	t.Logf("Fallback NAT interface: '%s'", result)
+	// Result can be empty if no suitable interface is found
+	t.Logf("Fallback NAT interfaces: %v", result)
 }
 
-func TestGetNATInterface(t *testing.T) {
+func TestGetNATInterfaces(t *testing.T) {
 	// Test with configured NAT interface
-	adapter := NewAdapter("wg0", "eth0")
-	result := adapter.getNATInterface()
+	adapter := NewAdapter("wg0", []string{"eth0"})
+	result := adapter.getNATInterfaces()
 
-	if result != "eth0" {
-		t.Errorf("Expected configured NAT interface 'eth0', got '%s'", result)
+	if len(result) == 0 || result[0] != "eth0" {
+		t.Errorf("Expected configured NAT interfaces ['eth0'], got %v", result)
 	}
 
 	// Test with auto-detection (empty NAT interface)
-	adapter2 := NewAdapter("wg0", "")
-	result2 := adapter2.getNATInterface()
+	adapter2 := NewAdapter("wg0", nil)
+	result2 := adapter2.getNATInterfaces()
 
 	// Result depends on system, just test that it doesn't panic
-	t.Logf("Auto-detected NAT interface: '%s'", result2)
+	t.Logf("Auto-detected NAT interfaces: %v", result2)
 }
 
-func TestContainsSubstring(t *testing.T) {
+func TestToCheckArgs(t *testing.T) {
 	tests := []struct {
-		s      string
-		substr string
-		want   bool
+		input []string
+		want  []string
 	}{
-		{"hello world", "hello", true},
-		{"hello world", "world", true},
-		{"hello world", "lo wo", true},
-		{"hello world", "xyz", false},
-		{"hello", "hello world", false},
-		{"", "test", false},
-		{"test", "", true},
-		{"", "", true},
+		{[]string{"-A", "INPUT", "-j", "ACCEPT"}, []string{"-C", "INPUT", "-j", "ACCEPT"}},
+		{[]string{"-I", "CHAIN", "1", "-j", "DROP"}, []string{"-C", "CHAIN", "-j", "DROP"}},
+		{[]string{"-t", "nat", "-A", "POSTROUTING", "-j", "MASQUERADE"}, []string{"-t", "nat", "-C", "POSTROUTING", "-j", "MASQUERADE"}},
 	}
 
 	for _, tt := range tests {
-		got := containsSubstring(tt.s, tt.substr)
-		if got != tt.want {
-			t.Errorf("containsSubstring(%q, %q) = %v, want %v", tt.s, tt.substr, got, tt.want)
+		got := toCheckArgs(tt.input)
+		if len(got) != len(tt.want) {
+			t.Errorf("toCheckArgs(%v) = %v, want %v", tt.input, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("toCheckArgs(%v)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+			}
 		}
 	}
 }
 
 func TestApplyIPTablesRule(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	tests := []struct {
 		name     string
@@ -151,7 +151,7 @@ func TestApplyIPTablesRule(t *testing.T) {
 }
 
 func TestSyncWithNilPolicy(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	// Test with nil policy - should not panic
 	err := adapter.Sync(nil, "10.0.0.1", []string{})
@@ -161,7 +161,7 @@ func TestSyncWithNilPolicy(t *testing.T) {
 }
 
 func TestSyncWithEmptyPolicy(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	policy := &dom.JumpPolicy{
 		IP:            "10.0.0.1",
@@ -177,7 +177,7 @@ func TestSyncWithEmptyPolicy(t *testing.T) {
 }
 
 func TestSyncWithPolicyRules(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	policy := &dom.JumpPolicy{
 		IP: "10.0.0.1",
@@ -198,7 +198,7 @@ func TestSyncWithPolicyRules(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	// Test with invalid command - should fail
 	err := adapter.run("--invalid-flag")
@@ -211,44 +211,35 @@ func TestRun(t *testing.T) {
 	}
 }
 
-func TestRuleExists(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+func TestRunIfNotExistsDoesNotPanic(t *testing.T) {
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
-	// Test rule parsing
+	// Test rule parsing does not panic with various argument forms
 	tests := []struct {
 		name string
 		args []string
-		want bool // We can't really test the actual existence without root
 	}{
 		{
 			name: "simple rule",
 			args: []string{"-A", "INPUT", "-j", "ACCEPT"},
-			want: false, // Will be false in test environment
 		},
 		{
 			name: "rule with table",
 			args: []string{"-t", "nat", "-A", "POSTROUTING", "-j", "MASQUERADE"},
-			want: false, // Will be false in test environment
-		},
-		{
-			name: "invalid rule",
-			args: []string{"-X", "INVALID"},
-			want: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := adapter.ruleExists(tt.args...)
-			// In test environment, this will always be false
-			// We're mainly testing that it doesn't panic
-			t.Logf("ruleExists(%v) = %v", tt.args, got)
+			// In test environment this will fail due to permissions; we test it doesn't panic
+			err := adapter.runIfNotExists(tt.args...)
+			t.Logf("runIfNotExists(%v) = %v", tt.args, err)
 		})
 	}
 }
 
 func TestRunIfNotExists(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	// Test with a rule that doesn't exist (and will fail to create due to permissions)
 	err := adapter.runIfNotExists("-A", "INPUT", "-j", "ACCEPT")
@@ -261,7 +252,7 @@ func TestRunIfNotExists(t *testing.T) {
 // Additional integration-style tests
 
 func TestSyncIntegration(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	policy := &dom.JumpPolicy{
 		IP: "10.0.0.1",
@@ -279,21 +270,21 @@ func TestSyncIntegration(t *testing.T) {
 	t.Logf("Sync integration test returned: %v", err)
 }
 
-func TestDetectDefaultNATInterface(t *testing.T) {
-	adapter := NewAdapter("wg0", "")
+func TestDetectNATInterfaces(t *testing.T) {
+	adapter := NewAdapter("wg0", nil)
 
 	// This test depends on the system configuration
 	// We mainly test that it doesn't panic
-	result := adapter.detectDefaultNATInterface()
+	result := adapter.detectNATInterfaces()
 
-	t.Logf("Detected default NAT interface: '%s'", result)
+	t.Logf("Detected NAT interfaces: %v", result)
 
 	// The result can be empty if no default route is found
 	// or if the parsing fails, which is acceptable in test environment
 }
 
 func TestEnableDebugLogging(t *testing.T) {
-	adapter := NewAdapter("wg0", "eth0")
+	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	// This will likely fail due to permissions, but should not panic
 	err := adapter.EnableDebugLogging()

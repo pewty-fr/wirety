@@ -431,7 +431,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                       const a = document.createElement('a');
                       a.href = url;
                       
-                      a.download = `${peer.network_name}.conf`;
+                      a.download = `${displayPeer.name}.${network?.name || displayPeer.network_name || 'network'}.${network?.domain_suffix || 'internal' }.conf`;
                       document.body.appendChild(a);
                       a.click();
                       document.body.removeChild(a);

@@ -5,7 +5,15 @@ import (
 	"time"
 )
 
-// SecurityConfig represents the configurable security settings for a network
+// SecurityConfig represents the configurable security settings for a network.
+//
+// Endpoint-change detection uses a two-tier model:
+//   - IP-level changes (different source IP): strong signal of a shared WireGuard
+//     private key being used by multiple machines.  Controlled by
+//     EndpointChangeThreshold / MaxEndpointChangesPerDay.  Triggers quarantine.
+//   - Port-only changes (same IP, different port): normal NAT rebinding behaviour.
+//     Controlled by PortChangeThreshold / MaxPortChangesPerWindow.  Creates an
+//     informational incident only — does NOT quarantine the peer.
 type SecurityConfig struct {
 	ID                       string        `json:"id"`
 	NetworkID                string        `json:"network_id"`
