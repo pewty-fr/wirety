@@ -1183,6 +1183,10 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 	if err != nil {
 		log.Error().Err(err).Msg("failed to detect and handle shared configs")
 	}
+	err = s.detectAndHandlePortChanges(ctx, networkID)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to detect and handle port changes")
+	}
 	err = s.detectAndHandleSuspicousActivity(ctx, networkID)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to detect and handle suspicious activity")
@@ -2103,6 +2107,12 @@ func (s *Service) UpdateSecurityConfig(ctx context.Context, networkID string, re
 	if req.MaxEndpointChangesPerDay != nil {
 		config.MaxEndpointChangesPerDay = *req.MaxEndpointChangesPerDay
 	}
+	if req.PortChangeThreshold != nil {
+		config.PortChangeThreshold = *req.PortChangeThreshold
+	}
+	if req.MaxPortChangesPerWindow != nil {
+		config.MaxPortChangesPerWindow = *req.MaxPortChangesPerWindow
+	}
 
 	// Validate the updated config
 	if err := config.Validate(); err != nil {
@@ -2119,6 +2129,8 @@ func (s *Service) UpdateSecurityConfig(ctx context.Context, networkID string, re
 		Dur("session_conflict_threshold", config.SessionConflictThreshold).
 		Dur("endpoint_change_threshold", config.EndpointChangeThreshold).
 		Int("max_endpoint_changes_per_day", config.MaxEndpointChangesPerDay).
+		Dur("port_change_threshold", config.PortChangeThreshold).
+		Int("max_port_changes_per_window", config.MaxPortChangesPerWindow).
 		Msg("Security config updated")
 
 	return config, nil
