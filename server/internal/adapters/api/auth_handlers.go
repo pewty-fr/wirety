@@ -18,6 +18,7 @@ import (
 	"wirety/internal/infrastructure/oidc"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 )
 
 // Uses shared OIDC discovery adapter (internal/infrastructure/oidc)
@@ -176,18 +177,23 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	// Some providers (e.g. Azure Entra ID) do not include the email claim in the
 	// id_token by default. Fall back to the userinfo endpoint using the access_token.
 	if claims.Email == "" && discovery.UserinfoEndpoint != "" {
+		log.Debug().Str("userinfo_endpoint", discovery.UserinfoEndpoint).Msg("email missing from token claims, fetching userinfo")
 		uiReq, uiErr := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, discovery.UserinfoEndpoint, nil)
 		if uiErr == nil {
 			uiReq.Header.Set("Authorization", "Bearer "+oidcTokenResp.AccessToken)
 			uiResp, uiErr := http.DefaultClient.Do(uiReq)
-			if uiErr == nil {
+			if uiErr != nil {
+				log.Debug().Err(uiErr).Msg("userinfo request failed")
+			} else {
 				defer func() { _ = uiResp.Body.Close() }()
+				body, _ := io.ReadAll(uiResp.Body)
+				log.Debug().Int("status", uiResp.StatusCode).RawJSON("body", body).Msg("userinfo response")
 				var uiClaims struct {
 					Email         string `json:"email"`
 					EmailVerified bool   `json:"email_verified"`
 					Name          string `json:"name"`
 				}
-				if json.NewDecoder(uiResp.Body).Decode(&uiClaims) == nil {
+				if json.Unmarshal(body, &uiClaims) == nil {
 					if uiClaims.Email != "" {
 						claims.Email = uiClaims.Email
 						claims.EmailVerified = uiClaims.EmailVerified
@@ -201,6 +207,16 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	}
 
 	if claims.Email == "" {
+		log.Debug().
+			Str("subject", claims.Subject).
+			Str("name", claims.Name).
+			Str("preferred_username", claims.PreferredUsername).
+			Str("given_name", claims.GivenName).
+			Str("family_name", claims.FamilyName).
+			Str("issuer", claims.Issuer).
+			Bool("email_verified", claims.EmailVerified).
+			Str("userinfo_endpoint", discovery.UserinfoEndpoint).
+			Msg("OIDC login blocked: email claim is empty after token + userinfo resolution")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Your account does not have an email address. Please configure your identity provider to expose the email claim."})
 		return
 	}
