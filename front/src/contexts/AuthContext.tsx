@@ -65,6 +65,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Server sets httpOnly cookie — no need to handle the response body
           window.history.replaceState({}, document.title, window.location.pathname);
           await fetchCurrentUser();
+
+          // Resume a captive portal flow that was interrupted by the OIDC redirect.
+          // CaptivePortalPage stores its URL in sessionStorage before calling login()
+          // so we can return here after the OAuth callback completes.
+          const pendingCaptivePortal = sessionStorage.getItem('captive_portal_return');
+          if (pendingCaptivePortal) {
+            sessionStorage.removeItem('captive_portal_return');
+            window.location.href = pendingCaptivePortal;
+            return;
+          }
         } else {
           const body = await response.text();
           let message = `Authentication failed (HTTP ${response.status})`;
