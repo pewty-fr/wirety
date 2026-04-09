@@ -98,33 +98,130 @@ server:
     type: ClusterIP
 
 # HTTPRoute (Gateway API) — disabled by default.
-# Enable this as an alternative or complement to the Ingress above.
 # Requires a Gateway API controller (e.g. Envoy Gateway, Istio, Contour).
+#
+# Two independent HTTPRoutes are provided:
+#
+#   public  — attached to your internet-facing Gateway.
+#             Expose only the paths you explicitly list in public.rules.
+#             Admin paths should never appear here.
+#
+#   private — attached to your VPN/internal Gateway.
+#             Full access to all routes including admin endpoints.
+#
+# Typical setup:
+#   - Point your public DNS (wirety.example.com) at the public Gateway.
+#   - Point your internal DNS (wirety.corp) at your VPN/internal Gateway.
+#   - Uncomment the rules you need in each section below.
+
 httpRoute:
-  enabled: false
-  annotations: {}
-  # parentRefs:
-  #   - name: my-gateway
-  #     namespace: gateway-system
-  parentRefs: []
-  # hostnames:
-  #   - wirety.example.com
-  hostnames: []
-  # rules defines which paths are forwarded to which backend (server or frontend).
-  # Each rule maps a set of path matches to one Wirety backend service.
-  # Example:
-  # rules:
-  #   - matches:
-  #       - path:
-  #           type: PathPrefix
-  #           value: /api
-  #     backend: server
-  #   - matches:
-  #       - path:
-  #           type: PathPrefix
-  #           value: /
-  #     backend: frontend
-  rules: []
+  public:
+    enabled: false
+    annotations: {}
+    # parentRefs:
+    #   - name: public-gateway
+    #     namespace: gateway-system
+    parentRefs: []
+    # hostnames:
+    #   - wirety.example.com
+    hostnames: []
+    # rules — uncomment the paths you want reachable from the internet.
+    #
+    # ── Minimum required for the login page ──────────────────────────────────
+    # rules:
+    #   # Health check
+    #   - matches:
+    #       - path:
+    #           type: Exact
+    #           value: /api/v1/health
+    #     backend: server
+    #
+    #   # Authentication: OIDC exchange, simple login/logout, provider config
+    #   - matches:
+    #       - path:
+    #           type: PathPrefix
+    #           value: /api/v1/auth/
+    #     backend: server
+    #
+    #   # Frontend SPA (catch-all — keep last)
+    #   - matches:
+    #       - path:
+    #           type: PathPrefix
+    #           value: /
+    #     backend: frontend
+    #
+    # ── Optional: agent connectivity (needed if agents reach the server over
+    #    the internet rather than through the private network) ────────────────────────────
+    #
+    #   # Agent WebSocket connections
+    #   - matches:
+    #       - path:
+    #           type: PathPrefix
+    #           value: /api/v1/ws
+    #     backend: server
+    #
+    #   # Agent endpoint resolution
+    #   - matches:
+    #       - path:
+    #           type: PathPrefix
+    #           value: /api/v1/agent/
+    #     backend: server
+    #
+    # ── Optional: let users fetch their WireGuard peer config from the internet
+    #    All requests still require authentication; admin sub-paths within
+    #    /api/v1/networks/ return 403 to non-admin callers. ──────────────────
+    #
+    #   # Current-user info and API tokens
+    #   - matches:
+    #       - path:
+    #           type: PathPrefix
+    #           value: /api/v1/users/me
+    #     backend: server
+    #
+    #   # Network listing and peer config download
+    #   # (GET /api/v1/networks/{id}/peers/{peerId}/config)
+    #   - matches:
+    #       - path:
+    #           type: PathPrefix
+    #           value: /api/v1/networks/
+    #         method: GET
+    #     backend: server
+    rules: []
+
+  private:
+    enabled: false
+    annotations: {}
+    # parentRefs:
+    #   - name: private-gateway
+    #     namespace: gateway-system
+    parentRefs: []
+    # hostnames:
+    #   - wirety.corp
+    hostnames: []
+    # rules — full access; all paths including admin routes.
+    #
+    # rules:
+    #   # All API routes (includes admin-only endpoints)
+    #   - matches:
+    #       - path:
+    #           type: PathPrefix
+    #           value: /api/
+    #     backend: server
+    #
+    #   # MCP server (AI tool integration)
+    #   - matches:
+    #       - path:
+    #           type: PathPrefix
+    #           value: /mcp
+    #     backend: server
+    #
+    #   # Frontend SPA (catch-all — keep last)
+    #   - matches:
+    #       - path:
+    #           type: PathPrefix
+    #           value: /
+    #     backend: frontend
+    rules: []
 
 ingress:
   className: traefik
