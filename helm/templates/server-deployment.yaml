@@ -56,8 +56,21 @@ spec:
         {{- end }}
         {{- end }}
         {{- if .Values.postgres.enabled }}
+        {{- if .Values.postgres.auth.existingSecret }}
+        {{- $host := printf "%s-postgres" .Release.Name }}
+        {{- $user := .Values.postgres.auth.username | default "wirety" }}
+        {{- $db   := .Values.postgres.auth.database | default "wirety" }}
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgres.auth.existingSecret }}
+              key: {{ .Values.postgres.auth.secretKeys.adminPasswordKey | default "password" }}
+        - name: DB_DSN
+          value: {{ printf "postgres://%s:$(POSTGRES_PASSWORD)@%s:5432/%s?sslmode=disable" $user $host $db | quote }}
+        {{- else }}
         - name: DB_DSN
           value: {{ include "wirety.postgresDSN" . | quote }}
+        {{- end }}
         {{- else if .Values.server.env.DB_DSN }}
         - name: DB_DSN
           value: {{ .Values.server.env.DB_DSN | quote }}

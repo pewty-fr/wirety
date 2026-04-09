@@ -239,8 +239,15 @@ postgres:
   enabled: true
   auth:
     username: wirety
+    # password is ignored when existingSecret is set.
     password: wirety
     database: wirety
+    # existingSecret — name of an existing Secret containing the postgres password.
+    # When set, `password` above is ignored and the password is read from the Secret.
+    existingSecret: ""
+    secretKeys:
+      # adminPasswordKey — key inside existingSecret that holds the postgres password.
+      adminPasswordKey: password
   persistence:
     enabled: true
     size: 8Gi
