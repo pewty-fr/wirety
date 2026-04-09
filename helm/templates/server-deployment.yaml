@@ -63,7 +63,7 @@ spec:
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: {{ .Values.postgres.auth.existingSecret }}
+              name: {{ tpl .Values.postgres.auth.existingSecret . }}
               key: {{ .Values.postgres.auth.secretKeys.adminPasswordKey | default "password" }}
         - name: DB_DSN
           value: {{ printf "postgres://%s:$(POSTGRES_PASSWORD)@%s:5432/%s?sslmode=disable" $user $host $db | quote }}
