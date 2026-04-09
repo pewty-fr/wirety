@@ -10,7 +10,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/leanovate/gopter v0.2.11
-	github.com/lib/pq v1.11.2
+	github.com/lib/pq v1.12.3
 	github.com/metal-stack/go-ipam v1.14.14
 	github.com/rs/zerolog v1.34.0
 	github.com/swaggo/files v1.0.1
