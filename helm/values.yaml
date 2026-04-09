@@ -129,12 +129,6 @@ httpRoute:
     #
     # ── Minimum required for the login page ──────────────────────────────────
     # rules:
-    #   # Health check
-    #   - matches:
-    #       - path:
-    #           type: Exact
-    #           value: /api/v1/health
-    #     backend: server
     #
     #   # Authentication: OIDC exchange, simple login/logout, provider config
     #   - matches:
@@ -183,7 +177,7 @@ httpRoute:
     #   - matches:
     #       - path:
     #           type: PathPrefix
-    #           value: /api/v1/networks/
+    #           value: /api/
     #         method: GET
     #     backend: server
     rules: []
