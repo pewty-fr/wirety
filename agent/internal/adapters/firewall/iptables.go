@@ -313,10 +313,28 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	// For now, IPv6 traffic is allowed but not filtered by policies
 	// This should be implemented as part of full dual-stack support
 
-	// ── FORWARD filtering chain (WIRETY_JUMP) ──────────────────────────────
+	// ── Two-chain design ────────────────────────────────────────────────────
+	//
+	// WIRETY_JUMP (authentication gate, in FORWARD):
+	//   1. Wirety server IPs   → ACCEPT  (captive portal auth always reachable)
+	//   2. Whitelisted peer IP → jump to WIRETY_POLICY
+	//   3. Everything else     → DROP    (unauthenticated peers blocked on ALL ports)
+	//
+	// WIRETY_POLICY (per-destination rules, only reached by authenticated peers):
+	//   1. Explicit policy rules (ACCEPT/DROP per destination CIDR)
+	//   2. Catch-all ACCEPT    (backward compat: authenticated = full access by default)
+	//
+	// This prevents unauthenticated peers from bypassing the captive portal via HTTPS
+	// or any other port that is not intercepted by the DNAT rule: they hit the DROP in
+	// WIRETY_JUMP before any policy rule is ever evaluated.
+
 	chain := "WIRETY_JUMP"
+	policyChain := "WIRETY_POLICY"
+
 	_ = a.run("-N", chain)
 	_ = a.run("-F", chain)
+	_ = a.run("-N", policyChain)
+	_ = a.run("-F", policyChain)
 
 	// Always allow peers to reach the Wirety server regardless of auth state.
 	// Without this, peers can't complete captive portal authentication when the
@@ -327,18 +345,30 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 		}
 	}
 
-	// ACCEPT whitelisted (already-authenticated) peers before policy rules.
+	// Authenticated peers jump to the policy chain; all others hit the DROP below.
 	for _, ip := range whitelistedIPs {
-		if err := a.run("-A", chain, "-i", a.iface, "-s", ip, "-j", "ACCEPT"); err != nil {
-			log.Warn().Err(err).Str("ip", ip).Msg("failed to add whitelist ACCEPT rule")
+		if err := a.run("-A", chain, "-i", a.iface, "-s", ip, "-j", policyChain); err != nil {
+			log.Warn().Err(err).Str("ip", ip).Msg("failed to add whitelist jump rule")
 		}
 	}
 
-	// Apply policy-based iptables rules in order
+	// For unauthenticated peers, reject HTTPS (443) with a TCP RST so the
+	// browser fails immediately instead of spinning for ~30 s on a silent DROP.
+	// This also nudges the OS captive-portal detection flow: the HTTP probes
+	// that every modern OS (iOS, Android, Windows, macOS) sends on network join
+	// are plain HTTP — they hit the DNAT rule above and reach the captive portal.
+	// Note: a full HTTPS → captive-portal redirect is not feasible because it
+	// requires TLS termination with a valid certificate; self-signed certs cause
+	// browser warnings and HSTS-preloaded sites (most major domains) refuse to
+	// show the warning at all.
+	_ = a.run("-A", chain, "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "REJECT", "--reject-with", "tcp-reset")
+	_ = a.run("-A", chain, "-i", a.iface, "-j", "DROP")
+
+	// Populate WIRETY_POLICY with per-destination rules for authenticated peers.
 	if len(p.IPTablesRules) > 0 {
 		log.Info().Int("rule_count", len(p.IPTablesRules)).Msg("applying policy-based iptables rules")
 		for i, rule := range p.IPTablesRules {
-			if err := a.applyIPTablesRule(chain, rule); err != nil {
+			if err := a.applyIPTablesRule(policyChain, rule); err != nil {
 				log.Error().Err(err).Int("rule_index", i).Str("rule", rule).Msg("failed to apply iptables rule")
 			}
 		}
@@ -346,7 +376,10 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 		log.Debug().Msg("no policy-based iptables rules to apply")
 	}
 
-	_ = a.run("-A", chain, "-i", a.iface, "-j", "DROP")
+	// Catch-all ACCEPT at the end of WIRETY_POLICY: an authenticated peer with no
+	// matching explicit policy rule still gets through (maintains prior behaviour
+	// where whitelist = full access).
+	_ = a.run("-A", policyChain, "-j", "ACCEPT")
 
 	log.Debug().Msg("applied policy-based iptables rules")
 
