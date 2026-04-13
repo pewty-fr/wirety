@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"wirety/internal/application/auth"
@@ -13,6 +15,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// sessionRefreshMu prevents multiple concurrent requests from all trying to
+// refresh the same rotating refresh token simultaneously.  Without this, when
+// an access token expires every goroutine that sees the stale session calls the
+// provider's token endpoint with the same refresh token.  The first call
+// succeeds and stores a new rotating refresh token; the others get
+// invalid_grant, delete the session, and the user is logged out.
+//
+// The map is keyed by session hash; values are *sync.Mutex.
+var sessionRefreshMu sync.Map
+
+func getSessionRefreshLock(sessionHash string) *sync.Mutex {
+	v, _ := sessionRefreshMu.LoadOrStore(sessionHash, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+const apiTokenPrefix = "wirety_"
+
 const (
 	// UserContextKey is the key used to store user in gin context
 	UserContextKey = "user"
@@ -21,53 +40,87 @@ const (
 // AuthMiddleware creates a middleware for authentication
 func AuthMiddleware(authService *auth.Service, userRepo domainAuth.Repository, cfg *config.AuthConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// If auth is disabled, set a default admin user and continue
-		if !cfg.Enabled {
-			// Create a virtual admin user for no-auth mode
-			adminUser := &domainAuth.User{
-				ID:    "admin",
-				Email: "admin@wirety.local",
-				Name:  "Administrator",
-				Role:  domainAuth.RoleAdministrator,
+		// API tokens (wirety_*) are accepted in both auth modes via Authorization: Bearer
+		if authHeader := c.GetHeader("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+			raw := strings.TrimPrefix(authHeader, "Bearer ")
+			if strings.HasPrefix(raw, apiTokenPrefix) {
+				user, err := handleAPITokenAuth(userRepo, raw)
+				if err != nil {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+					c.Abort()
+					return
+				}
+				c.Set(UserContextKey, user)
+				c.Next()
+				return
 			}
-			c.Set(UserContextKey, adminUser)
+		}
+
+		// If OIDC auth is disabled, use simple session-based auth
+		if !cfg.Enabled {
+			// Try cookie first, then Authorization: Session header
+			var sessionHash string
+			if cookie, err := c.Cookie("wirety_session"); err == nil && cookie != "" {
+				sessionHash = cookie
+			} else {
+				authHeader := c.GetHeader("Authorization")
+				parts := strings.SplitN(authHeader, " ", 2)
+				if len(parts) == 2 && strings.ToLower(parts[0]) == "session" {
+					sessionHash = parts[1]
+				}
+			}
+			if sessionHash == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session cookie or authorization header"})
+				c.Abort()
+				return
+			}
+
+			user, err := handleSimpleSessionAuth(userRepo, sessionHash)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+				c.Abort()
+				return
+			}
+
+			c.Set(UserContextKey, user)
 			c.Next()
 			return
 		}
 
-		// Extract token from Authorization header
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
-			c.Abort()
-			return
-		}
-
-		// Extract Bearer token or Session hash
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
-			c.Abort()
-			return
-		}
-
-		authType := strings.ToLower(parts[0])
-		authValue := parts[1]
-
+		// Resolve session: cookie takes priority, then Authorization header
 		var user *domainAuth.User
 		var err error
 
-		switch authType {
-		case "session":
-			// Session-based authentication (preferred)
-			user, err = handleSessionAuth(c, authService, userRepo, authValue)
-		case "bearer":
-			// Legacy token-based authentication (for backward compatibility)
-			user, err = handleTokenAuth(c, authService, authValue)
-		default:
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization type. Use 'Session' or 'Bearer'"})
-			c.Abort()
-			return
+		if cookie, cookieErr := c.Cookie("wirety_session"); cookieErr == nil && cookie != "" {
+			user, err = handleSessionAuth(c, authService, userRepo, cookie)
+		} else {
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
+				c.Abort()
+				return
+			}
+
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
+				c.Abort()
+				return
+			}
+
+			authType := strings.ToLower(parts[0])
+			authValue := parts[1]
+
+			switch authType {
+			case "session":
+				user, err = handleSessionAuth(c, authService, userRepo, authValue)
+			case "bearer":
+				user, err = handleTokenAuth(c, authService, authValue)
+			default:
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization type. Use 'Session' or 'Bearer'"})
+				c.Abort()
+				return
+			}
 		}
 
 		if err != nil {
@@ -80,6 +133,29 @@ func AuthMiddleware(authService *auth.Service, userRepo domainAuth.Repository, c
 		c.Set(UserContextKey, user)
 		c.Next()
 	}
+}
+
+// handleSimpleSessionAuth handles session-based auth for simple (non-OIDC) mode
+func handleSimpleSessionAuth(userRepo domainAuth.Repository, sessionHash string) (*domainAuth.User, error) {
+	session, err := userRepo.GetSession(sessionHash)
+	if err != nil {
+		return nil, fmt.Errorf("invalid session")
+	}
+
+	if !session.IsValid() {
+		_ = userRepo.DeleteSession(sessionHash)
+		return nil, fmt.Errorf("session expired")
+	}
+
+	user, err := userRepo.GetUser(session.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	session.LastUsedAt = time.Now()
+	_ = userRepo.UpdateSession(session)
+
+	return user, nil
 }
 
 // handleSessionAuth handles session-based authentication
@@ -96,44 +172,89 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		return nil, fmt.Errorf("session expired")
 	}
 
-	// Check if access token needs refresh
-	if session.IsAccessTokenExpired() {
-		// Refresh the access token
-		newAccessToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
+	// refreshOnce performs a single token refresh and updates the session in the DB.
+	// It captures the new refresh token from the provider (important for rotating-token
+	// providers such as Azure Entra ID — discarding it would burn the token and cause
+	// the next refresh to fail with invalid_grant).
+	refreshOnce := func() error {
+		newAccessToken, newRefreshToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
 		if err != nil {
-			// If refresh fails, delete the session
-			_ = userRepo.DeleteSession(sessionHash)
-			return nil, fmt.Errorf("failed to refresh token: %w", err)
+			return err
 		}
-
-		// Update session with new access token
 		session.AccessToken = newAccessToken
 		session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
-		if err := userRepo.UpdateSession(session); err != nil {
-			return nil, fmt.Errorf("failed to update session: %w", err)
+		// Only update refresh token when the provider returned a new one (rotating tokens).
+		if newRefreshToken != "" {
+			session.RefreshToken = newRefreshToken
 		}
+		return userRepo.UpdateSession(session)
+	}
+
+	// Check if access token needs refresh.
+	// Use a per-session mutex so that when multiple concurrent requests all see
+	// the same expired access token, only one of them calls the provider's token
+	// endpoint.  After acquiring the lock the session is re-read from the DB so
+	// that the waiting goroutines transparently pick up the fresh tokens written
+	// by the winner and skip the refresh altogether.
+	alreadyRefreshed := false
+	if session.IsAccessTokenExpired() {
+		mu := getSessionRefreshLock(sessionHash)
+		mu.Lock()
+		// Re-read: the goroutine that won the lock may have already refreshed.
+		if fresh, readErr := userRepo.GetSession(sessionHash); readErr == nil {
+			session = fresh
+			// Re-bind refreshOnce to the updated session so it uses the new refresh token.
+			refreshOnce = func() error {
+				newAccessToken, newRefreshToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
+				if err != nil {
+					return err
+				}
+				session.AccessToken = newAccessToken
+				session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+				if newRefreshToken != "" {
+					session.RefreshToken = newRefreshToken
+				}
+				return userRepo.UpdateSession(session)
+			}
+		}
+		if session.IsAccessTokenExpired() {
+			if err := refreshOnce(); err != nil {
+				mu.Unlock()
+				// Do NOT delete the session: the failure may be a lost race
+				// (another goroutine already consumed the rotating refresh token
+				// and this call got invalid_grant).  The session is still valid;
+				// the next request will re-read the updated tokens and succeed.
+				return nil, fmt.Errorf("failed to refresh token: %w", err)
+			}
+			alreadyRefreshed = true
+		}
+		mu.Unlock()
 	}
 
 	// Validate the access token
 	_, err = authService.ValidateToken(c.Request.Context(), session.AccessToken)
 	if err != nil {
-		// If validation fails, try to refresh
-		newAccessToken, expiresIn, refreshErr := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
+		if alreadyRefreshed {
+			// We just refreshed but the new token is already invalid — something is
+			// fundamentally wrong (e.g. clock skew, revoked key). Don't burn another
+			// refresh token; just fail.
+			_ = userRepo.DeleteSession(sessionHash)
+			return nil, fmt.Errorf("token invalid after refresh: %w", err)
+		}
+
+		// Token invalid but we haven't refreshed yet — try one refresh under lock.
+		mu := getSessionRefreshLock(sessionHash)
+		mu.Lock()
+		refreshErr := refreshOnce()
+		mu.Unlock()
 		if refreshErr != nil {
 			_ = userRepo.DeleteSession(sessionHash)
-			return nil, fmt.Errorf("invalid token and refresh failed")
+			return nil, fmt.Errorf("invalid token and refresh failed: %w", refreshErr)
 		}
 
-		// Update session with new access token
-		session.AccessToken = newAccessToken
-		session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
-		if err := userRepo.UpdateSession(session); err != nil {
-			return nil, fmt.Errorf("failed to update session: %w", err)
-		}
-
-		// Validate the new token
-		_, err = authService.ValidateToken(c.Request.Context(), session.AccessToken)
-		if err != nil {
+		// Validate the freshly obtained token
+		if _, err = authService.ValidateToken(c.Request.Context(), session.AccessToken); err != nil {
+			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("token validation failed after refresh: %w", err)
 		}
 	}
@@ -148,6 +269,25 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 	session.LastUsedAt = time.Now()
 	_ = userRepo.UpdateSession(session)
 
+	return user, nil
+}
+
+// handleAPITokenAuth handles API token authentication (wirety_* tokens)
+func handleAPITokenAuth(userRepo domainAuth.Repository, rawToken string) (*domainAuth.User, error) {
+	h := sha256.Sum256([]byte(rawToken))
+	hash := fmt.Sprintf("%x", h)
+	token, err := userRepo.GetAPITokenByHash(hash)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API token")
+	}
+	if token.ExpiresAt != nil && token.ExpiresAt.Before(time.Now()) {
+		return nil, fmt.Errorf("API token expired")
+	}
+	user, err := userRepo.GetUser(token.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+	_ = userRepo.TouchAPIToken(token.ID)
 	return user, nil
 }
 

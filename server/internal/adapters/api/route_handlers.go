@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	appgroup "wirety/internal/application/group"
+	"wirety/internal/audit"
 	"wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,14 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "route.create").
+		Str("network_id", networkID).
+		Str("route_id", route.ID).
+		Str("route_name", route.Name).
+		Msg("audit")
 
 	c.JSON(http.StatusCreated, route)
 }
@@ -125,6 +134,14 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 		return
 	}
 
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "route.update").
+		Str("network_id", networkID).
+		Str("route_id", routeID).
+		Str("route_name", route.Name).
+		Msg("audit")
+
 	c.JSON(http.StatusOK, route)
 }
 
@@ -148,6 +165,13 @@ func (h *Handler) DeleteRoute(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "route.delete").
+		Str("network_id", networkID).
+		Str("route_id", routeID).
+		Msg("audit")
 
 	c.Status(http.StatusNoContent)
 }
@@ -188,6 +212,14 @@ func (h *Handler) AttachRouteToGroup(c *gin.Context) {
 		return
 	}
 
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "route.group.attach").
+		Str("network_id", networkID).
+		Str("group_id", groupID).
+		Str("route_id", routeID).
+		Msg("audit")
+
 	c.Status(http.StatusOK)
 }
 
@@ -213,6 +245,14 @@ func (h *Handler) DetachRouteFromGroup(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "route.group.detach").
+		Str("network_id", networkID).
+		Str("group_id", groupID).
+		Str("route_id", routeID).
+		Msg("audit")
 
 	c.Status(http.StatusNoContent)
 }

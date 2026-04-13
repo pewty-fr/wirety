@@ -145,8 +145,9 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
             value={formData.name}
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
-            placeholder="e.g., Production Network"
+            placeholder="e.g., prod or prod.eu"
           />
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Lowercase letters, numbers, hyphens and dots only (e.g. <code className="font-mono">prod</code>, <code className="font-mono">prod.eu</code>)</p>
         </div>
 
         {/* CIDR */}
@@ -283,7 +284,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
             placeholder="internal"
           />
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Custom domain suffix for internal DNS (default: internal)</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">DNS suffix appended to route names (e.g. <code className="font-mono">internal</code>, <code className="font-mono">corp.example.com</code>)</p>
         </div>
 
         {/* Actions */}

@@ -24,8 +24,10 @@ export default function SecurityConfigModal({
   const [selectedNetworkId, setSelectedNetworkId] = useState<string>(networkId || '');
   const [enabled, setEnabled] = useState<boolean>(true);
   const [sessionConflictThreshold, setSessionConflictThreshold] = useState<number>(5);
-  const [endpointChangeThreshold, setEndpointChangeThreshold] = useState<number>(30);
+  const [endpointChangeThreshold, setEndpointChangeThreshold] = useState<number>(5);
   const [maxEndpointChangesPerDay, setMaxEndpointChangesPerDay] = useState<number>(10);
+  const [portChangeThreshold, setPortChangeThreshold] = useState<number>(5);
+  const [maxPortChangesPerWindow, setMaxPortChangesPerWindow] = useState<number>(5);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -38,8 +40,10 @@ export default function SecurityConfigModal({
         // Reset to defaults when no network is selected
         setEnabled(true);
         setSessionConflictThreshold(5);
-        setEndpointChangeThreshold(30);
+        setEndpointChangeThreshold(5);
         setMaxEndpointChangesPerDay(10);
+        setPortChangeThreshold(5);
+        setMaxPortChangesPerWindow(5);
       }
     }
   }, [isOpen, networkId]);
@@ -60,13 +64,17 @@ export default function SecurityConfigModal({
       setSessionConflictThreshold(config.session_conflict_threshold_minutes);
       setEndpointChangeThreshold(config.endpoint_change_threshold_minutes);
       setMaxEndpointChangesPerDay(config.max_endpoint_changes_per_day);
+      setPortChangeThreshold(config.port_change_threshold_minutes);
+      setMaxPortChangesPerWindow(config.max_port_changes_per_window);
     } catch (error) {
       console.error('Failed to load security config:', error);
       // Use default values if config doesn't exist
       setEnabled(true);
       setSessionConflictThreshold(5);
-      setEndpointChangeThreshold(30);
+      setEndpointChangeThreshold(5);
       setMaxEndpointChangesPerDay(10);
+      setPortChangeThreshold(5);
+      setMaxPortChangesPerWindow(5);
     } finally {
       setIsLoading(false);
     }
@@ -85,6 +93,8 @@ export default function SecurityConfigModal({
         session_conflict_threshold_minutes: sessionConflictThreshold,
         endpoint_change_threshold_minutes: endpointChangeThreshold,
         max_endpoint_changes_per_day: maxEndpointChangesPerDay,
+        port_change_threshold_minutes: portChangeThreshold,
+        max_port_changes_per_window: maxPortChangesPerWindow,
       };
       
       await api.updateSecurityConfig(selectedNetworkId, updateData);
@@ -221,10 +231,15 @@ export default function SecurityConfigModal({
                   </p>
                 </div>
 
+                {/* IP Change Detection (shared config) */}
+                <h5 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mt-2">
+                  IP Change Detection (shared config)
+                </h5>
+
                 {/* Endpoint Change Threshold */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
-                    Endpoint Change Threshold
+                    IP Change Detection Window
                   </label>
                   <div className="flex items-center gap-3">
                     <input
@@ -232,20 +247,20 @@ export default function SecurityConfigModal({
                       min="1"
                       max="1440"
                       value={endpointChangeThreshold}
-                      onChange={(e) => setEndpointChangeThreshold(parseInt(e.target.value) || 30)}
+                      onChange={(e) => setEndpointChangeThreshold(parseInt(e.target.value) || 5)}
                       className="w-20 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                     />
                     <span className="text-sm text-gray-600 dark:text-gray-300">minutes</span>
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Minimum time between endpoint changes to not be suspicious (1-1440 minutes)
+                    Window to detect different IPs using the same config — triggers quarantine (1-1440 minutes)
                   </p>
                 </div>
 
                 {/* Max Endpoint Changes Per Day */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
-                    Maximum Endpoint Changes Per Day
+                    Max IP Changes Per Day
                   </label>
                   <div className="flex items-center gap-3">
                     <input
@@ -259,7 +274,54 @@ export default function SecurityConfigModal({
                     <span className="text-sm text-gray-600 dark:text-gray-300">changes</span>
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Maximum number of endpoint changes per day before flagging as suspicious (1-1000)
+                    Maximum IP-level endpoint changes per day before quarantine (1-1000)
+                  </p>
+                </div>
+
+                {/* Port Change Detection (NAT rebinding) */}
+                <h5 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mt-4">
+                  Port Change Detection (NAT rebinding)
+                </h5>
+
+                {/* Port Change Threshold */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
+                    Port Change Detection Window
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="1"
+                      max="1440"
+                      value={portChangeThreshold}
+                      onChange={(e) => setPortChangeThreshold(parseInt(e.target.value) || 5)}
+                      className="w-20 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                    />
+                    <span className="text-sm text-gray-600 dark:text-gray-300">minutes</span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Window for counting port-only changes from the same IP (1-1440 minutes)
+                  </p>
+                </div>
+
+                {/* Max Port Changes Per Window */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
+                    Max Port Changes Per Window
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={maxPortChangesPerWindow}
+                      onChange={(e) => setMaxPortChangesPerWindow(parseInt(e.target.value) || 5)}
+                      className="w-20 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                    />
+                    <span className="text-sm text-gray-600 dark:text-gray-300">changes</span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Port-only changes above this create an incident but do not quarantine (1-1000)
                   </p>
                 </div>
               </div>

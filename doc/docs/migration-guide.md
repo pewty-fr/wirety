@@ -830,7 +830,7 @@ Test that the previous version is working correctly with the restored database.
 
 If you encounter issues during migration:
 
-1. Check the [Troubleshooting Guide](./troubleshooting.md)
+1. Check the Troubleshooting Guide (see sidebar)
 2. Review server logs: `docker logs wireguard-server`
 3. Check agent logs on jump peers: `journalctl -u wireguard-agent`
 4. Open an issue on GitHub with:
@@ -845,6 +845,6 @@ If you encounter issues during migration:
 
 - [API Reference](./api-reference.md) - Complete API documentation
 - [User Guide](./user-guide.md) - Step-by-step guides for common tasks
-- [Architecture](./architecture.md) - System architecture overview
-- [Troubleshooting](./troubleshooting.md) - Common issues and solutions
+- Architecture - System architecture overview
+- Troubleshooting - Common issues and solutions
 

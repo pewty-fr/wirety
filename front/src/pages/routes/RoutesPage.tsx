@@ -120,7 +120,7 @@ export default function RoutesPage() {
 
   return (
     <div>
-      <PageHeader 
+      <PageHeader
         title="Routes" 
         subtitle={`${routes.length} route${routes.length !== 1 ? 's' : ''} ${selectedNetworkId ? 'in selected network' : 'across all networks'}`}
         action={
@@ -357,9 +357,10 @@ function RouteModal({
   }, [selectedNetworkId, route, isOpen]);
 
   const loadJumpPeers = async () => {
-    if (!selectedNetworkId) return;
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
     try {
-      const peers = await api.getAllNetworkPeers(selectedNetworkId);
+      const peers = await api.getAllNetworkPeers(networkIdToUse);
       setJumpPeers(peers.filter(p => p.is_jump));
     } catch (error) {
       console.error('Failed to load jump peers:', error);
@@ -367,10 +368,11 @@ function RouteModal({
   };
 
   const loadDNSMappings = async () => {
-    if (!route || !selectedNetworkId) return;
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (!route || !networkIdToUse) return;
 
     try {
-      const data = await api.getDNSMappings(selectedNetworkId, route.id);
+      const data = await api.getDNSMappings(networkIdToUse, route.id);
       setDnsMappings(data || []);
     } catch (error) {
       console.error('Failed to load DNS mappings:', error);
@@ -378,10 +380,11 @@ function RouteModal({
   };
 
   const loadAvailableItems = async () => {
-    if (!selectedNetworkId) return;
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
 
     try {
-      const allGroups = await api.getGroups(selectedNetworkId);
+      const allGroups = await api.getGroups(networkIdToUse);
       setAvailableGroups(allGroups);
     } catch (error) {
       console.error('Failed to load available items:', error);
@@ -389,11 +392,12 @@ function RouteModal({
   };
 
   const loadAttachments = async () => {
-    if (!route || !selectedNetworkId) return;
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (!route || !networkIdToUse) return;
 
     try {
       // Load all groups in the network
-      const allGroups = await api.getGroups(selectedNetworkId);
+      const allGroups = await api.getGroups(networkIdToUse);
       
       // Filter groups that have this route attached
       const groupsWithRoute = allGroups.filter(g => g.route_ids?.includes(route.id));
@@ -564,10 +568,11 @@ function RouteModal({
   };
 
   const handleAddDNS = async (dnsName: string, ipAddress: string) => {
-    if (route && selectedNetworkId) {
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (route && networkIdToUse) {
       // Edit mode: add immediately
       try {
-        await api.createDNSMapping(selectedNetworkId, route.id, { name: dnsName, ip_address: ipAddress });
+        await api.createDNSMapping(networkIdToUse, route.id, { name: dnsName, ip_address: ipAddress });
         await loadDNSMappings();
         onSuccess();
         setIsAddDNSModalOpen(false);
@@ -583,10 +588,11 @@ function RouteModal({
   };
 
   const handleDeleteDNS = async (dnsId: string) => {
-    if (route && selectedNetworkId) {
+    const networkIdToUse = route?.network_id || selectedNetworkId;
+    if (route && networkIdToUse) {
       // Edit mode: delete immediately
       try {
-        await api.deleteDNSMapping(selectedNetworkId, route.id, dnsId);
+        await api.deleteDNSMapping(networkIdToUse, route.id, dnsId);
         await loadDNSMappings();
         onSuccess();
       } catch (error) {
@@ -667,6 +673,7 @@ function RouteModal({
   }));
 
   return (
+    <>
     <div className="fixed inset-0 z-50 overflow-y-auto">
       {/* Backdrop with blur */}
       <div 
@@ -1159,17 +1166,21 @@ function RouteModal({
           </div>
         )}
 
-        {/* Add DNS Modal */}
-        <AddDNSModal
-          isOpen={isAddDNSModalOpen}
-          onClose={() => setIsAddDNSModalOpen(false)}
-          onAdd={handleAddDNS}
-          routeCidr={destinationCidr || route?.destination_cidr || ''}
-        />
       </div>
       </div>
       </div>
     </div>
+
+    {/* AddDNSModal must be rendered outside the transformed/scrollable RouteModal
+        container — a CSS transform on an ancestor breaks fixed positioning, causing
+        the modal backdrop to be clipped and clicks to fall through. */}
+    <AddDNSModal
+      isOpen={isAddDNSModalOpen}
+      onClose={() => setIsAddDNSModalOpen(false)}
+      onAdd={handleAddDNS}
+      routeCidr={destinationCidr || route?.destination_cidr || ''}
+    />
+    </>
   );
 }
 

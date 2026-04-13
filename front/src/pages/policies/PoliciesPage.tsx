@@ -78,9 +78,10 @@ export default function PoliciesPage() {
     setIsPolicyModalOpen(true);
   };
 
-  const handleDeletePolicy = async (policyId: string) => {
+  const handleDeletePolicy = async (policy: Policy) => {
+    const networkIdToUse = policy.network_id || selectedNetworkId;
     try {
-      await api.deletePolicy(selectedNetworkId, policyId);
+      await api.deletePolicy(networkIdToUse, policy.id);
       loadPolicies();
     } catch (error) {
       console.error('Failed to delete policy:', error);
@@ -91,7 +92,7 @@ export default function PoliciesPage() {
   const handleDelete = async (policy: Policy, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm(`Are you sure you want to delete policy "${policy.name}"?`)) {
-      await handleDeletePolicy(policy.id);
+      await handleDeletePolicy(policy);
     }
   };
 
@@ -902,7 +903,7 @@ function PolicyModal({
           isOpen={isAddRuleModalOpen}
           onClose={() => setIsAddRuleModalOpen(false)}
           onAdd={handleAddRule}
-          networkId={selectedNetworkId}
+          networkId={policy?.network_id || selectedNetworkId}
         />
       </div>
       </div>
@@ -933,35 +934,34 @@ function AddRuleModal({
   const [loadingRoutes, setLoadingRoutes] = useState(false);
   const [networkCIDR, setNetworkCIDR] = useState<string>('');
 
-  // Load network CIDR and routes when modal opens
+  // Load network CIDR once when modal opens (needed for the "Network" target type shortcut)
   useEffect(() => {
     if (!isOpen || !networkId) return;
-    
-    const loadData = async () => {
-      try {
-        // Load network CIDR
-        const network = await api.getNetwork(networkId);
-        setNetworkCIDR(network.cidr);
-        
-        // Load routes if needed
-        if (targetType === 'route') {
-          setLoadingRoutes(true);
-          try {
-            const routesData = await api.getRoutes(networkId);
-            setRoutes(routesData);
-          } catch (error) {
-            console.error('Failed to load routes:', error);
-          } finally {
-            setLoadingRoutes(false);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to load network:', error);
-      }
-    };
-    
-    void loadData();
-  }, [targetType, networkId, isOpen]);
+    api.getNetwork(networkId)
+      .then(network => setNetworkCIDR(network.cidr))
+      .catch(err => console.error('Failed to load network:', err));
+  }, [isOpen, networkId]);
+
+  // Load routes whenever the user switches target type to "route"
+  useEffect(() => {
+    if (!isOpen || !networkId || targetType !== 'route') return;
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => {
+        if (!cancelled) setLoadingRoutes(true);
+        return api.getRoutes(networkId);
+      })
+      .then(routesData => {
+        if (!cancelled) setRoutes(routesData);
+      })
+      .catch(err => {
+        if (!cancelled) console.error('Failed to load routes:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRoutes(false);
+      });
+    return () => { cancelled = true; };
+  }, [isOpen, networkId, targetType]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

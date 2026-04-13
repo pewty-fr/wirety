@@ -289,7 +289,7 @@ curl -X POST "$API_URL/networks/$NETWORK_ID/policies/$POLICY_ID/rules" \
   -H "Content-Type: application/json" \
   -d '{
     "direction": "input",
-    "action": low",
+    "action": "allow",
     "target": "192.168.1.0/24",
     "target_type": "cidr",
     "description": "Allow from office network"
@@ -912,8 +912,8 @@ done
 
 - [API Reference](./api-reference.md) - Complete API documentation
 - [Migration Guide](./migration-guide.md) - Migrating from legacy system
-- [Architecture](./architecture.md) - System architecture overview
-- [Troubleshooting](./troubleshooting.md) - Detailed troubleshooting guide
+- Architecture - System architecture overview
+- Troubleshooting - Detailed troubleshooting guide
 
 ---
 

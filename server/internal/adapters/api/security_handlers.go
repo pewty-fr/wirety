@@ -195,8 +195,10 @@ type SecurityConfigResponse struct {
 	NetworkID                string `json:"network_id"`
 	Enabled                  bool   `json:"enabled"`
 	SessionConflictThreshold int64  `json:"session_conflict_threshold_minutes"` // Convert to minutes for frontend
-	EndpointChangeThreshold  int64  `json:"endpoint_change_threshold_minutes"`  // Convert to minutes for frontend
+	EndpointChangeThreshold  int64  `json:"endpoint_change_threshold_minutes"`  // IP-level change window, in minutes
 	MaxEndpointChangesPerDay int    `json:"max_endpoint_changes_per_day"`
+	PortChangeThreshold      int64  `json:"port_change_threshold_minutes"`     // Port-only (NAT rebind) window, in minutes
+	MaxPortChangesPerWindow  int    `json:"max_port_changes_per_window"`
 	CreatedAt                string `json:"created_at"`
 	UpdatedAt                string `json:"updated_at"`
 }
@@ -204,9 +206,11 @@ type SecurityConfigResponse struct {
 // SecurityConfigRequest represents the API request for security config
 type SecurityConfigRequest struct {
 	Enabled                  *bool  `json:"enabled,omitempty"`
-	SessionConflictThreshold *int64 `json:"session_conflict_threshold_minutes,omitempty"` // Accept minutes from frontend
-	EndpointChangeThreshold  *int64 `json:"endpoint_change_threshold_minutes,omitempty"`  // Accept minutes from frontend
+	SessionConflictThreshold *int64 `json:"session_conflict_threshold_minutes,omitempty"`
+	EndpointChangeThreshold  *int64 `json:"endpoint_change_threshold_minutes,omitempty"`
 	MaxEndpointChangesPerDay *int   `json:"max_endpoint_changes_per_day,omitempty"`
+	PortChangeThreshold      *int64 `json:"port_change_threshold_minutes,omitempty"`
+	MaxPortChangesPerWindow  *int   `json:"max_port_changes_per_window,omitempty"`
 }
 
 // convertToSecurityConfigResponse converts domain SecurityConfig to API response
@@ -218,6 +222,8 @@ func convertToSecurityConfigResponse(config *network.SecurityConfig) *SecurityCo
 		SessionConflictThreshold: int64(config.SessionConflictThreshold / time.Minute),
 		EndpointChangeThreshold:  int64(config.EndpointChangeThreshold / time.Minute),
 		MaxEndpointChangesPerDay: config.MaxEndpointChangesPerDay,
+		PortChangeThreshold:      int64(config.PortChangeThreshold / time.Minute),
+		MaxPortChangesPerWindow:  config.MaxPortChangesPerWindow,
 		CreatedAt:                config.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:                config.UpdatedAt.Format(time.RFC3339),
 	}
@@ -228,6 +234,7 @@ func convertFromSecurityConfigRequest(req *SecurityConfigRequest) *network.Secur
 	updateReq := &network.SecurityConfigUpdateRequest{
 		Enabled:                  req.Enabled,
 		MaxEndpointChangesPerDay: req.MaxEndpointChangesPerDay,
+		MaxPortChangesPerWindow:  req.MaxPortChangesPerWindow,
 	}
 
 	if req.SessionConflictThreshold != nil {
@@ -238,6 +245,11 @@ func convertFromSecurityConfigRequest(req *SecurityConfigRequest) *network.Secur
 	if req.EndpointChangeThreshold != nil {
 		threshold := time.Duration(*req.EndpointChangeThreshold) * time.Minute
 		updateReq.EndpointChangeThreshold = &threshold
+	}
+
+	if req.PortChangeThreshold != nil {
+		threshold := time.Duration(*req.PortChangeThreshold) * time.Minute
+		updateReq.PortChangeThreshold = &threshold
 	}
 
 	return updateReq
@@ -302,6 +314,14 @@ func (h *Handler) UpdateNetworkSecurityConfig(c *gin.Context) {
 	}
 	if req.MaxEndpointChangesPerDay != nil && (*req.MaxEndpointChangesPerDay < 1 || *req.MaxEndpointChangesPerDay > 1000) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Max endpoint changes per day must be between 1 and 1000"})
+		return
+	}
+	if req.PortChangeThreshold != nil && *req.PortChangeThreshold < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Port change threshold must be at least 1 minute"})
+		return
+	}
+	if req.MaxPortChangesPerWindow != nil && (*req.MaxPortChangesPerWindow < 1 || *req.MaxPortChangesPerWindow > 1000) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Max port changes per window must be between 1 and 1000"})
 		return
 	}
 

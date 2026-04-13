@@ -1,0 +1,42 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Postgres (Docker)",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "docker start -a wirety-postgres 2>/dev/null || docker run --name wirety-postgres -v wirety-postgres-data:/var/lib/postgresql/data -e POSTGRES_USER=wirety -e POSTGRES_PASSWORD=wirety -e POSTGRES_DB=wirety -p 5432:5432 postgres:16"
+      ],
+      "port": 5432
+    },
+    {
+      "name": "Frontend (Vite)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "front",
+      "port": 5173,
+      "autoPort": true
+    },
+    {
+      "name": "Server (Go)",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/main.go"],
+      "cwd": "server",
+      "port": 8080,
+      "env": {
+        "DB_ENABLED": "true",
+        "DB_DSN": "postgres://wirety:wirety@localhost:5432/wirety?sslmode=disable",
+        "KO_DATA_PATH": "cmd/kodata"
+      },
+      "dependsOn": ["Postgres (Docker)"]
+    },
+    {
+      "name": "Docs (Docusaurus)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start"],
+      "cwd": "doc",
+      "port": 3000
+    }
+  ]
+}

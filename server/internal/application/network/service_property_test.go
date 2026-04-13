@@ -97,6 +97,13 @@ func (m *mockAuthRepository) DeleteUserSessions(userID string) error {
 func (m *mockAuthRepository) CleanupExpiredSessions() error {
 	return nil
 }
+func (m *mockAuthRepository) CreateAPIToken(token *auth.APIToken) error          { return nil }
+func (m *mockAuthRepository) GetAPITokenByHash(hash string) (*auth.APIToken, error) {
+	return nil, fmt.Errorf("token not found")
+}
+func (m *mockAuthRepository) ListAPITokens(userID string) ([]*auth.APIToken, error) { return nil, nil }
+func (m *mockAuthRepository) DeleteAPIToken(tokenID string) error                   { return nil }
+func (m *mockAuthRepository) TouchAPIToken(tokenID string) error                    { return nil }
 
 type mockGroupRepository struct {
 	groups         map[string]*network.Group
@@ -491,6 +498,12 @@ func (m *mockFullRepository) DeleteCaptivePortalToken(ctx context.Context, token
 	return nil
 }
 func (m *mockFullRepository) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
+	return nil
+}
+func (m *mockFullRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error {
+	return nil
+}
+func (m *mockFullRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
 	return nil
 }
 

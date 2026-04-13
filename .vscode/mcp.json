@@ -1,0 +1,12 @@
+{
+	"servers": {
+		"Wirety": {
+			"url": "http://localhost:8080/mcp",
+			"type": "http",
+			"headers": {
+        "Authorization": "Bearer xxx"
+      }
+		}
+	},
+	"inputs": []
+}

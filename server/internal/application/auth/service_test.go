@@ -139,6 +139,16 @@ func (m *mockAuthRepository) CleanupExpiredSessions() error {
 	return nil
 }
 
+func (m *mockAuthRepository) CreateAPIToken(token *auth.APIToken) error        { return nil }
+func (m *mockAuthRepository) GetAPITokenByHash(hash string) (*auth.APIToken, error) {
+	return nil, fmt.Errorf("token not found")
+}
+func (m *mockAuthRepository) ListAPITokens(userID string) ([]*auth.APIToken, error) {
+	return nil, nil
+}
+func (m *mockAuthRepository) DeleteAPIToken(tokenID string) error { return nil }
+func (m *mockAuthRepository) TouchAPIToken(tokenID string) error  { return nil }
+
 func TestNewService(t *testing.T) {
 	cfg := &config.AuthConfig{
 		Enabled:      true,
@@ -341,7 +351,7 @@ func TestService_RefreshAccessToken_AuthDisabled(t *testing.T) {
 	repo := newMockAuthRepository()
 	service := NewService(cfg, repo)
 
-	_, _, err := service.RefreshAccessToken(context.Background(), "refresh-token")
+	_, _, _, err := service.RefreshAccessToken(context.Background(), "refresh-token")
 
 	if err == nil {
 		t.Error("Expected error when auth is disabled")

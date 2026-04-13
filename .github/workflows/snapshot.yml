@@ -14,10 +14,30 @@ on:
       - created
       - edited
 
+# Least-privilege: checkout is read-only; PR comments need write.
+# Secrets (SCW_SECRET_KEY) are scoped to Scaleway, not GitHub packages.
+permissions:
+  contents: read
+  pull-requests: write
+
+# SECURITY: trusted-collaborator guard.
+# All jobs check that the commenter is an OWNER, MEMBER, or COLLABORATOR so
+# that an external contributor cannot trigger privileged builds (which have
+# access to SCW_SECRET_KEY) by posting a comment on a PR that contains
+# attacker-controlled code.
+# The checked-out ref is still the PR branch, so the code must be treated as
+# untrusted — it is only executed in the build steps and never given access to
+# more secrets than the Scaleway registry token.
+
 jobs:
   helper:
     runs-on: ubuntu-latest
-    if: github.event.issue.pull_request && (github.event.comment.body == '/help')
+    if: |
+      github.event.issue.pull_request &&
+      github.event.comment.body == '/help' &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
     steps:
       - name: Update comment
         uses: peter-evans/create-or-update-comment@v5
@@ -36,7 +56,12 @@ jobs:
             `/snapshot` | Build & Push all components
   build-helm:
     runs-on: ubuntu-latest
-    if: github.event.issue.pull_request && (github.event.comment.body == '/snapshot helm' || github.event.comment.body == '/snapshot')
+    if: |
+      github.event.issue.pull_request &&
+      (github.event.comment.body == '/snapshot helm' || github.event.comment.body == '/snapshot') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
     steps:
       - uses: xt0rted/pull-request-comment-branch@v3
         id: comment_branch
@@ -69,7 +94,12 @@ jobs:
 
   build-agent:
     runs-on: ubuntu-latest
-    if: github.event.issue.pull_request && (github.event.comment.body == '/snapshot agent' || github.event.comment.body == '/snapshot')
+    if: |
+      github.event.issue.pull_request &&
+      (github.event.comment.body == '/snapshot agent' || github.event.comment.body == '/snapshot') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
     steps:
       - uses: xt0rted/pull-request-comment-branch@v3
         id: comment_branch
@@ -159,7 +189,12 @@ jobs:
 
   build-server:
     runs-on: ubuntu-latest
-    if: github.event.issue.pull_request && (github.event.comment.body == '/snapshot server' || github.event.comment.body == '/snapshot')
+    if: |
+      github.event.issue.pull_request &&
+      (github.event.comment.body == '/snapshot server' || github.event.comment.body == '/snapshot') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
     steps:
       - uses: xt0rted/pull-request-comment-branch@v3
         id: comment_branch
@@ -194,7 +229,12 @@ jobs:
 
   build-frontend:
     runs-on: ubuntu-latest
-    if: github.event.issue.pull_request && (github.event.comment.body == '/snapshot front' || github.event.comment.body == '/snapshot')
+    if: |
+      github.event.issue.pull_request &&
+      (github.event.comment.body == '/snapshot front' || github.event.comment.body == '/snapshot') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
     steps:
       - uses: xt0rted/pull-request-comment-branch@v3
         id: comment_branch
@@ -232,7 +272,12 @@ jobs:
 
   build-doc:
     runs-on: ubuntu-latest
-    if: github.event.issue.pull_request && (github.event.comment.body == '/snapshot doc' || github.event.comment.body == '/snapshot')
+    if: |
+      github.event.issue.pull_request &&
+      (github.event.comment.body == '/snapshot doc' || github.event.comment.body == '/snapshot') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
     steps:
       - uses: xt0rted/pull-request-comment-branch@v3
         id: comment_branch

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { AxiosInstance } from 'axios';
-import type { Network, Peer, IPAMAllocation, SecurityIncident, SecurityConfig, SecurityConfigUpdateRequest, User, PaginatedResponse, PeerSessionStatus, ACL, Group, Policy, PolicyRule, Route, DNSMapping } from '../types';
+import type { Network, Peer, IPAMAllocation, SecurityIncident, SecurityConfig, SecurityConfigUpdateRequest, User, PaginatedResponse, PeerSessionStatus, ACL, Group, Policy, PolicyRule, Route, DNSMapping, PeerReachability, APIToken } from '../types';
 
 class ApiClient {
   private client: AxiosInstance;
@@ -9,19 +9,49 @@ class ApiClient {
     const apiBaseUrl = '/api/v1';
     this.client = axios.create({
       baseURL: apiBaseUrl,
+      withCredentials: true, // send session cookie automatically
       headers: {
         'Content-Type': 'application/json',
       },
     });
 
-    // Add request interceptor to include session hash
-    this.client.interceptors.request.use((config) => {
-      const sessionHash = localStorage.getItem('session_hash');
-      if (sessionHash) {
-        config.headers.Authorization = `Session ${sessionHash}`;
+    // Redirect to login on 401 (session expired or not authenticated).
+    // Before redirecting, we verify the session via a direct fetch call (bypassing
+    // this interceptor) so that a transient 401 caused by an in-flight token refresh
+    // does not unnecessarily log the user out.  The server refreshes tokens
+    // transparently in its middleware, so a single retry is sufficient.
+    this.client.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+        if (error.response?.status === 401) {
+          // Avoid redirect loop if already on login / root page
+          if (window.location.pathname.startsWith('/login') || window.location.pathname === '/') {
+            return Promise.reject(error);
+          }
+
+          // Don't retry a request that is already a retry (avoids infinite loops)
+          if (error.config?._retry) {
+            window.location.href = '/?session_expired=1';
+            return Promise.reject(error);
+          }
+
+          try {
+            // Use native fetch to bypass this Axios interceptor
+            const verifyResp = await fetch('/api/v1/users/me', { credentials: 'include' });
+            if (verifyResp.ok) {
+              // Session is valid (server refreshed the token) — retry original request once
+              error.config._retry = true;
+              return this.client.request(error.config);
+            }
+          } catch {
+            // Network error — fall through to redirect
+          }
+
+          window.location.href = '/?session_expired=1';
+        }
+        return Promise.reject(error);
       }
-      return config;
-    });
+    );
   }
 
   // Networks
@@ -145,6 +175,11 @@ class ApiClient {
 
   async deletePeer(networkId: string, peerId: string): Promise<void> {
     await this.client.delete(`/networks/${networkId}/peers/${peerId}`);
+  }
+
+  async getPeerReachability(networkId: string, peerId: string): Promise<PeerReachability> {
+    const response = await this.client.get(`/networks/${networkId}/peers/${peerId}/reachability`);
+    return response.data;
   }
 
   async getPeerConfig(networkId: string, peerId: string): Promise<string> {
@@ -490,6 +525,21 @@ class ApiClient {
   async getNetworkDNSRecords(networkId: string): Promise<DNSMapping[]> {
     const response = await this.client.get(`/networks/${networkId}/dns`);
     return response.data;
+  }
+
+  // API Tokens
+  async listAPITokens(): Promise<APIToken[]> {
+    const response = await this.client.get('/users/me/tokens');
+    return response.data ?? [];
+  }
+
+  async createAPIToken(data: { name: string; expires_at?: string }): Promise<APIToken> {
+    const response = await this.client.post('/users/me/tokens', data);
+    return response.data;
+  }
+
+  async deleteAPIToken(tokenId: string): Promise<void> {
+    await this.client.delete(`/users/me/tokens/${tokenId}`);
   }
 }
 

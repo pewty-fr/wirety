@@ -43,15 +43,17 @@ Wirety is a **next-generation WireGuard orchestration platform** that brings dyn
 | **📡 DNS Resolution** | Built-in DNS server for peer name resolution |
 | **🔥 NAT & Firewall** | Automatic NAT configuration and firewall rules |
 | **📊 Real-time Monitoring** | WebSocket-based live network status |
-| **🔐 Enterprise Auth** | OIDC/OAuth2 support (Keycloak, Dex, etc.) |
+| **🔐 Enterprise Auth** | OIDC/OAuth2 support (Keycloak, Dex, etc.) or simple admin/password auth |
 | **🌐 Captive Portal** | Web-based authentication for basic WireGuard peers with internet access control |
+| **🔑 API Tokens** | Long-lived personal access tokens for scripting, CI/CD, and MCP integration |
+| **🤖 MCP Server** | Model Context Protocol server at `/mcp` for AI assistant integration (Claude, etc.) |
 
 ### Security Features
 
 - ✅ **Session Conflict Detection** - Identifies compromised credentials
 - ✅ **Suspicious Activity Alerts** - Detects unusual peer behavior
 - ✅ **Automatic ACL Updates** - Blocks malicious peers in real-time
-- ✅ **Audit Trail** - Complete security incident history
+- ✅ **Audit Logs** - Structured JSON audit trail (server + agent, enable with `AUDIT_LOG=true`)
 - ✅ **Manual Resolution** - Review and approve security actions
 
 ## 🏗️ Architecture
@@ -196,6 +198,8 @@ Configure the Wirety server with these environment variables:
 | `DB_ENABLED` | Enable database persistence | `false` | No |
 | `DB_DSN` | PostgreSQL connection string | `postgres://...` | If DB enabled |
 | `DB_MIGRATIONS_DIR` | Database migrations path | `internal/adapters/db/postgres/migrations` | No |
+| `AUTH_PASSWORD` | Admin password for simple auth mode | auto-generated (logged at startup) | No |
+| `AUDIT_LOG` | Enable structured JSON audit logging | `false` | No |
 
 **Example with OIDC:**
 

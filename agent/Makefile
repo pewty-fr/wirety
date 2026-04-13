@@ -73,6 +73,15 @@ docker-push: ## Push docker images to registry
 test: ## Run tests
 	$(GO) test -count=1 $(PKG)
 
+test-integration: ## Run iptables integration tests (requires root / NET_ADMIN)
+	sudo env "PATH=$$PATH" $(GO) test -v -tags integration ./internal/adapters/firewall/...
+
+test-integration-docker: ## Run iptables integration tests in Docker (no local root needed)
+	docker run --rm --cap-add=NET_ADMIN --cap-add=NET_RAW \
+		-v $(CURDIR):/workspace -w /workspace \
+		golang:1.25 \
+		sh -c "apt-get update -qq && apt-get install -y -qq iptables && go test -v -tags integration ./internal/adapters/firewall/..."
+
 lint: ## Vet packages
 	$(GO) vet $(PKG)
 	golangci-lint run || true

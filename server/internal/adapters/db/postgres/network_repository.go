@@ -87,7 +87,7 @@ func (r *NetworkRepository) UpdateNetwork(ctx context.Context, n *network.Networ
 	if n.DNS == nil {
 		n.DNS = []string{}
 	}
-	_, err := r.db.ExecContext(ctx, `UPDATE networks SET name=$2,cidr=$3,dns=$4,updated_at=$5 WHERE id=$1`, n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `UPDATE networks SET name=$2,cidr=$3,dns=$4,updated_at=$5,domain_suffix=$6 WHERE id=$1`, n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.UpdatedAt, n.DomainSuffix)
 	if err != nil {
 		return fmt.Errorf("update network: %w", err)
 	}
@@ -583,14 +583,21 @@ func (r *NetworkRepository) ResolveSecurityIncident(ctx context.Context, inciden
 	return nil
 }
 
+// CaptivePortalWhitelistTTL is how long a whitelist entry remains valid after authentication.
+// After this duration the peer must re-authenticate via the captive portal.
+const CaptivePortalWhitelistTTL = 24 * time.Hour
+
 // Captive portal whitelist operations
 
 func (r *NetworkRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+	now := time.Now()
+	expiresAt := now.Add(CaptivePortalWhitelistTTL)
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, created_at)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (network_id, jump_peer_id, peer_ip) DO NOTHING
-	`, networkID, jumpPeerID, peerIP, time.Now())
+		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (network_id, jump_peer_id, peer_ip)
+		DO UPDATE SET expires_at = EXCLUDED.expires_at
+	`, networkID, jumpPeerID, peerIP, now, expiresAt)
 	return err
 }
 
@@ -602,10 +609,21 @@ func (r *NetworkRepository) RemoveCaptivePortalWhitelist(ctx context.Context, ne
 	return err
 }
 
+// RemoveCaptivePortalWhitelistByPeerIP removes all whitelist entries for a peer IP across
+// all jump peers in the network. Used when a security incident is detected (e.g. stolen config).
+func (r *NetworkRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_whitelist
+		WHERE network_id=$1 AND peer_ip=$2
+	`, networkID, peerIP)
+	return err
+}
+
 func (r *NetworkRepository) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT peer_ip FROM captive_portal_whitelist
 		WHERE network_id=$1 AND jump_peer_id=$2
+		  AND (expires_at IS NULL OR expires_at > NOW())
 		ORDER BY created_at ASC
 	`, networkID, jumpPeerID)
 	if err != nil {
@@ -631,6 +649,14 @@ func (r *NetworkRepository) ClearCaptivePortalWhitelist(ctx context.Context, net
 		DELETE FROM captive_portal_whitelist
 		WHERE network_id=$1 AND jump_peer_id=$2
 	`, networkID, jumpPeerID)
+	return err
+}
+
+func (r *NetworkRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_whitelist
+		WHERE expires_at IS NOT NULL AND expires_at < NOW()
+	`)
 	return err
 }
 
@@ -683,9 +709,9 @@ func (r *NetworkRepository) CreateSecurityConfig(ctx context.Context, networkID 
 	config.UpdatedAt = time.Now()
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO security_configs (id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, config.ID, config.NetworkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.CreatedAt, config.UpdatedAt)
+		INSERT INTO security_configs (id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, port_change_threshold, max_port_changes_per_window, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, config.ID, config.NetworkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.PortChangeThreshold, config.MaxPortChangesPerWindow, config.CreatedAt, config.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create security config: %w", err)
 	}
@@ -696,10 +722,10 @@ func (r *NetworkRepository) CreateSecurityConfig(ctx context.Context, networkID 
 func (r *NetworkRepository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
 	var config network.SecurityConfig
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, created_at, updated_at
+		SELECT id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, port_change_threshold, max_port_changes_per_window, created_at, updated_at
 		FROM security_configs
 		WHERE network_id = $1
-	`, networkID).Scan(&config.ID, &config.NetworkID, &config.Enabled, &config.SessionConflictThreshold, &config.EndpointChangeThreshold, &config.MaxEndpointChangesPerDay, &config.CreatedAt, &config.UpdatedAt)
+	`, networkID).Scan(&config.ID, &config.NetworkID, &config.Enabled, &config.SessionConflictThreshold, &config.EndpointChangeThreshold, &config.MaxEndpointChangesPerDay, &config.PortChangeThreshold, &config.MaxPortChangesPerWindow, &config.CreatedAt, &config.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("security config not found")
@@ -715,9 +741,9 @@ func (r *NetworkRepository) UpdateSecurityConfig(ctx context.Context, networkID 
 
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE security_configs
-		SET enabled = $2, session_conflict_threshold = $3, endpoint_change_threshold = $4, max_endpoint_changes_per_day = $5, updated_at = $6
+		SET enabled = $2, session_conflict_threshold = $3, endpoint_change_threshold = $4, max_endpoint_changes_per_day = $5, port_change_threshold = $6, max_port_changes_per_window = $7, updated_at = $8
 		WHERE network_id = $1
-	`, networkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.UpdatedAt)
+	`, networkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.PortChangeThreshold, config.MaxPortChangesPerWindow, config.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update security config: %w", err)
 	}

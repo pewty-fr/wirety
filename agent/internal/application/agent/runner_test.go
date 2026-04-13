@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/json"
+	net_http "net/http"
+	"sync"
 	"testing"
 	"time"
 	dom "wirety/agent/internal/domain/dns"
@@ -21,7 +23,7 @@ type mockWebSocketClient struct {
 	writeErr   error
 }
 
-func (m *mockWebSocketClient) Connect(url string) error {
+func (m *mockWebSocketClient) Connect(url string, _ net_http.Header) error {
 	if m.connectErr != nil {
 		return m.connectErr
 	}
@@ -58,6 +60,7 @@ func (m *mockWebSocketClient) Close() error {
 }
 
 type mockConfigWriter struct {
+	mu            sync.Mutex
 	config        string
 	interfaceName string
 	applied       bool
@@ -69,6 +72,8 @@ func (m *mockConfigWriter) WriteAndApply(cfg string) error {
 	if m.writeErr != nil {
 		return m.writeErr
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.config = cfg
 	m.applied = true
 	return nil
@@ -78,15 +83,32 @@ func (m *mockConfigWriter) UpdateInterface(newInterface string) error {
 	if m.updateErr != nil {
 		return m.updateErr
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.interfaceName = newInterface
 	return nil
 }
 
 func (m *mockConfigWriter) GetInterface() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.interfaceName
 }
 
+func (m *mockConfigWriter) Applied() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.applied
+}
+
+func (m *mockConfigWriter) Config() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.config
+}
+
 type mockDNSServer struct {
+	mu              sync.Mutex
 	addr            string
 	domain          string
 	peers           []dom.DNSPeer
@@ -99,21 +121,46 @@ func (m *mockDNSServer) Start(addr string) error {
 	if m.startErr != nil {
 		return m.startErr
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.addr = addr
 	m.started = true
 	return nil
 }
 
 func (m *mockDNSServer) Update(domain string, peers []dom.DNSPeer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.domain = domain
 	m.peers = peers
 }
 
 func (m *mockDNSServer) SetUpstreamServers(servers []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.upstreamServers = servers
 }
 
+func (m *mockDNSServer) Domain() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.domain
+}
+
+func (m *mockDNSServer) Peers() []dom.DNSPeer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.peers
+}
+
+func (m *mockDNSServer) UpstreamServers() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.upstreamServers
+}
+
 type mockFirewall struct {
+	mu             sync.Mutex
 	policy         *pol.JumpPolicy
 	selfIP         string
 	whitelistedIPs []string
@@ -127,6 +174,8 @@ func (m *mockFirewall) Sync(policy *pol.JumpPolicy, selfIP string, whitelistedIP
 	if m.syncErr != nil {
 		return m.syncErr
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.policy = policy
 	m.selfIP = selfIP
 	m.whitelistedIPs = whitelistedIPs
@@ -135,8 +184,28 @@ func (m *mockFirewall) Sync(policy *pol.JumpPolicy, selfIP string, whitelistedIP
 }
 
 func (m *mockFirewall) SetProxyPorts(httpPort, httpsPort int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.httpPort = httpPort
 	m.httpsPort = httpsPort
+}
+
+func (m *mockFirewall) Synced() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.synced
+}
+
+func (m *mockFirewall) Policy() *pol.JumpPolicy {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.policy
+}
+
+func (m *mockFirewall) WhitelistedIPs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.whitelistedIPs
 }
 
 func TestNewRunner(t *testing.T) {
@@ -145,7 +214,7 @@ func TestNewRunner(t *testing.T) {
 	dnsServer := &mockDNSServer{}
 	fwAdapter := &mockFirewall{}
 
-	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0")
+	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0", "", "")
 
 	if runner.wsClient != wsClient {
 		t.Error("Expected wsClient to be set")
@@ -369,7 +438,7 @@ func TestProcessWSMessage(t *testing.T) {
 	dnsServer := &mockDNSServer{}
 	fwAdapter := &mockFirewall{}
 
-	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0")
+	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0", "", "")
 
 	// Create a test message
 	msg := WSMessage{
@@ -405,40 +474,40 @@ func TestProcessWSMessage(t *testing.T) {
 	close(stop)
 
 	// Verify config was applied
-	if !writer.applied {
+	if !writer.Applied() {
 		t.Error("Expected config to be applied")
 	}
 
-	if writer.config != msg.Config {
-		t.Errorf("Expected config '%s', got '%s'", msg.Config, writer.config)
+	if writer.Config() != msg.Config {
+		t.Errorf("Expected config '%s', got '%s'", msg.Config, writer.Config())
 	}
 
 	// Verify DNS server was updated
-	if dnsServer.domain != "example.com" {
-		t.Errorf("Expected DNS domain 'example.com', got '%s'", dnsServer.domain)
+	if dnsServer.Domain() != "example.com" {
+		t.Errorf("Expected DNS domain 'example.com', got '%s'", dnsServer.Domain())
 	}
 
-	if len(dnsServer.peers) != 1 {
-		t.Errorf("Expected 1 DNS peer, got %d", len(dnsServer.peers))
+	if len(dnsServer.Peers()) != 1 {
+		t.Errorf("Expected 1 DNS peer, got %d", len(dnsServer.Peers()))
 	}
 
-	if len(dnsServer.upstreamServers) != 2 {
-		t.Errorf("Expected 2 upstream servers, got %d", len(dnsServer.upstreamServers))
+	if len(dnsServer.UpstreamServers()) != 2 {
+		t.Errorf("Expected 2 upstream servers, got %d", len(dnsServer.UpstreamServers()))
 	}
 
 	// Verify firewall was synced
-	if !fwAdapter.synced {
+	if !fwAdapter.Synced() {
 		t.Error("Expected firewall to be synced")
 	}
 
-	if fwAdapter.policy == nil {
+	if fwAdapter.Policy() == nil {
 		t.Error("Expected firewall policy to be set")
-	} else if fwAdapter.policy.IP != msg.Policy.IP {
-		t.Errorf("Expected firewall policy IP '%s', got '%s'", msg.Policy.IP, fwAdapter.policy.IP)
+	} else if fwAdapter.Policy().IP != msg.Policy.IP {
+		t.Errorf("Expected firewall policy IP '%s', got '%s'", msg.Policy.IP, fwAdapter.Policy().IP)
 	}
 
-	if len(fwAdapter.whitelistedIPs) != 1 {
-		t.Errorf("Expected 1 whitelisted IP, got %d", len(fwAdapter.whitelistedIPs))
+	if len(fwAdapter.WhitelistedIPs()) != 1 {
+		t.Errorf("Expected 1 whitelisted IP, got %d", len(fwAdapter.WhitelistedIPs()))
 	}
 }
 
@@ -448,7 +517,7 @@ func TestProcessWSMessageWithErrors(t *testing.T) {
 	dnsServer := &mockDNSServer{}
 	fwAdapter := &mockFirewall{syncErr: &mockError{"sync failed"}}
 
-	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0")
+	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0", "", "")
 
 	// Create a test message
 	msg := WSMessage{
@@ -476,12 +545,12 @@ func TestProcessWSMessageWithErrors(t *testing.T) {
 
 	// Verify that errors don't prevent processing
 	// Config write should have been attempted despite error
-	if writer.applied {
+	if writer.Applied() {
 		t.Error("Expected config not to be applied due to error")
 	}
 
 	// Firewall sync should have been attempted despite error
-	if fwAdapter.synced {
+	if fwAdapter.Synced() {
 		t.Error("Expected firewall not to be synced due to error")
 	}
 }
@@ -494,7 +563,7 @@ func TestStartWithConnectionError(t *testing.T) {
 	dnsServer := &mockDNSServer{}
 	fwAdapter := &mockFirewall{}
 
-	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0")
+	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0", "", "")
 
 	// Start runner in a goroutine and stop it quickly
 	stop := make(chan struct{})

@@ -223,3 +223,91 @@ func (r *UserRepository) CleanupExpiredSessions() error {
 	}
 	return nil
 }
+
+// API token methods
+
+func (r *UserRepository) CreateAPIToken(token *auth.APIToken) error {
+	now := time.Now()
+	token.CreatedAt = now
+	_, err := r.db.Exec(
+		`INSERT INTO api_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		token.ID, token.UserID, token.Name, token.TokenHash, token.CreatedAt, token.ExpiresAt, token.LastUsedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("create api token: %w", err)
+	}
+	return nil
+}
+
+func (r *UserRepository) GetAPITokenByHash(hash string) (*auth.APIToken, error) {
+	var t auth.APIToken
+	var expiresAt sql.NullTime
+	var lastUsedAt sql.NullTime
+	err := r.db.QueryRow(
+		`SELECT id, user_id, name, token_hash, created_at, expires_at, last_used_at
+		 FROM api_tokens WHERE token_hash = $1`, hash,
+	).Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.CreatedAt, &expiresAt, &lastUsedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("api token not found")
+		}
+		return nil, fmt.Errorf("get api token: %w", err)
+	}
+	if expiresAt.Valid {
+		t.ExpiresAt = &expiresAt.Time
+	}
+	if lastUsedAt.Valid {
+		t.LastUsedAt = &lastUsedAt.Time
+	}
+	return &t, nil
+}
+
+func (r *UserRepository) ListAPITokens(userID string) ([]*auth.APIToken, error) {
+	rows, err := r.db.Query(
+		`SELECT id, user_id, name, token_hash, created_at, expires_at, last_used_at
+		 FROM api_tokens WHERE user_id = $1 ORDER BY created_at ASC`, userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list api tokens: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*auth.APIToken
+	for rows.Next() {
+		var t auth.APIToken
+		var expiresAt sql.NullTime
+		var lastUsedAt sql.NullTime
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.CreatedAt, &expiresAt, &lastUsedAt); err != nil {
+			return nil, err
+		}
+		if expiresAt.Valid {
+			t.ExpiresAt = &expiresAt.Time
+		}
+		if lastUsedAt.Valid {
+			t.LastUsedAt = &lastUsedAt.Time
+		}
+		out = append(out, &t)
+	}
+	return out, rows.Err()
+}
+
+func (r *UserRepository) DeleteAPIToken(tokenID string) error {
+	res, err := r.db.Exec(`DELETE FROM api_tokens WHERE id = $1`, tokenID)
+	if err != nil {
+		return fmt.Errorf("delete api token: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("api token not found")
+	}
+	return nil
+}
+
+func (r *UserRepository) TouchAPIToken(tokenID string) error {
+	_, err := r.db.Exec(`UPDATE api_tokens SET last_used_at = NOW() WHERE id = $1`, tokenID)
+	if err != nil {
+		return fmt.Errorf("touch api token: %w", err)
+	}
+	return nil
+}

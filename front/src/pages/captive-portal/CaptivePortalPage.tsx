@@ -7,7 +7,7 @@ import { faWifi, faShieldAlt, faCheckCircle, faExclamationTriangle } from '@fort
 export default function CaptivePortalPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { login, user, isAuthenticated } = useAuth();
+  const { login, logout, user, isAuthenticated } = useAuth();
   const [status, setStatus] = useState<'initial' | 'authenticating' | 'success' | 'error'>('initial');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -21,22 +21,17 @@ export default function CaptivePortalPage() {
     setStatus('authenticating');
 
     try {
-      // Get the user's session hash (access token)
-      const sessionHash = localStorage.getItem('session_hash');
-      if (!sessionHash) {
-        throw new Error('No session found');
-      }
-
-      // Send authentication request to server
-      // The peer IP is already embedded in the captive_token
+      // Send authentication request to server.
+      // The session is validated server-side via the wirety_session cookie.
+      // The peer IP is already embedded in the captive_token.
       const response = await fetch('/api/v1/captive-portal/authenticate', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           captive_token: captiveToken,
-          session_hash: sessionHash,
         }),
       });
 
@@ -47,14 +42,13 @@ export default function CaptivePortalPage() {
 
       setStatus('success');
 
-      // Redirect after a short delay
+      // DNS TTL for intercepted internal domains is 1 s, so by the time this
+      // timer fires the browser will re-resolve to the real service IP.
       setTimeout(() => {
         if (redirectUrl) {
-          window.location.href = redirectUrl;
-        } else {
-          window.location.href = 'http://example.com';
+          window.location.replace(redirectUrl);
         }
-      }, 2000);
+      }, 1500);
     } catch (error) {
       console.error('Captive portal authentication error:', error);
       setStatus('error');
@@ -99,11 +93,25 @@ export default function CaptivePortalPage() {
             <FontAwesomeIcon icon={faCheckCircle} className="text-6xl text-green-500 mb-4" />
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Access Granted!</h1>
             <p className="text-gray-600 dark:text-gray-400 mb-4">
-              You now have internet access through this network.
+              You now have access to this network.
             </p>
-            <p className="text-sm text-gray-500 dark:text-gray-500">
-              Redirecting you to your destination...
-            </p>
+            {redirectUrl ? (
+              <>
+                <p className="text-sm text-gray-500 dark:text-gray-500 mb-3">
+                  Redirecting you to your destination…
+                </p>
+                <a
+                  href={redirectUrl}
+                  className="text-sm text-green-600 dark:text-green-400 underline"
+                >
+                  Click here if not redirected automatically.
+                </a>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-500">
+                You can now close this tab and access the network.
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -120,12 +128,21 @@ export default function CaptivePortalPage() {
             <p className="text-gray-600 dark:text-gray-400 mb-4">
               {errorMessage}
             </p>
-            <button
-              onClick={() => navigate('/dashboard')}
-              className="btn-brand"
-            >
-              Go to Dashboard
-            </button>
+            {errorMessage.includes('belongs to another user') ? (
+              <button
+                onClick={() => { logout(); window.location.reload(); }}
+                className="btn-brand"
+              >
+                Sign in with a different account
+              </button>
+            ) : (
+              <button
+                onClick={() => navigate('/dashboard')}
+                className="btn-brand"
+              >
+                Go to Dashboard
+              </button>
+            )}
           </div>
         </div>
       </div>

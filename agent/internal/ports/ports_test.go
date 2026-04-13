@@ -1,6 +1,7 @@
 package ports
 
 import (
+	"net/http"
 	"testing"
 
 	dom "wirety/agent/internal/domain/dns"
@@ -63,7 +64,7 @@ type mockWebSocketClient struct {
 	closed    bool
 }
 
-func (m *mockWebSocketClient) Connect(url string) error {
+func (m *mockWebSocketClient) Connect(url string, _ http.Header) error {
 	m.url = url
 	m.connected = true
 	return nil
@@ -192,7 +193,7 @@ func TestWebSocketClientPort(t *testing.T) {
 	var port WebSocketClientPort = &mockWebSocketClient{}
 
 	// Test Connect
-	err := port.Connect("ws://localhost:8080")
+	err := port.Connect("ws://localhost:8080", nil)
 	if err != nil {
 		t.Errorf("Connect failed: %v", err)
 	}

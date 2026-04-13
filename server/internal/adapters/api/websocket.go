@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 
 	"wirety/internal/application/network"
@@ -18,6 +19,15 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+}
+
+// extractBearerToken extracts a token from "Authorization: Bearer <token>" header.
+func extractBearerToken(c *gin.Context) string {
+	header := c.GetHeader("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		return ""
+	}
+	return strings.TrimPrefix(header, "Bearer ")
 }
 
 // WebSocketManager manages WebSocket connections for peer configuration updates
@@ -124,11 +134,11 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 	}
 }
 
-// HandleWebSocketToken handles WebSocket connections authenticated by enrollment token (?token=...)
+// HandleWebSocketToken handles WebSocket connections authenticated by enrollment token (Authorization: Bearer <token>)
 func (h *Handler) HandleWebSocketToken(c *gin.Context) {
-	token := c.Query("token")
+	token := extractBearerToken(c)
 	if token == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "token required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Authorization: Bearer <token> header required"})
 		return
 	}
 	networkID, peer, err := h.service.ResolveAgentToken(c.Request.Context(), token)

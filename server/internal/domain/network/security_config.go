@@ -5,14 +5,24 @@ import (
 	"time"
 )
 
-// SecurityConfig represents the configurable security settings for a network
+// SecurityConfig represents the configurable security settings for a network.
+//
+// Endpoint-change detection uses a two-tier model:
+//   - IP-level changes (different source IP): strong signal of a shared WireGuard
+//     private key being used by multiple machines.  Controlled by
+//     EndpointChangeThreshold / MaxEndpointChangesPerDay.  Triggers quarantine.
+//   - Port-only changes (same IP, different port): normal NAT rebinding behaviour.
+//     Controlled by PortChangeThreshold / MaxPortChangesPerWindow.  Creates an
+//     informational incident only — does NOT quarantine the peer.
 type SecurityConfig struct {
 	ID                       string        `json:"id"`
 	NetworkID                string        `json:"network_id"`
 	Enabled                  bool          `json:"enabled"`                      // Master toggle for security incident detection
 	SessionConflictThreshold time.Duration `json:"session_conflict_threshold"`   // Time window to consider sessions as conflicting
-	EndpointChangeThreshold  time.Duration `json:"endpoint_change_threshold"`    // Minimum time between endpoint changes to not be suspicious
-	MaxEndpointChangesPerDay int           `json:"max_endpoint_changes_per_day"` // Maximum number of endpoint changes per day before flagging as suspicious
+	EndpointChangeThreshold  time.Duration `json:"endpoint_change_threshold"`    // Window to detect IP-level changes (shared config detection)
+	MaxEndpointChangesPerDay int           `json:"max_endpoint_changes_per_day"` // Maximum number of IP-level endpoint changes per day
+	PortChangeThreshold      time.Duration `json:"port_change_threshold"`        // Window to detect port-only changes (NAT rebinding)
+	MaxPortChangesPerWindow  int           `json:"max_port_changes_per_window"`  // Max port-only changes within window before flagging
 	CreatedAt                time.Time     `json:"created_at"`
 	UpdatedAt                time.Time     `json:"updated_at"`
 }
@@ -23,6 +33,8 @@ type SecurityConfigUpdateRequest struct {
 	SessionConflictThreshold *time.Duration `json:"session_conflict_threshold,omitempty"`
 	EndpointChangeThreshold  *time.Duration `json:"endpoint_change_threshold,omitempty"`
 	MaxEndpointChangesPerDay *int           `json:"max_endpoint_changes_per_day,omitempty"`
+	PortChangeThreshold      *time.Duration `json:"port_change_threshold,omitempty"`
+	MaxPortChangesPerWindow  *int           `json:"max_port_changes_per_window,omitempty"`
 }
 
 // DefaultSecurityConfig returns the default security configuration
@@ -30,8 +42,10 @@ func DefaultSecurityConfig() *SecurityConfig {
 	return &SecurityConfig{
 		Enabled:                  true,
 		SessionConflictThreshold: 5 * time.Minute,
-		EndpointChangeThreshold:  30 * time.Minute,
+		EndpointChangeThreshold:  5 * time.Minute,
 		MaxEndpointChangesPerDay: 10,
+		PortChangeThreshold:      5 * time.Minute,
+		MaxPortChangesPerWindow:  5,
 	}
 }
 
@@ -46,6 +60,12 @@ func (c *SecurityConfig) Validate() error {
 	if c.MaxEndpointChangesPerDay < 1 || c.MaxEndpointChangesPerDay > 1000 {
 		return errors.New("max endpoint changes per day must be between 1 and 1000")
 	}
+	if c.PortChangeThreshold < time.Minute {
+		return errors.New("port change threshold must be at least 1 minute")
+	}
+	if c.MaxPortChangesPerWindow < 1 || c.MaxPortChangesPerWindow > 1000 {
+		return errors.New("max port changes per window must be between 1 and 1000")
+	}
 	return nil
 }
 
@@ -59,6 +79,12 @@ func (r *SecurityConfigUpdateRequest) Validate() error {
 	}
 	if r.MaxEndpointChangesPerDay != nil && (*r.MaxEndpointChangesPerDay < 1 || *r.MaxEndpointChangesPerDay > 1000) {
 		return errors.New("max endpoint changes per day must be between 1 and 1000")
+	}
+	if r.PortChangeThreshold != nil && *r.PortChangeThreshold < time.Minute {
+		return errors.New("port change threshold must be at least 1 minute")
+	}
+	if r.MaxPortChangesPerWindow != nil && (*r.MaxPortChangesPerWindow < 1 || *r.MaxPortChangesPerWindow > 1000) {
+		return errors.New("max port changes per window must be between 1 and 1000")
 	}
 	return nil
 }
