@@ -19,7 +19,7 @@ frontend:
   image:
     pullPolicy: IfNotPresent
     repository: rg.fr-par.scw.cloud/wirety/front
-    tag: 2026-04-02T13-07-53Z-SNAPSHOT
+    tag: v2.1.0
   # livenessProbe:
   #   httpGet:
   #     path: /
@@ -73,7 +73,7 @@ server:
   image:
     pullPolicy: IfNotPresent
     repository: rg.fr-par.scw.cloud/wirety/server
-    tag: 2026-04-02T14-18-21Z-SNAPSHOT
+    tag: v2.1.0
   livenessProbe:
     httpGet:
       path: /api/v1/health
