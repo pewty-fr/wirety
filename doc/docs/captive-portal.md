@@ -323,9 +323,14 @@ The captive portal firewall rules depend on two kernel modules:
 | Module | Purpose |
 |--------|---------|
 | `nf_conntrack` | Conntrack state matching — allows ongoing TCP sessions to pass without re-checking every packet |
-| `xt_string` | Payload string matching — SNI / Host-header vhost isolation |
+| `nft_compat` | xtables compatibility layer for `iptables-nft` — allows `xt_string` to be used through the nf_tables backend. No-op on legacy iptables. |
+| `xt_string` | Payload string matching — SNI / Host-header vhost isolation. Works on both legacy iptables and `iptables-nft` (via `nft_compat`). |
 
 **The agent loads these automatically at startup** via `modprobe`. No manual action is required on most systems — the modules ship with the kernel on all mainstream distros (Debian, Ubuntu, RHEL, Alpine).
+
+:::info iptables-nft
+On modern Debian/Ubuntu systems `iptables` is `iptables-nft` by default. The `nft_compat` module bridges the xtables extension interface into nftables, making `xt_string` available on both backends. If `nft_compat` or `xt_string` cannot be loaded, the agent falls back to port-only filtering automatically.
+:::
 
 If a module fails to load, the agent logs a warning and continues with degraded behaviour:
 

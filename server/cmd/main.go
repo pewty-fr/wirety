@@ -53,12 +53,11 @@ import (
 //	@description				Type "Bearer" followed by a space and JWT token.
 
 func main() {
-	// Configure zerolog
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-
-	// Load configuration
+	// Load configuration first so log settings are available immediately.
 	cfg := config.LoadConfig()
+
+	// Configure zerolog level and format.
+	configureLogger(cfg.LogLevel, cfg.LogFormat)
 
 	// Initialize audit logger
 	audit.Init(cfg.AuditLog)
@@ -253,6 +252,25 @@ func generateAdminPassword() string {
 		log.Fatal().Err(err).Msg("Failed to generate admin password")
 	}
 	return hex.EncodeToString(b)
+}
+
+// configureLogger sets the global zerolog level and output format.
+// level: trace|debug|info|warn|error|fatal (default: info)
+// format: json|text (default: text — coloured console writer)
+func configureLogger(level, format string) {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
+	lvl, err := zerolog.ParseLevel(level)
+	if err != nil {
+		lvl = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(lvl)
+
+	if format == "json" {
+		log.Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+	} else {
+		log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+	}
 }
 
 // ctxWithLog creates a basic context for db operations (placeholder for structured contexts)

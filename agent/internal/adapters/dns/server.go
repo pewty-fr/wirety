@@ -35,7 +35,13 @@ type Server struct {
 	upstreamServers []string // Upstream DNS servers for forwarding
 	captivePortalIP string   // WireGuard IP of this jump peer; when set, probe domains resolve here
 	isAuthenticated func(peerIP string) bool
-	mu              sync.RWMutex
+	// redirectExclusions is the set of hostnames that must always resolve to
+	// their real peer IP even for unauthenticated peers — typically the Wirety
+	// server and captive portal page hostnames. Without these exclusions the
+	// captive portal redirect URL itself would resolve to the captive portal IP,
+	// causing an infinite redirect loop.
+	redirectExclusions map[string]struct{}
+	mu                 sync.RWMutex
 }
 
 func NewServer(domain string, peers []dom.DNSPeer) *Server {
@@ -72,6 +78,21 @@ func (s *Server) SetAuthChecker(fn func(peerIP string) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.isAuthenticated = fn
+}
+
+// SetRedirectExclusions sets the hostnames that must always resolve to their real
+// peer IP, even for unauthenticated peers. Use this to exclude the Wirety server
+// hostname and captive portal page hostname so that the redirect target URL itself
+// is reachable — otherwise the portal redirect URL resolves to the captive portal
+// IP and causes an infinite redirect loop.
+func (s *Server) SetRedirectExclusions(hosts []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.redirectExclusions = make(map[string]struct{}, len(hosts))
+	for _, h := range hosts {
+		s.redirectExclusions[h] = struct{}{}
+	}
+	log.Info().Strs("exclusions", hosts).Msg("DNS: redirect exclusions updated")
 }
 
 // SetUpstreamServers sets the upstream DNS servers for forwarding
@@ -115,6 +136,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.mu.RLock()
 	portalIP := s.captivePortalIP
 	authFn := s.isAuthenticated
+	exclusions := s.redirectExclusions
 	s.mu.RUnlock()
 
 	// Is this peer unauthenticated and should internal domains be redirected?
@@ -146,11 +168,17 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 			resolvedIP := realIP
 			ttl := uint32(60)
-			if redirectInternal {
+			// Redirect unauthenticated peers to captive portal IP, unless this
+			// hostname is excluded (e.g. the portal hostname itself or the Wirety
+			// server hostname). Without the exclusion, the redirect target URL
+			// would also resolve to the captive portal IP, causing an infinite
+			// redirect loop.
+			_, isExcluded := exclusions[name]
+			if redirectInternal && !isExcluded {
 				log.Debug().Str("domain", name).Str("peer", peerIP).Str("real_ip", realIP).Str("portal_ip", portalIP).
 					Msg("DNS: unauthenticated peer — redirecting internal domain to captive portal")
 				resolvedIP = portalIP
-				ttl = 5 // short TTL so the real IP is served quickly after auth
+				ttl = 1 // TTL=1s so the browser re-queries DNS within 1 second after auth
 			}
 			m.Answer = append(m.Answer, &dns.A{
 				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: ttl},

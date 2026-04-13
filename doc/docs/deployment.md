@@ -49,6 +49,8 @@ server:
     AUTH_CLIENT_ID: "wirety-client"
     AUTH_CLIENT_SECRET: "your-secret"
     AUTH_JWKS_CACHE_TTL: "3600"
+    LOG_LEVEL: "info"    # trace|debug|info|warn|error|fatal
+    LOG_FORMAT: "json"   # json recommended for log aggregators (Loki, Datadog, etc.)
 
 frontend:
   replicaCount: 2
@@ -127,6 +129,8 @@ services:
     environment:
       HTTP_PORT: "8080"
       AUTH_ENABLED: "false"
+      LOG_LEVEL: "info"     # trace|debug|info|warn|error|fatal
+      LOG_FORMAT: "json"    # json is recommended when logs are ingested by a collector
     volumes:
       - ./data:/data
     restart: unless-stopped
@@ -178,6 +182,8 @@ Type=simple
 User=wirety
 Environment="HTTP_PORT=8080"
 Environment="AUTH_ENABLED=false"
+Environment="LOG_LEVEL=info"
+Environment="LOG_FORMAT=json"
 ExecStart=/usr/local/bin/wirety-server
 Restart=on-failure
 
@@ -245,7 +251,7 @@ The following unit file provides a production-ready configuration with security 
 [Unit]
 Description=Wirety Agent VPN Service
 Documentation=https://github.com/pewty-fr/wirety
-After=network-online.target
+After=network-online.target systemd-modules-load.service
 Wants=network-online.target
 
 [Service]
@@ -276,7 +282,7 @@ ReadWritePaths=/etc/wireguard
 PrivateTmp=yes
 PrivateDevices=no
 ProtectKernelTunables=no
-ProtectKernelModules=yes
+ProtectKernelModules=no
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
 RestrictNamespaces=yes
@@ -360,10 +366,12 @@ write_files:
   # Kernel modules required by Wirety iptables rules
   - path: /etc/modules-load.d/wirety.conf
     content: |
-      # Required for iptables string matching (SNI / Host-header vhost isolation)
-      xt_string
       # Required for connection tracking (ESTABLISHED/RELATED rules)
       nf_conntrack
+      # xtables compatibility layer — allows xt_string to work with iptables-nft
+      nft_compat
+      # Required for iptables string matching (SNI / Host-header vhost isolation)
+      xt_string
 
   # Sysctl tuning: IP forwarding, security hardening, TCP performance
   - path: /etc/sysctl.d/99-wirety.conf
@@ -448,7 +456,7 @@ write_files:
       [Unit]
       Description=Wirety Agent VPN Service
       Documentation=https://github.com/pewty-fr/wirety
-      After=network-online.target
+      After=network-online.target systemd-modules-load.service
       Wants=network-online.target
 
       [Service]
@@ -475,7 +483,7 @@ write_files:
       PrivateTmp=yes
       PrivateDevices=no
       ProtectKernelTunables=no
-      ProtectKernelModules=yes
+      ProtectKernelModules=no
       ProtectControlGroups=yes
       RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
       RestrictNamespaces=yes
@@ -572,23 +580,31 @@ The `--skip-tls-verify` flag disables TLS certificate validation for the connect
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| HTTP_PORT | Server port | 8080 | No |
-| AUTH_ENABLED | Enable OIDC auth | false | No |
-| AUTH_ISSUER_URL | OIDC provider URL | - | If auth enabled |
-| AUTH_CLIENT_ID | OIDC client ID | - | If auth enabled |
-| AUTH_CLIENT_SECRET | OIDC client secret | - | If auth enabled |
-| AUTH_JWKS_CACHE_TTL | JWKS cache duration (seconds) | 3600 | No |
+| HTTP_PORT | Server port | `8080` | No |
+| AUTH_ENABLED | Enable OIDC auth | `false` | No |
+| AUTH_ISSUER_URL | OIDC provider URL | — | If auth enabled |
+| AUTH_CLIENT_ID | OIDC client ID | — | If auth enabled |
+| AUTH_CLIENT_SECRET | OIDC client secret | — | If auth enabled |
+| AUTH_JWKS_CACHE_TTL | JWKS cache duration (seconds) | `3600` | No |
+| LOG_LEVEL | Log verbosity: `trace`\|`debug`\|`info`\|`warn`\|`error`\|`fatal` | `info` | No |
+| LOG_FORMAT | Log output format: `text`\|`json` | `text` | No |
+| AUDIT_LOG | Emit JSON audit events to stdout | `false` | No |
 
 ### Agent Environment Variables
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| SERVER_URL | Wirety server URL | - | Yes |
-| TOKEN | Enrollment token | - | Yes |
-| WG_INTERFACE | WireGuard interface name | wg0 | No |
-| WG_CONFIG_PATH | Config file path | /etc/wireguard/wg0.conf | No |
-| WG_APPLY_METHOD | Apply method (wg-quick/syncconf) | wg-quick | No |
-| NAT_INTERFACE | NAT interface for jump peers | eth0 | No |
+| SERVER_URL | Wirety server URL | — | Yes |
+| TOKEN | Enrollment token | — | Yes |
+| WG_CONFIG_PATH | WireGuard config file path | — | No |
+| WG_APPLY_METHOD | Apply method: `wg-quick`\|`syncconf` | `syncconf` | No |
+| NAT_INTERFACES | Comma-separated NAT interfaces | auto-detect | No |
+| CAPTIVE_PORTAL_URL | Captive portal page URL | `<SERVER_URL>/captive-portal` | No |
+| SERVER_HOST | Override HTTP Host header (reverse-proxy setups) | — | No |
+| SKIP_TLS_VERIFY | Disable TLS verification | `false` | No |
+| LOG_LEVEL | Log verbosity: `trace`\|`debug`\|`info`\|`warn`\|`error`\|`fatal` | `info` | No |
+| LOG_FORMAT | Log output format: `text`\|`json` | `text` | No |
+| AUDIT_LOG | Emit JSON audit events to stdout | `false` | No |
 
 ## Monitoring
 

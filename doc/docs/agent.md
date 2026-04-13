@@ -44,6 +44,15 @@ Options:
         (env: SKIP_TLS_VERIFY, default: false)
         Use only when the server uses a self-signed or internally-signed certificate
         that the agent host cannot verify. Never use in production with public certificates.
+  -log-level string
+        Log verbosity: trace|debug|info|warn|error|fatal
+        (env: LOG_LEVEL, default: info)
+  -log-format string
+        Log output format: text|json
+        (env: LOG_FORMAT, default: text)
+  -audit-log
+        Emit JSON audit events to stdout
+        (env: AUDIT_LOG, default: false)
 ```
 
 ## Usage Example
@@ -75,6 +84,21 @@ wirety-agent \
   -portal-url https://wirety.internal/captive-portal \
   -skip-tls-verify \
   -token <TOKEN>
+
+# Structured JSON logs at debug level (useful with log aggregators such as Loki / Datadog)
+wirety-agent -log-format json -log-level debug
+
+# Minimal output in production (warnings and above only)
+wirety-agent -log-level warn
+
+# Enable audit log alongside normal operation
+wirety-agent -audit-log -log-format json
+
+# Equivalent using environment variables
+export LOG_FORMAT=json
+export LOG_LEVEL=debug
+export AUDIT_LOG=true
+wirety-agent
 ```
 
 ## Reverse Proxy / No-DNS Access (`SERVER_HOST`)
@@ -146,6 +170,46 @@ export NAT_INTERFACES=ens6
 | `xt_string` kernel module | SNI / Host-header vhost isolation in captive portal firewall rules |
 
 The agent calls `modprobe nf_conntrack` and `modprobe xt_string` automatically at startup. These modules ship with the kernel on all mainstream distributions and require no manual installation. If either module is unavailable, the agent logs a warning and continues with degraded captive portal vhost isolation. See [Kernel Module Requirements](captive-portal#kernel-module-requirements) for persistence and troubleshooting.
+
+## Logging
+
+The agent uses [zerolog](https://github.com/rs/zerolog) for structured logging. Both the level and format are configurable via CLI flag or environment variable — the flag takes precedence.
+
+### `LOG_LEVEL`
+
+Controls which log entries are emitted.
+
+| Value | When to use |
+|-------|-------------|
+| `trace` | Deep protocol-level debugging (very verbose) |
+| `debug` | Development and integration testing |
+| `info` | Normal production operation *(default)* |
+| `warn` | Only warnings and errors |
+| `error` | Only errors and fatal events |
+| `fatal` | Silent except on crashes |
+
+### `LOG_FORMAT`
+
+| Value | Output | When to use |
+|-------|--------|-------------|
+| `text` | Coloured, human-readable console output *(default)* | Local development, direct terminal access |
+| `json` | One JSON object per line | Log aggregators (Loki, Datadog, Elastic, etc.) |
+
+**`text` sample:**
+```
+2:47PM INF websocket connected url=wss://wirety.example.com/api/v1/ws
+2:47PM INF DNS server starting addr=10.255.0.1:53
+```
+
+**`json` sample:**
+```json
+{"level":"info","time":1744563600,"message":"websocket connected","url":"wss://wirety.example.com/api/v1/ws"}
+{"level":"info","time":1744563600,"message":"DNS server starting","addr":"10.255.0.1:53"}
+```
+
+:::tip Production recommendation
+Use `LOG_FORMAT=json` and `LOG_LEVEL=info` in production so that log lines are machine-parseable and can be ingested without extra parsing rules.
+:::
 
 ## Security
 - Token used only at enrollment; store ephemeral auth afterward.

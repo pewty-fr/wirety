@@ -26,11 +26,12 @@ import (
 )
 
 func main() {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-
+	// Collect defaults from environment variables first so that CLI flags can
+	// override them.  Log configuration must be parsed before any log.* call,
+	// so we defer configureLogger / audit.Init until after flag.Parse().
+	logLevel := envOr("LOG_LEVEL", "info")
+	logFormat := envOr("LOG_FORMAT", "text")
 	auditEnabled := envOr("AUDIT_LOG", "false") == "true"
-	audit.Init(auditEnabled)
 
 	server := envOr("SERVER_URL", "http://localhost:8080")
 	token := envOr("TOKEN", "")
@@ -43,6 +44,9 @@ func main() {
 	serverHost := envOr("SERVER_HOST", "")                  // optional Host header override for reverse-proxy setups
 	skipTLSVerify := envOr("SKIP_TLS_VERIFY", "") == "true" // skip TLS certificate verification
 
+	flag.StringVar(&logLevel, "log-level", logLevel, "Log verbosity: trace|debug|info|warn|error|fatal (env: LOG_LEVEL)")
+	flag.StringVar(&logFormat, "log-format", logFormat, "Log output format: text|json (env: LOG_FORMAT)")
+	flag.BoolVar(&auditEnabled, "audit-log", auditEnabled, "Emit JSON audit events to stdout (env: AUDIT_LOG)")
 	flag.StringVar(&server, "server", server, "Server base URL (no trailing /)")
 	flag.StringVar(&token, "token", token, "Enrollment token")
 	flag.StringVar(&configPath, "config", configPath, "Path to wireguard config file")
@@ -52,6 +56,10 @@ func main() {
 	flag.StringVar(&serverHost, "server-host", serverHost, "Override HTTP Host header for all requests to the server (useful when accessing via IP behind a reverse proxy)")
 	flag.BoolVar(&skipTLSVerify, "skip-tls-verify", skipTLSVerify, "Skip TLS certificate verification (insecure — use only with self-signed certificates in trusted environments)")
 	flag.Parse()
+
+	// Apply log settings now that flags are resolved.
+	configureLogger(logLevel, logFormat)
+	audit.Init(auditEnabled)
 
 	// Default portal URL: captive portal page served by the same Wirety server
 	if portalURL == "" {
@@ -183,6 +191,25 @@ func main() {
 
 	runner.Start(stop)
 	log.Info().Msg("agent stopped")
+}
+
+// configureLogger sets the global zerolog level and output format.
+// level: trace|debug|info|warn|error|fatal (default: info)
+// format: json|text (default: text — coloured console writer)
+func configureLogger(level, format string) {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
+	lvl, err := zerolog.ParseLevel(level)
+	if err != nil {
+		lvl = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(lvl)
+
+	if format == "json" {
+		log.Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+	} else {
+		log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+	}
 }
 
 func envOr(k, def string) string {

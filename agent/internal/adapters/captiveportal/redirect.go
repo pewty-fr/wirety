@@ -249,9 +249,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if serveProbeSuccess(w, r) {
 			log.Debug().Str("peer_ip", peerIP).Str("host", r.Host).Str("path", r.URL.Path).
 				Msg("captive portal: authenticated peer probe — returning success")
-		} else {
-			w.WriteHeader(http.StatusNoContent)
+			return
 		}
+		// The peer is authenticated but their browser still has a stale DNS entry
+		// pointing to our IP (TTL=1 s). Serve an HTML page that meta-refreshes after
+		// 1 s so that by the time the browser retries, the DNS TTL has expired and it
+		// resolves directly to the real service's IP.
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		target := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.RequestURI)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><head>`+
+			`<meta http-equiv="refresh" content="1; url=%s">`+
+			`<title>Connecting…</title></head>`+
+			`<body style="font-family:sans-serif;text-align:center;padding-top:4em">`+
+			`<p>Authenticated. Connecting to your destination…</p>`+
+			`<p><a href="%s">Click here if not redirected automatically.</a></p>`+
+			`</body></html>`, target, target)
+		log.Debug().Str("peer_ip", peerIP).Str("target", target).
+			Msg("captive portal: authenticated peer — serving DNS-flush refresh page")
 		return
 	}
 
@@ -277,6 +296,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		url.QueryEscape(token),
 		url.QueryEscape(originalURL),
 	)
+	// Prevent the browser from caching this redirect. Without no-store the
+	// browser would replay the 302 to the captive portal even after the peer
+	// has authenticated and DNS has returned to the real service IP.
+	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, redirectTarget, http.StatusFound)
 }
 

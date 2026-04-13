@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -658,6 +659,34 @@ func (r *Runner) monitorTunnels(done <-chan struct{}) {
 	}
 }
 
+// captivePortalExcludedHosts returns the set of hostnames that must not be
+// redirected to the captive portal IP for unauthenticated peers. This includes
+// the Wirety server hostname and the captive portal page hostname. Without these
+// exclusions the redirect target URL itself would resolve to the captive portal
+// IP and cause an infinite redirect loop.
+func (r *Runner) captivePortalExcludedHosts() []string {
+	seen := make(map[string]struct{})
+	var hosts []string
+	for _, rawURL := range []string{r.serverURL, r.captivePortalURL} {
+		if rawURL == "" {
+			continue
+		}
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			continue
+		}
+		h := u.Hostname()
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; !ok {
+			seen[h] = struct{}{}
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}
+
 // startCaptivePortalServer starts the HTTP server that handles captive portal
 // authentication. It listens directly on the WireGuard interface IP:80, so no
 // DNAT rule is required. Unauthenticated peers are redirected to the authentication
@@ -681,10 +710,12 @@ func (r *Runner) startCaptivePortalServer() {
 		type dnsPortalConfigurer interface {
 			SetCaptivePortalIP(string)
 			SetAuthChecker(func(string) bool)
+			SetRedirectExclusions([]string)
 		}
 		if dns, ok := r.dnsServer.(dnsPortalConfigurer); ok {
 			dns.SetCaptivePortalIP(r.wgIP)
 			dns.SetAuthChecker(r.isAuthenticated)
+			dns.SetRedirectExclusions(r.captivePortalExcludedHosts())
 		}
 	}
 

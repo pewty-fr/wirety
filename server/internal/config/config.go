@@ -12,6 +12,8 @@ type Config struct {
 	HTTPPort    string     `json:"http_port"`
 	CORSOrigins []string   `json:"cors_origins"` // CORS_ORIGIN env var — comma-separated list of allowed origins (use * only in development)
 	AuditLog    bool       `json:"audit_log"`    // AUDIT_LOG env var — emit JSON audit events to stdout
+	LogLevel    string     `json:"log_level"`    // LOG_LEVEL env var — trace|debug|info|warn|error|fatal (default: info)
+	LogFormat   string     `json:"log_format"`   // LOG_FORMAT env var — text|json (default: text)
 	Auth        AuthConfig `json:"auth"`
 	Database    DBConfig   `json:"database"`
 }
@@ -31,7 +33,9 @@ func LoadConfig() *Config {
 	return &Config{
 		HTTPPort:    getEnv("HTTP_PORT", "8080"),
 		CORSOrigins: getCORSOrigins(),
-		AuditLog:   getEnv("AUDIT_LOG", "false") == "true",
+		AuditLog:    getEnv("AUDIT_LOG", "false") == "true",
+		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		LogFormat:   getEnv("LOG_FORMAT", "text"),
 		Auth: AuthConfig{
 			Enabled:       getEnv("AUTH_ENABLED", "false") == "true",
 			IssuerURL:     getEnv("AUTH_ISSUER_URL", ""),

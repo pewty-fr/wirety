@@ -42,12 +42,13 @@ export default function CaptivePortalPage() {
 
       setStatus('success');
 
-      // Redirect after a short delay
+      // DNS TTL for intercepted internal domains is 1 s, so by the time this
+      // timer fires the browser will re-resolve to the real service IP.
       setTimeout(() => {
         if (redirectUrl) {
-          window.location.href = redirectUrl;
+          window.location.replace(redirectUrl);
         }
-      }, 2000);
+      }, 1500);
     } catch (error) {
       console.error('Captive portal authentication error:', error);
       setStatus('error');
@@ -92,11 +93,25 @@ export default function CaptivePortalPage() {
             <FontAwesomeIcon icon={faCheckCircle} className="text-6xl text-green-500 mb-4" />
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Access Granted!</h1>
             <p className="text-gray-600 dark:text-gray-400 mb-4">
-              You now have internet access through this network.
+              You now have access to this network.
             </p>
-            <p className="text-sm text-gray-500 dark:text-gray-500">
-              Redirecting you to your destination...
-            </p>
+            {redirectUrl ? (
+              <>
+                <p className="text-sm text-gray-500 dark:text-gray-500 mb-3">
+                  Redirecting you to your destination…
+                </p>
+                <a
+                  href={redirectUrl}
+                  className="text-sm text-green-600 dark:text-green-400 underline"
+                >
+                  Click here if not redirected automatically.
+                </a>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-500">
+                You can now close this tab and access the network.
+              </p>
+            )}
           </div>
         </div>
       </div>

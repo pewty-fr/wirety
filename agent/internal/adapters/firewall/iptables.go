@@ -46,21 +46,19 @@ func (a *Adapter) SetProxyPorts(httpPort, httpsPort int) {
 // but never prevents the agent from starting.
 //
 // Required modules:
-//   - nf_conntrack  — enables conntrack state matching (ESTABLISHED/RELATED rule that
-//     lets ongoing TCP sessions pass without re-checking every packet)
-//   - xt_string     — enables payload string matching used for SNI / Host-header
-//     vhost isolation on the Wirety server rule
-//
-// On most distributions these modules ship with the kernel and only need to be
-// loaded; no extra package installation is required.  If modprobe fails, the agent
-// falls back gracefully: Sync() retries the string-match rule and logs a warning
-// when it has to use a port-only ACCEPT instead.
+//   - nf_conntrack — conntrack state matching (ESTABLISHED/RELATED).
+//   - nft_compat   — xtables compatibility layer for iptables-nft; allows xt_string
+//     to be used through the nf_tables backend. No-op on legacy iptables.
+//   - xt_string    — payload string matching for SNI / Host-header vhost isolation.
+//     Works on both legacy iptables and iptables-nft (via nft_compat).
+//     If unavailable, Sync() falls back to port-only server ACCEPT rule.
 func (a *Adapter) EnsureKernelModules() {
 	modules := []struct {
 		name    string
 		purpose string
 	}{
 		{"nf_conntrack", "conntrack state matching (ESTABLISHED/RELATED)"},
+		{"nft_compat", "xtables compatibility layer for iptables-nft (needed for xt_string on nf_tables backend)"},
 		{"xt_string", "payload string matching (SNI / Host-header vhost isolation)"},
 	}
 
@@ -70,8 +68,7 @@ func (a *Adapter) EnsureKernelModules() {
 				Str("module", m.name).
 				Str("purpose", m.purpose).
 				Err(err).
-				Msg("failed to load kernel module — functionality may be degraded; " +
-					"run 'modprobe " + m.name + "' manually or add it to /etc/modules")
+				Msg("firewall: failed to load kernel module — functionality may be degraded")
 		} else {
 			log.Debug().Str("module", m.name).Msg("kernel module loaded")
 		}
@@ -442,12 +439,10 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 				"-m", "string", "--algo", "bm", "--string", pattern, "--to", "65535",
 				"-j", "ACCEPT")
 			if err := a.run(rule...); err != nil {
-				// The iptables string module may not be loaded on all kernels.
-				// Log the failure and fall back to port-only filtering so the
-				// captive portal remains functional (with reduced vhost isolation).
+				// xt_string loaded but rule still failed — fall back to port-only.
 				log.Warn().Err(err).
 					Str("ip", ip).Str("port", endpoint.port).Str("hostname", endpoint.hostname).
-					Msg("string match unavailable — falling back to port-only server ACCEPT rule (other vhosts on same IP:port will be reachable before auth)")
+					Msg("string match rule failed — falling back to port-only server ACCEPT rule (other vhosts on same IP:port will be reachable before auth)")
 				fallback := append(append([]string{}, base...), "-j", "ACCEPT")
 				_ = a.run(fallback...)
 			}
