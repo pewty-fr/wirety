@@ -22,12 +22,14 @@ func requireRoot(t *testing.T) {
 	}
 }
 
-// cleanChain removes the WIRETY_JUMP chain from the filter table so tests start clean.
+// cleanChain removes both Wirety chains from the filter table so tests start clean.
 func cleanChain(t *testing.T) {
 	t.Helper()
 	_ = exec.Command("iptables", "-D", "FORWARD", "-j", "WIRETY_JUMP").Run()
 	_ = exec.Command("iptables", "-F", "WIRETY_JUMP").Run()
 	_ = exec.Command("iptables", "-X", "WIRETY_JUMP").Run()
+	_ = exec.Command("iptables", "-F", "WIRETY_POLICY").Run()
+	_ = exec.Command("iptables", "-X", "WIRETY_POLICY").Run()
 }
 
 // savedRules returns the current iptables-save output for the filter table.
@@ -240,6 +242,9 @@ func TestIntegration_RoundTripServerRules(t *testing.T) {
 	saved := savedRules(t)
 
 	// All rules are redirected into WIRETY_JUMP by applyIPTablesRule.
+	// savedRules uses iptables-save format (not iptables -L -n):
+	//   iptables-save: --dport 53, --sport 53
+	//   iptables -L:   dpt:53, spt:53
 	checks := []struct {
 		desc   string
 		needle string
@@ -247,8 +252,8 @@ func TestIntegration_RoundTripServerRules(t *testing.T) {
 		{"allow CIDR outbound", "192.168.0.0/16"},
 		{"ESTABLISHED return", "RELATED,ESTABLISHED"},
 		{"DROP CIDR", "10.1.0.0/24"},
-		{"DNS dport 53", "dpt:53"},
-		{"DNS sport 53", "spt:53"},
+		{"DNS dport 53", "dport 53"},
+		{"DNS sport 53", "sport 53"},
 		{"WG port 51820", "51820"},
 		{"default DROP", "DROP"},
 		{"WIRETY_JUMP chain present", "WIRETY_JUMP"},
