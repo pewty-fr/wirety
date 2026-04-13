@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/pewty-fr/wirety/compare/wirety-helm/v1.0.0...wirety-helm/v1.1.0) (2026-04-13)
+
+
+### Features
+
+* mcp, audit, reachability, regular peer auth ([#138](https://github.com/pewty-fr/wirety/issues/138)) ([ba24b97](https://github.com/pewty-fr/wirety/commit/ba24b97c49728c160352a36e05d891c2ffa232c5))
+
+
+### Bug Fixes
+
+* update to v2.1.0 ([cdc528a](https://github.com/pewty-fr/wirety/commit/cdc528a0c319a29e5e5d35036f07003aff8ba053))
+
 ## 1.0.0 (2025-11-27)
 
 
