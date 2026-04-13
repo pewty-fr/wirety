@@ -46,7 +46,7 @@ fullnameOverride: ""
 imagePullSecrets: []
 
 server:
-  env: []
+  env: {}
     # Authentication — set AUTH_ENABLED to "true" to enable OIDC.
     # When AUTH_ENABLED is "false" the server uses simple password auth.
     # Set AUTH_PASSWORD to fix the admin password; if unset a random one is

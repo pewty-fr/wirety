@@ -26,15 +26,12 @@ import (
 )
 
 func main() {
-	// Collect defaults from environment variables first so that CLI flags can
-	// override them.  Log configuration must be parsed before any log.* call,
-	// so we defer configureLogger / audit.Init until after flag.Parse().
+	// Collect defaults from env first; CLI flags override them.
+	// Log configuration must be applied after flag.Parse so that flags take
+	// precedence over environment variables.
 	logLevel := envOr("LOG_LEVEL", "info")
 	logFormat := envOr("LOG_FORMAT", "text")
 	auditEnabled := envOr("AUDIT_LOG", "false") == "true"
-
-	auditEnabled := envOr("AUDIT_LOG", "false") == "true"
-	audit.Init(auditEnabled)
 
 	server := envOr("SERVER_URL", "http://localhost:8080")
 	token := envOr("TOKEN", "")

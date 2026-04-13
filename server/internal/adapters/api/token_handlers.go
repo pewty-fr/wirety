@@ -170,29 +170,3 @@ func generateRawToken() (string, error) {
 	}
 	return apiTokenPrefix + hex.EncodeToString(b), nil
 }
-
-// createAPITokenForUser hashes rawToken, persists it and returns the response
-// (including the raw token, shown once). Shared between the REST handler and the
-// embedded MCP server.
-func createAPITokenForUser(repo auth.Repository, userID, name, rawToken string) (auth.APITokenResponse, error) {
-	h256 := sha256.Sum256([]byte(rawToken))
-	hash := hex.EncodeToString(h256[:])
-
-	token := &auth.APIToken{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		Name:      name,
-		TokenHash: hash,
-	}
-	if err := repo.CreateAPIToken(token); err != nil {
-		return auth.APITokenResponse{}, fmt.Errorf("create token: %w", err)
-	}
-	return auth.APITokenResponse{
-		ID:         token.ID,
-		Name:       token.Name,
-		RawToken:   rawToken,
-		CreatedAt:  token.CreatedAt,
-		ExpiresAt:  token.ExpiresAt,
-		LastUsedAt: token.LastUsedAt,
-	}, nil
-}

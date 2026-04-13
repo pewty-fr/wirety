@@ -45,7 +45,7 @@ spec:
         imagePullPolicy: {{ .Values.server.image.pullPolicy }}
         ports:
         - name: http
-          containerPort: {{ .Values.server.env.HTTP_PORT | int }}
+          containerPort: {{ index .Values.server.env "HTTP_PORT" | default "8080" | int }}
           protocol: TCP
         env:
         {{- range $key, $value := .Values.server.env }}
@@ -71,9 +71,9 @@ spec:
         - name: DB_DSN
           value: {{ include "wirety.postgresDSN" . | quote }}
         {{- end }}
-        {{- else if .Values.server.env.DB_DSN }}
+        {{- else if index .Values.server.env "DB_DSN" }}
         - name: DB_DSN
-          value: {{ .Values.server.env.DB_DSN | quote }}
+          value: {{ index .Values.server.env "DB_DSN" | quote }}
         {{- end }}
         {{- with .Values.server.envFrom }}
         envFrom:

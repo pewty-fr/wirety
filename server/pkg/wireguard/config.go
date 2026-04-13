@@ -18,7 +18,7 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 	fmt.Fprintf(&sb, "PrivateKey = %s\n", peer.PrivateKey)
 	fmt.Fprintf(&sb, "Address = %s\n", peer.Address)
 	if peer.ListenPort > 0 {
-		sb.WriteString(fmt.Sprintf("ListenPort = %d\n", peer.ListenPort))
+		fmt.Fprintf(&sb, "ListenPort = %d\n", peer.ListenPort)
 	}
 
 	// Add DNS configuration
@@ -34,7 +34,7 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 		}
 
 		if dns != "" {
-			sb.WriteString(fmt.Sprintf("DNS = %s\n", dns))
+			fmt.Fprintf(&sb, "DNS = %s\n", dns)
 		}
 	}
 
@@ -46,21 +46,21 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 	// [Peer] sections for each allowed peer
 	for _, allowedPeer := range allowedPeers {
 		sb.WriteString("[Peer]\n")
-		sb.WriteString(fmt.Sprintf("# Name: %s\n", allowedPeer.Name))
-		sb.WriteString(fmt.Sprintf("PublicKey = %s\n", allowedPeer.PublicKey))
+		fmt.Fprintf(&sb, "# Name: %s\n", allowedPeer.Name)
+		fmt.Fprintf(&sb, "PublicKey = %s\n", allowedPeer.PublicKey)
 
 		// Look up preshared key for this connection
 		if psk, exists := presharedKeys[allowedPeer.ID]; exists && psk != "" {
-			sb.WriteString(fmt.Sprintf("PresharedKey = %s\n", psk))
+			fmt.Fprintf(&sb, "PresharedKey = %s\n", psk)
 		}
 
 		// Determine AllowedIPs based on peer type and routes
 		allowedIPs := determineAllowedIPs(peer, allowedPeer, network, routes)
-		sb.WriteString(fmt.Sprintf("AllowedIPs = %s\n", strings.Join(allowedIPs, ", ")))
+		fmt.Fprintf(&sb, "AllowedIPs = %s\n", strings.Join(allowedIPs, ", "))
 
 		// Add endpoint if the allowed peer is a jump server or has an endpoint
 		if allowedPeer.Endpoint != "" {
-			sb.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", allowedPeer.Endpoint, allowedPeer.ListenPort))
+			fmt.Fprintf(&sb, "Endpoint = %s:%d\n", allowedPeer.Endpoint, allowedPeer.ListenPort)
 			sb.WriteString("PersistentKeepalive = 25\n")
 		} else if peer.IsJump && !allowedPeer.IsJump {
 			// Jump server connecting to regular peer (no endpoint)
