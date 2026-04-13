@@ -13,12 +13,10 @@ on:
       - 'front/**'
       - 'doc/**'
       - 'helm/**'
-
-permissions:
-  contents: read
   push:
     branches:
       - main
+
 
 jobs:
   # Detect which paths changed
