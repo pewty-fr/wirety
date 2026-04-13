@@ -1,16 +1,29 @@
-// Package captiveportal provides a local HTTP redirect server for the captive portal flow.
-// When a new peer connects to the WireGuard tunnel, their HTTP traffic (port 80) is
-// redirected via iptables DNAT to this server. The server creates a short-lived captive
-// portal token via the Wirety API and sends the peer to the authentication page.
+// Package captiveportal provides the HTTP server for the captive portal flow.
+// The server listens directly on the WireGuard interface IP on port 80, replacing
+// the previous DNAT-to-localhost approach. This allows it to:
+//   - Intercept unauthenticated peers' HTTP requests and redirect them to the
+//     Wirety captive portal authentication page.
+//   - Intercept well-known OS captive-portal probe requests (even on VPNs with
+//     restricted AllowedIPs) and return the expected success responses once a peer
+//     has authenticated, so the OS dismisses its captive portal notification.
 package captiveportal
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,13 +35,30 @@ import (
 // present an already-expired token to the captive portal page.
 const tokenTTL = 9 * time.Minute
 
+// captiveProbeHosts is the set of well-known OS captive-portal probe hostnames.
+// The agent's DNS server resolves these to the jump peer's WireGuard IP so that
+// the probes are routed through the tunnel even when AllowedIPs is restricted to
+// a private range. The HTTP server then intercepts them here.
+var captiveProbeHosts = map[string]struct{}{
+	"connectivitycheck.gstatic.com": {},
+	"clients3.google.com":           {},
+	"clients1.google.com":           {},
+	"captive.apple.com":             {},
+	"www.apple.com":                 {},
+	"www.msftconnecttest.com":       {},
+	"ipv6.msftconnecttest.com":      {},
+	"detectportal.firefox.com":      {},
+	"nmcheck.gnome.org":             {},
+	"network-test.debian.org":       {},
+}
+
 type cachedToken struct {
 	value     string
 	expiresAt time.Time
 }
 
 // tokenCache is a simple in-memory per-peer-IP token cache. Without it, every
-// HTTP request intercepted by the DNAT rule (browser fetches, keepalives, etc.)
+// HTTP request from an unauthenticated peer (browser fetches, keepalives, etc.)
 // would create a new captive portal token, flooding the database.
 type tokenCache struct {
 	mu      sync.Mutex
@@ -51,19 +81,26 @@ func (c *tokenCache) set(peerIP, token string) {
 	c.entries[peerIP] = cachedToken{value: token, expiresAt: time.Now().Add(tokenTTL)}
 }
 
-// Server is a local HTTP server that intercepts unauthenticated peers' HTTP traffic
-// and redirects them to the Wirety captive portal authentication page.
+// Server is the captive portal HTTP server. It listens directly on the WireGuard
+// interface IP on port 80 (e.g. "10.255.0.1:80"), replacing the previous approach
+// of DNATing port-80 traffic to a localhost port.
 type Server struct {
-	serverURL  string // Wirety server HTTP URL, e.g. "https://wirety.example.com"
-	authToken  string // Jump peer's enrollment token for API calls
-	portalURL  string // Captive portal page URL, e.g. "https://wirety.example.com/captive-portal"
-	networkID  string
-	peerID     string
-	httpClient *http.Client // shared client (may override Host header for reverse-proxy setups)
-	cache      tokenCache
+	serverURL       string
+	authToken       string
+	portalURL       string
+	networkID       string
+	peerID          string
+	httpClient      *http.Client
+	cache           tokenCache
+	isAuthenticated func(peerIP string) bool // nil = treat all peers as unauthenticated
+	// policyReceived gates probe-success responses: we never serve them before
+	// receiving at least one policy message from the server, because the whitelist
+	// could be stale from a previous connection (e.g. DB cleared without a push).
+	policyReceived bool
+	policyMu       sync.RWMutex
 }
 
-// NewServer creates a captive portal redirect server.
+// NewServer creates a captive portal HTTP server.
 // httpClient may be nil, in which case http.DefaultClient is used.
 func NewServer(serverURL, authToken, portalURL, networkID, peerID string, httpClient *http.Client) *Server {
 	if httpClient == nil {
@@ -80,21 +117,143 @@ func NewServer(serverURL, authToken, portalURL, networkID, peerID string, httpCl
 	}
 }
 
-// Start begins listening on addr (e.g. ":8081"). Blocks until error.
+// SetAuthChecker sets a function that reports whether a peer IP has completed
+// captive portal authentication. Authenticated peers receive OS-specific probe
+// success responses so the OS dismisses the captive portal notification after login.
+func (s *Server) SetAuthChecker(fn func(peerIP string) bool) {
+	s.isAuthenticated = fn
+}
+
+// NotifyPolicyReceived marks the server as having received at least one policy
+// message from the Wirety server. Until this is called, all peers are treated as
+// unauthenticated, even if the in-memory whitelist was non-empty (e.g. from a
+// previous connection where the DB was cleared without a WebSocket push).
+func (s *Server) NotifyPolicyReceived() {
+	s.policyMu.Lock()
+	s.policyReceived = true
+	s.policyMu.Unlock()
+}
+
+// ResetPolicyReceived clears the policy-received flag. Called on every new
+// WebSocket connection so that the server waits for a fresh policy sync before
+// serving probe-success responses, preventing stale whitelist data from a
+// previous connection from leaking through.
+func (s *Server) ResetPolicyReceived() {
+	s.policyMu.Lock()
+	s.policyReceived = false
+	s.policyMu.Unlock()
+}
+
+// isPolicyReceived reports whether at least one policy sync has been received on
+// the current connection.
+func (s *Server) isPolicyReceived() bool {
+	s.policyMu.RLock()
+	defer s.policyMu.RUnlock()
+	return s.policyReceived
+}
+
+// Start begins listening on addr (e.g. "10.255.0.1:80"). Blocks until error.
 func (s *Server) Start(addr string) error {
-	log.Info().Str("addr", addr).Str("portal_url", s.portalURL).Msg("captive portal redirect server starting")
+	log.Info().Str("addr", addr).Str("portal_url", s.portalURL).Msg("captive portal HTTP server starting")
 	return http.ListenAndServe(addr, s) // #nosec G114
 }
 
-// ServeHTTP handles intercepted HTTP requests. It returns the cached token for
-// the peer if one is still valid, otherwise creates a new one, then redirects
-// the browser to the captive portal authentication page.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+// StartTLS begins listening on addr with a self-signed certificate covering the
+// given IP and optional VPN domain wildcard. It uses the same ServeHTTP handler
+// as the plain HTTP server.
+//
+// Unlike external domains (google.com, etc.) which are HSTS-preloaded and hard-
+// blocked by browsers, internal VPN domains are not preloaded — browsers show a
+// "certificate not trusted" warning that the user can bypass. This is sufficient
+// to redirect unauthenticated peers that attempt HTTPS access to a private resource.
+func (s *Server) StartTLS(addr, ip, vpnDomain string) error {
+	cert, err := generateSelfSignedCert(ip, vpnDomain)
 	if err != nil {
-		host = r.RemoteAddr
+		return fmt.Errorf("generate self-signed cert: %w", err)
 	}
-	peerIP := host
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+	ln, err := tls.Listen("tcp", addr, tlsCfg)
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+	srv := &http.Server{Handler: s, TLSConfig: tlsCfg}
+	log.Info().Str("addr", addr).Str("portal_url", s.portalURL).Msg("captive portal HTTPS server starting (self-signed)")
+	return srv.Serve(ln)
+}
+
+// generateSelfSignedCert creates an ECDSA P-256 certificate valid for 10 years.
+// The cert covers the WG IP as a SAN IP, and — if vpnDomain is non-empty — a
+// wildcard DNS SAN (*.<vpnDomain>) so that internal peer hostnames match without
+// a domain-mismatch warning (the cert is still self-signed and untrusted, but the
+// browser's "proceed anyway" path becomes available for internal VPN domains that
+// are not in the HSTS preload list).
+func generateSelfSignedCert(ip, vpnDomain string) (tls.Certificate, error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate key: %w", err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate serial: %w", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "Wirety Captive Portal"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	if parsed := net.ParseIP(ip); parsed != nil {
+		tmpl.IPAddresses = []net.IP{parsed}
+	}
+	if vpnDomain != "" {
+		tmpl.DNSNames = []string{vpnDomain, "*." + vpnDomain}
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("create cert: %w", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("marshal key: %w", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
+
+// ServeHTTP handles all HTTP requests arriving on the WireGuard interface port 80.
+//
+// Authenticated peers: return OS-specific probe success responses for known
+// captive-portal probe URLs so the OS dismisses the portal notification.
+// All other requests from authenticated peers return 204.
+//
+// Unauthenticated peers: create a short-lived captive portal token and redirect
+// the browser to the Wirety authentication page.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	peerIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peerIP = r.RemoteAddr
+	}
+
+	// Only serve probe-success responses after the first policy sync.
+	// Before that, the whitelist could be stale from a previous connection
+	// (e.g. the DB was cleared without a WebSocket push between the old and new
+	// connection), so we fall through and treat the peer as unauthenticated.
+	if s.isPolicyReceived() && s.isAuthenticated != nil && s.isAuthenticated(peerIP) {
+		if serveProbeSuccess(w, r) {
+			log.Debug().Str("peer_ip", peerIP).Str("host", r.Host).Str("path", r.URL.Path).
+				Msg("captive portal: authenticated peer probe — returning success")
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
 
 	token, ok := s.cache.get(peerIP)
 	if !ok {
@@ -118,8 +277,64 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		url.QueryEscape(token),
 		url.QueryEscape(originalURL),
 	)
-
 	http.Redirect(w, r, redirectTarget, http.StatusFound)
+}
+
+// serveProbeSuccess writes the OS-specific "connected" response for known
+// captive-portal probe URLs. Returns true if the request was a recognised probe
+// and a response was written, false otherwise.
+//
+// Each OS expects a specific response to confirm internet connectivity:
+//   - Google/Android: GET /generate_204 → 204 No Content
+//   - Apple:          GET /hotspot-detect.html → 200 with "Success" body
+//   - Windows:        GET /connecttest.txt → 200 with "Microsoft Connect Test"
+//   - Firefox:        GET /success.txt → 200 with "success\n"
+//   - GNOME/Debian:   any probe → 204
+func serveProbeSuccess(w http.ResponseWriter, r *http.Request) bool {
+	host := strings.ToLower(r.Host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	path := r.URL.Path
+
+	switch {
+	case strings.Contains(host, "apple.com") &&
+		(path == "/hotspot-detect.html" || path == "/library/test/success.html"):
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>")
+		return true
+
+	case strings.Contains(host, "msftconnecttest.com") && path == "/connecttest.txt":
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = fmt.Fprint(w, "Microsoft Connect Test")
+		return true
+
+	case strings.Contains(host, "msftconnecttest.com") && path == "/redirect":
+		http.Redirect(w, r, "http://go.microsoft.com/fwlink/?LinkID=219472&clcid=0x409", http.StatusFound)
+		return true
+
+	case path == "/generate_204":
+		w.WriteHeader(http.StatusNoContent)
+		return true
+
+	case strings.Contains(host, "detectportal.firefox.com") && path == "/success.txt":
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = fmt.Fprint(w, "success\n")
+		return true
+
+	case strings.Contains(host, "nmcheck.gnome.org") ||
+		strings.Contains(host, "network-test.debian.org"):
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	}
+
+	// Catch-all for any request to a known probe host.
+	if _, ok := captiveProbeHosts[host]; ok {
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	}
+
+	return false
 }
 
 type createTokenRequest struct {
@@ -128,7 +343,6 @@ type createTokenRequest struct {
 
 func (s *Server) createToken(peerIP string) (string, error) {
 	body, _ := json.Marshal(createTokenRequest{PeerIP: peerIP})
-
 	req, err := http.NewRequest(http.MethodPost, s.serverURL+"/api/v1/captive-portal/token", bytes.NewReader(body)) // #nosec G107
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
@@ -152,6 +366,5 @@ func (s *Server) createToken(peerIP string) (string, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
-
 	return tokenResp.Token, nil
 }

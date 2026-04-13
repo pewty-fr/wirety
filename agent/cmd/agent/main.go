@@ -149,7 +149,13 @@ func main() {
 	fwAdapter.SetProxyPorts(httpPortInt, httpsPortInt)
 	fwAdapter.SetServerURL(server) // Allow peers to reach Wirety server before authentication
 
+	// Load required kernel modules (nf_conntrack, xt_string) before the first
+	// iptables sync. Best-effort: failures are logged and the agent continues with
+	// degraded vhost isolation rather than refusing to start.
+	fwAdapter.EnsureKernelModules()
+
 	runner := app.NewRunner(wsClient, writer, dnsServer, fwAdapter, wsURL, iface, peerID, networkID)
+	runner.SetWGIP(wgIP)
 
 	// Pass enrollment token as Authorization header (keeps it out of access logs)
 	wsHeaders := http.Header{}

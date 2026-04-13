@@ -46,8 +46,6 @@ export default function CaptivePortalPage() {
       setTimeout(() => {
         if (redirectUrl) {
           window.location.href = redirectUrl;
-        } else {
-          window.location.href = 'http://example.com';
         }
       }, 2000);
     } catch (error) {

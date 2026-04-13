@@ -16,12 +16,11 @@ import (
 // Simplified: rules applied each sync by flushing dedicated chain.
 
 type Adapter struct {
-	iface             string
-	natInterfaces     []string // explicit override; nil means auto-detect
-	httpPort          int
-	httpsPort         int
-	captivePortalPort int
-	serverURL         string // Wirety server URL — peers must always be able to reach it
+	iface         string
+	natInterfaces []string // explicit override; nil means auto-detect
+	httpPort      int
+	httpsPort     int
+	serverURL     string // Wirety server URL — peers must always be able to reach it
 }
 
 // NewAdapter creates a new firewall adapter.
@@ -29,11 +28,10 @@ type Adapter struct {
 // natIfaces: explicit NAT interfaces override; nil or empty slice means auto-detect all
 func NewAdapter(wgIface string, natIfaces []string) *Adapter {
 	return &Adapter{
-		iface:             wgIface,
-		natInterfaces:     natIfaces,
-		httpPort:          3128,
-		httpsPort:         3129,
-		captivePortalPort: 8081,
+		iface:         wgIface,
+		natInterfaces: natIfaces,
+		httpPort:      3128,
+		httpsPort:     3129,
 	}
 }
 
@@ -43,9 +41,41 @@ func (a *Adapter) SetProxyPorts(httpPort, httpsPort int) {
 	a.httpsPort = httpsPort
 }
 
-// SetCaptivePortalPort sets the local port for the captive portal redirect server
-func (a *Adapter) SetCaptivePortalPort(port int) {
-	a.captivePortalPort = port
+// EnsureKernelModules loads the kernel modules required for Wirety's iptables rules.
+// It is best-effort: a missing module degrades functionality (logged as a warning)
+// but never prevents the agent from starting.
+//
+// Required modules:
+//   - nf_conntrack  — enables conntrack state matching (ESTABLISHED/RELATED rule that
+//     lets ongoing TCP sessions pass without re-checking every packet)
+//   - xt_string     — enables payload string matching used for SNI / Host-header
+//     vhost isolation on the Wirety server rule
+//
+// On most distributions these modules ship with the kernel and only need to be
+// loaded; no extra package installation is required.  If modprobe fails, the agent
+// falls back gracefully: Sync() retries the string-match rule and logs a warning
+// when it has to use a port-only ACCEPT instead.
+func (a *Adapter) EnsureKernelModules() {
+	modules := []struct {
+		name    string
+		purpose string
+	}{
+		{"nf_conntrack", "conntrack state matching (ESTABLISHED/RELATED)"},
+		{"xt_string", "payload string matching (SNI / Host-header vhost isolation)"},
+	}
+
+	for _, m := range modules {
+		if err := exec.Command("modprobe", m.name).Run(); err != nil { // #nosec G204 - static module names
+			log.Warn().
+				Str("module", m.name).
+				Str("purpose", m.purpose).
+				Err(err).
+				Msg("failed to load kernel module — functionality may be degraded; " +
+					"run 'modprobe " + m.name + "' manually or add it to /etc/modules")
+		} else {
+			log.Debug().Str("module", m.name).Msg("kernel module loaded")
+		}
+	}
 }
 
 // SetServerURL stores the Wirety server URL so the adapter can add an unconditional
@@ -55,30 +85,64 @@ func (a *Adapter) SetServerURL(serverURL string) {
 	a.serverURL = serverURL
 }
 
-// resolveServerIPs resolves the Wirety server URL to a list of IP addresses.
-func (a *Adapter) resolveServerIPs() []string {
+// serverEndpoint holds the resolved IPs, TCP port, and hostname for the Wirety server.
+type serverEndpoint struct {
+	ips      []string
+	port     string // TCP port string, e.g. "443"
+	hostname string // original hostname (used for SNI / Host-header filtering)
+	https    bool   // true when the scheme is https
+}
+
+// resolveServerEndpoint resolves the Wirety server URL to a list of IP addresses,
+// the TCP port, and the original hostname.
+//
+// The hostname is used for L7 filtering: for HTTPS the TLS SNI is matched (cleartext
+// in ClientHello), for HTTP the Host header is matched.  This restricts
+// unauthenticated peers to Wirety's virtual host only — other apps served by the same
+// reverse-proxy IP:port remain unreachable until captive-portal auth completes.
+func (a *Adapter) resolveServerEndpoint() serverEndpoint {
 	if a.serverURL == "" {
-		return nil
+		return serverEndpoint{}
 	}
 	u, err := url.Parse(a.serverURL)
 	if err != nil {
 		log.Warn().Err(err).Str("server_url", a.serverURL).Msg("failed to parse server URL")
-		return nil
+		return serverEndpoint{}
 	}
 	host := u.Hostname()
 	if host == "" {
-		return nil
+		return serverEndpoint{}
 	}
-	// Already an IP — use directly without DNS lookup
+
+	// Determine the TCP port: explicit in URL, or scheme default.
+	port := u.Port()
+	isHTTPS := u.Scheme == "https"
+	if port == "" {
+		if isHTTPS {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+
+	ep := serverEndpoint{port: port, https: isHTTPS}
+
+	// If the "host" in the URL is already an IP, hostname filtering is not possible
+	// (there is no SNI / Host header to match against an IP literal).  Fall back to
+	// port-only filtering in that case.
 	if net.ParseIP(host) != nil {
-		return []string{host}
+		ep.ips = []string{host}
+		return ep
 	}
+
+	ep.hostname = host
 	addrs, err := net.LookupHost(host)
 	if err != nil {
 		log.Warn().Err(err).Str("host", host).Msg("failed to resolve wirety server hostname")
-		return nil
+		return ep
 	}
-	return addrs
+	ep.ips = addrs
+	return ep
 }
 
 // detectNATInterfaces auto-detects all physical egress interfaces that need a
@@ -316,9 +380,10 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	// ── Two-chain design ────────────────────────────────────────────────────
 	//
 	// WIRETY_JUMP (authentication gate, in FORWARD):
-	//   1. Wirety server IPs   → ACCEPT  (captive portal auth always reachable)
-	//   2. Whitelisted peer IP → jump to WIRETY_POLICY
-	//   3. Everything else     → DROP    (unauthenticated peers blocked on ALL ports)
+	//   0. ESTABLISHED/RELATED   → ACCEPT  (conntrack: ongoing sessions pass through)
+	//   1. Wirety server IPs     → ACCEPT  (only Wirety port+hostname; captive portal reachable)
+	//   2. Whitelisted peer IP   → jump to WIRETY_POLICY
+	//   3. Everything else       → DROP    (unauthenticated peers blocked on ALL ports)
 	//
 	// WIRETY_POLICY (per-destination rules, only reached by authenticated peers):
 	//   1. Explicit policy rules (ACCEPT/DROP per destination CIDR)
@@ -327,6 +392,14 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	// This prevents unauthenticated peers from bypassing the captive portal via HTTPS
 	// or any other port that is not intercepted by the DNAT rule: they hit the DROP in
 	// WIRETY_JUMP before any policy rule is ever evaluated.
+	//
+	// When multiple virtual hosts share the same reverse-proxy IP:port, L7 hostname
+	// filtering is applied:
+	//   - HTTPS: iptables string-matches the TLS SNI (cleartext in ClientHello)
+	//   - HTTP:  iptables string-matches the "Host:" header
+	// Only the Wirety virtual host is reachable before authentication; other vhosts
+	// remain blocked. Subsequent packets in an accepted TCP session are allowed via
+	// the ESTABLISHED/RELATED rule without re-checking the hostname.
 
 	chain := "WIRETY_JUMP"
 	policyChain := "WIRETY_POLICY"
@@ -336,12 +409,54 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	_ = a.run("-N", policyChain)
 	_ = a.run("-F", policyChain)
 
-	// Always allow peers to reach the Wirety server regardless of auth state.
-	// Without this, peers can't complete captive portal authentication when the
-	// server is only reachable via the VPN (not directly over the internet).
-	for _, ip := range a.resolveServerIPs() {
-		if err := a.run("-A", chain, "-i", a.iface, "-d", ip, "-j", "ACCEPT"); err != nil {
-			log.Warn().Err(err).Str("ip", ip).Msg("failed to add Wirety server ACCEPT rule")
+	// Rule 0: allow packets belonging to already-established connections.
+	// Required because string matching (SNI / Host header) only works on the first
+	// packet of a TCP handshake; subsequent packets carry no hostname and would
+	// otherwise be dropped.  Conntrack is available on all modern Linux kernels.
+	_ = a.run("-A", chain, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
+
+	// Rule 1: allow peers to reach the Wirety server so they can complete captive
+	// portal authentication.  Filtering is applied in three layers:
+	//   a) destination IP  — resolved from the server URL at sync time
+	//   b) destination port — derived from the URL scheme (80 / 443 / explicit)
+	//   c) hostname         — SNI for HTTPS, Host header for HTTP
+	// Layer (c) prevents other virtual hosts on the same reverse-proxy from being
+	// reachable. If the server URL uses a bare IP (no hostname), only (a)+(b) apply.
+	endpoint := a.resolveServerEndpoint()
+	for _, ip := range endpoint.ips {
+		base := []string{"-A", chain, "-i", a.iface, "-d", ip, "-p", "tcp", "--dport", endpoint.port}
+
+		if endpoint.hostname != "" {
+			// Build the string-match pattern:
+			//   HTTPS → match raw SNI bytes in TLS ClientHello (appears as the plain
+			//           hostname string inside the extension payload)
+			//   HTTP  → match "Host: <hostname>" header line
+			var pattern string
+			if endpoint.https {
+				pattern = endpoint.hostname
+			} else {
+				pattern = "Host: " + endpoint.hostname
+			}
+
+			rule := append(append([]string{}, base...),
+				"-m", "string", "--algo", "bm", "--string", pattern, "--to", "65535",
+				"-j", "ACCEPT")
+			if err := a.run(rule...); err != nil {
+				// The iptables string module may not be loaded on all kernels.
+				// Log the failure and fall back to port-only filtering so the
+				// captive portal remains functional (with reduced vhost isolation).
+				log.Warn().Err(err).
+					Str("ip", ip).Str("port", endpoint.port).Str("hostname", endpoint.hostname).
+					Msg("string match unavailable — falling back to port-only server ACCEPT rule (other vhosts on same IP:port will be reachable before auth)")
+				fallback := append(append([]string{}, base...), "-j", "ACCEPT")
+				_ = a.run(fallback...)
+			}
+		} else {
+			// Bare-IP server URL: no hostname to match against; use port-only rule.
+			rule := append(append([]string{}, base...), "-j", "ACCEPT")
+			if err := a.run(rule...); err != nil {
+				log.Warn().Err(err).Str("ip", ip).Str("port", endpoint.port).Msg("failed to add Wirety server ACCEPT rule")
+			}
 		}
 	}
 
@@ -365,6 +480,15 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	_ = a.run("-A", chain, "-i", a.iface, "-j", "DROP")
 
 	// Populate WIRETY_POLICY with per-destination rules for authenticated peers.
+	//
+	// When policy rules are present they define the complete access control for
+	// authenticated peers — typically an allowlist ending with a catch-all DROP.
+	// In that case we must NOT append a catch-all ACCEPT after those rules,
+	// because it would be unreachable (dead code after the DROP) or, if inserted
+	// first, would bypass the policy entirely.
+	//
+	// When no policy rules are present we add a catch-all ACCEPT to preserve
+	// backward-compat behaviour: being on the whitelist implies full access.
 	if len(p.IPTablesRules) > 0 {
 		log.Info().Int("rule_count", len(p.IPTablesRules)).Msg("applying policy-based iptables rules")
 		for i, rule := range p.IPTablesRules {
@@ -372,43 +496,38 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 				log.Error().Err(err).Int("rule_index", i).Str("rule", rule).Msg("failed to apply iptables rule")
 			}
 		}
+		log.Debug().Msg("policy rules applied; default verdict determined by policy")
 	} else {
-		log.Debug().Msg("no policy-based iptables rules to apply")
+		// No policy configured — authenticated peer gets full access (legacy behaviour).
+		_ = a.run("-A", policyChain, "-j", "ACCEPT")
+		log.Debug().Msg("no policy rules — catch-all ACCEPT applied (full access for authenticated peers)")
 	}
 
-	// Catch-all ACCEPT at the end of WIRETY_POLICY: an authenticated peer with no
-	// matching explicit policy rule still gets through (maintains prior behaviour
-	// where whitelist = full access).
-	_ = a.run("-A", policyChain, "-j", "ACCEPT")
-
-	log.Debug().Msg("applied policy-based iptables rules")
-
-	// ── Captive portal DNAT chain (WIRETY_CAPTIVE) ─────────────────────────
-	// Redirect unauthenticated peers' HTTP traffic to the local redirect server
-	// which creates a token and sends them to the Wirety captive portal page.
-	if err := exec.Command("sysctl", "-w", "net.ipv4.conf.all.route_localnet=1").Run(); err != nil { // #nosec G204
-		log.Warn().Err(err).Msg("failed to enable route_localnet")
-	}
-
-	captiveChain := "WIRETY_CAPTIVE"
-	_ = a.run("-t", "nat", "-N", captiveChain)
-	_ = a.run("-t", "nat", "-F", captiveChain)
-
-	// Whitelisted peers bypass the DNAT redirect
-	for _, ip := range whitelistedIPs {
-		_ = a.run("-t", "nat", "-A", captiveChain, "-s", ip, "-j", "RETURN")
-	}
-
-	// Redirect all remaining HTTP traffic to the local captive portal server
-	_ = a.run("-t", "nat", "-A", captiveChain,
-		"-i", a.iface, "-p", "tcp", "--dport", "80",
-		"-j", "DNAT", "--to-destination", fmt.Sprintf("127.0.0.1:%d", a.captivePortalPort))
-
-	// Attach WIRETY_CAPTIVE to PREROUTING (idempotent)
-	_ = a.runIfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-i", a.iface, "-j", captiveChain)
+	// Remove legacy WIRETY_CAPTIVE chain if present from a previous agent version
+	// that used DNAT to redirect port-80 traffic to a localhost port.
+	// The captive portal HTTP server now listens directly on the WireGuard interface.
+	_ = a.run("-t", "nat", "-D", "PREROUTING", "-i", a.iface, "-j", "WIRETY_CAPTIVE")
+	_ = a.run("-t", "nat", "-F", "WIRETY_CAPTIVE")
+	_ = a.run("-t", "nat", "-X", "WIRETY_CAPTIVE")
 
 	// Attach chain to FORWARD (insert at top, only if not already attached)
 	_ = a.runIfNotExists("-I", "FORWARD", "1", "-j", chain)
+
+	// Allow peers to reach the services running on the jump peer itself.
+	// Traffic from a peer to the jump peer's own WG IP goes through the INPUT
+	// chain — not FORWARD — so WIRETY_JUMP never sees it. On servers with a
+	// restrictive INPUT policy (UFW default-deny, firewalld, etc.) these packets
+	// are silently dropped before reaching the HTTP or DNS server.
+	//
+	//   Port 80  — captive portal HTTP server (redirect / probe-success)
+	//   Port 53  — DNS server (probe domain interception + peer name resolution)
+	//
+	// These rules are inserted idempotently and must come before any DROP rule
+	// that the host firewall may have added to the INPUT chain.
+	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
+	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "ACCEPT")
+	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "udp", "--dport", "53", "-j", "ACCEPT")
+	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "53", "-j", "ACCEPT")
 
 	// MASQUERADE on every egress interface so that forwarded traffic is NATed
 	// regardless of which interface the routing table selects for a given destination.

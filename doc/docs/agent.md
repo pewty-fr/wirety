@@ -89,6 +89,20 @@ The `SERVER_HOST` override is applied to **all** outbound connections from the a
 - WebSocket connection (`/api/v1/ws`)
 - Captive portal token creation (`/api/v1/captive-portal/token`)
 
+### Captive portal vhost isolation with `SERVER_HOST`
+
+The captive portal iptables rules derive the virtual hostname for SNI/Host filtering from `SERVER_URL`, not from `SERVER_HOST`. When `SERVER_URL` contains a bare IP (e.g. `http://10.0.0.7`), the agent cannot perform hostname-level filtering and falls back to port-only filtering — other virtual hosts on the same IP:port become reachable before authentication completes.
+
+To get both no-DNS access **and** hostname isolation, use a resolvable hostname in `SERVER_URL` and omit `SERVER_HOST`:
+
+```bash
+# Preferred: DNS resolves wirety.internal → 10.0.0.7
+# Agent connects to IP, SNI/Host filtering uses "wirety.internal"
+wirety-agent -server http://wirety.internal -token <TOKEN>
+```
+
+If DNS is genuinely unavailable, `SERVER_HOST` + a bare-IP `SERVER_URL` still works — you simply lose vhost isolation for unauthenticated peers. See [Reverse Proxy and Virtual Host Isolation](captive-portal#reverse-proxy-and-virtual-host-isolation) for the full security implications.
+
 ## NAT Interface Detection
 
 On jump peers, the agent adds a `MASQUERADE` rule for every egress interface so that forwarded traffic is correctly NATed regardless of which interface the routing table selects for a given destination.
@@ -112,7 +126,13 @@ export NAT_INTERFACES=ens6
 |-------------|--------|
 | WireGuard kernel/module | Interface creation |
 | curl / TLS libs | Enrollment requests |
-| Sufficient permissions | Configure network interface |
+| Sufficient permissions | Configure network interface, run iptables |
+| Port 80 free on WireGuard interface IP | Captive portal HTTP server binds to `<wg-ip>:80` |
+| Port 443 free on WireGuard interface IP | Captive portal HTTPS server binds to `<wg-ip>:443` (self-signed cert) |
+| `nf_conntrack` kernel module | Conntrack state matching in captive portal firewall rules |
+| `xt_string` kernel module | SNI / Host-header vhost isolation in captive portal firewall rules |
+
+The agent calls `modprobe nf_conntrack` and `modprobe xt_string` automatically at startup. These modules ship with the kernel on all mainstream distributions and require no manual installation. If either module is unavailable, the agent logs a warning and continues with degraded captive portal vhost isolation. See [Kernel Module Requirements](captive-portal#kernel-module-requirements) for persistence and troubleshooting.
 
 ## Security
 - Token used only at enrollment; store ephemeral auth afterward.
