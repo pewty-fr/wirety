@@ -71,7 +71,7 @@ jobs:
       - run: |
           echo "date=$(date -u +'%Y-%m-%dT%H-%M-%SZ')" >> "$GITHUB_OUTPUT"
         id: vars
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: latest
           token: ${{ secrets.GITHUB_TOKEN }} # only needed if version is 'latest'

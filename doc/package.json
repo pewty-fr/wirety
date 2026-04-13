@@ -30,7 +30,7 @@
     "@docusaurus/module-type-aliases": "3.9.2",
     "@docusaurus/tsconfig": "3.9.2",
     "@docusaurus/types": "3.9.2",
-    "typescript": "~5.9.3"
+    "typescript": "~6.0.2"
   },
   "browserslist": {
     "production": [
@@ -43,6 +43,9 @@
       "last 3 firefox version",
       "last 5 safari version"
     ]
+  },
+  "overrides": {
+    "webpackbar": "^7.0.0"
   },
   "engines": {
     "node": ">=20.0"

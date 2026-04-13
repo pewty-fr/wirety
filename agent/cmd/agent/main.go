@@ -33,6 +33,9 @@ func main() {
 	logFormat := envOr("LOG_FORMAT", "text")
 	auditEnabled := envOr("AUDIT_LOG", "false") == "true"
 
+	auditEnabled := envOr("AUDIT_LOG", "false") == "true"
+	audit.Init(auditEnabled)
+
 	server := envOr("SERVER_URL", "http://localhost:8080")
 	token := envOr("TOKEN", "")
 	configPath := envOr("WG_CONFIG_PATH", "")
