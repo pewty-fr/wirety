@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -272,11 +273,11 @@ func TestDiscover_ContextCancellation(t *testing.T) {
 }
 
 func TestDiscover_ConcurrentAccess(t *testing.T) {
-	requestCount := 0
+	var requestCount atomic.Int64
 
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
+		requestCount.Add(1)
 
 		// Add small delay to increase chance of concurrent access
 		time.Sleep(10 * time.Millisecond)
@@ -315,11 +316,12 @@ func TestDiscover_ConcurrentAccess(t *testing.T) {
 
 	// Due to caching, we should have fewer requests than goroutines
 	// (though exact number depends on timing)
-	if requestCount > 5 {
-		t.Errorf("Expected at most 5 requests, got %d", requestCount)
+	count := requestCount.Load()
+	if count > 5 {
+		t.Errorf("Expected at most 5 requests, got %d", count)
 	}
 
-	if requestCount < 1 {
-		t.Errorf("Expected at least 1 request, got %d", requestCount)
+	if count < 1 {
+		t.Errorf("Expected at least 1 request, got %d", count)
 	}
 }

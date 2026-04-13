@@ -1,20 +1,29 @@
 ---
 id: isolate-peer
-title: Isolation d'un Peer
+title: Peer - Isolation
+sidebar_position: 2
 ---
 
-Ce guide décrit comment isoler rapidement un peer en cas de comportement suspect.
+Objectif : Empêcher la communication latérale entre un peer et les autres tout en conservant la connectivité avec le jump peer.
 
-## Méthode ACL
-Ajouter l'identifiant du peer dans `BlockedPeers` de l'ACL du réseau.
+:::caution Ancienne approche supprimée
+Le flag `is_isolated` sur les peers a été **supprimé**. Utilisez le système Groupes & Politiques à la place (voir ci-dessous).
+:::
 
-## Via l'interface
-1. Aller sur **Networks → ACL**.
-2. Ajouter le peer dans la liste `BlockedPeers`.
-3. Sauvegarder pour pousser la mise à jour.
+## Étapes (approche actuelle — Politiques)
 
-## Résultat
-Le peer reste visible mais perd la connectivité logique (sessions dégradées).
+1. Créer (ou réutiliser) un **Groupe** contenant uniquement le peer à isoler.
+2. Créer une **Politique** avec des règles qui refusent le trafic peer-à-peer tout en autorisant le trafic vers/depuis le jump peer.
+3. Attacher la politique au groupe.
+4. Les peers basés sur agent se mettent à jour automatiquement ; les peers statiques doivent télécharger une nouvelle configuration.
 
-## Résolution
-Retirer l'identifiant de `BlockedPeers` puis sauvegarder.
+Consultez [Groupes, Politiques & Routes](../groups-policies-routes-overview) pour tous les détails.
+
+## Vérification
+- Le ping depuis le peer isolé vers un autre peer regular échoue.
+- Le ping vers le jump peer réussit.
+
+## Cas d'utilisation
+- Appareil non fiable.
+- Hôte d'environnement de staging.
+- Accès invité.

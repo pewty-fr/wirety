@@ -912,8 +912,8 @@ done
 
 - [API Reference](./api-reference.md) - Complete API documentation
 - [Migration Guide](./migration-guide.md) - Migrating from legacy system
-- [Architecture](./architecture.md) - System architecture overview
-- [Troubleshooting](./troubleshooting.md) - Detailed troubleshooting guide
+- Architecture - System architecture overview
+- Troubleshooting - Detailed troubleshooting guide
 
 ---
 

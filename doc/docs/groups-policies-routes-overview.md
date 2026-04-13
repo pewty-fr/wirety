@@ -266,14 +266,14 @@ iptables -L -n -v
 wg show
 ```
 
-**Full Guide:** [Troubleshooting](./troubleshooting.md)
+**Full Guide:** See the Troubleshooting page in the sidebar.
 
 ## Support
 
 ### Documentation
 - [API Reference](./api-reference.md)
 - [User Guide](./user-guide.md)
-- [Troubleshooting](./troubleshooting.md)
+- Troubleshooting (see sidebar)
 
 ### Getting Help
 1. Check documentation and troubleshooting guides
