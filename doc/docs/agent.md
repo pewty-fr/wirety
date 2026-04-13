@@ -39,6 +39,11 @@ Options:
         (env: SERVER_HOST, default: derived from -server URL)
         Useful when accessing the Wirety server by IP behind a reverse proxy
         that routes by hostname (e.g. SERVER_URL=http://10.0.0.7 SERVER_HOST=wirety.internal)
+  -skip-tls-verify
+        Disable TLS certificate verification for connections to the server
+        (env: SKIP_TLS_VERIFY, default: false)
+        Use only when the server uses a self-signed or internally-signed certificate
+        that the agent host cannot verify. Never use in production with public certificates.
 ```
 
 ## Usage Example
@@ -62,6 +67,14 @@ wirety-agent -server http://10.0.0.7 -server-host wirety.internal -token <TOKEN>
 export SERVER_URL=http://10.0.0.7
 export SERVER_HOST=wirety.internal
 wirety-agent
+
+# Reverse proxy with self-signed certificate (disable TLS verification)
+wirety-agent \
+  -server https://10.0.0.1 \
+  -server-host wirety.internal \
+  -portal-url https://wirety.internal/captive-portal \
+  -skip-tls-verify \
+  -token <TOKEN>
 ```
 
 ## Reverse Proxy / No-DNS Access (`SERVER_HOST`)

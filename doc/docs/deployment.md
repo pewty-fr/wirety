@@ -224,32 +224,309 @@ server {
 ### Manual Installation
 
 ```bash
-# Download agent
-curl -fsSL https://github.com/pewty-fr/wirety/releases/latest/download/wirety-agent-linux-amd64 -o /usr/local/bin/wirety-agent
-chmod +x /usr/local/bin/wirety-agent
+# Detect architecture
+ARCH=$(uname -m)
+case $ARCH in
+  x86_64)  ARCH="amd64" ;;
+  aarch64) ARCH="arm64" ;;
+esac
 
-# Create systemd service
-cat > /etc/systemd/system/wirety-agent.service <<EOF
+# Download the agent binary
+curl -fsSL "https://github.com/pewty-fr/wirety/releases/latest/download/wirety-agent-linux-${ARCH}" \
+  -o /usr/local/bin/wirety-agent
+chmod +x /usr/local/bin/wirety-agent
+```
+
+### Systemd Service
+
+The following unit file provides a production-ready configuration with security hardening and automatic restarts.
+
+```ini
 [Unit]
-Description=Wirety Agent
-After=network.target
+Description=Wirety Agent VPN Service
+Documentation=https://github.com/pewty-fr/wirety
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-Environment="SERVER_URL=https://wirety.example.com"
-Environment="TOKEN=your-enrollment-token"
-Environment="WG_INTERFACE=wg0"
-ExecStart=/usr/local/bin/wirety-agent
+ExecStart=/usr/local/bin/wirety-agent \
+  --token <ENROLLMENT_TOKEN> \
+  --server https://wirety.example.com \
+  --portal-url https://wirety.example.com/captive-portal
 Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=append:/var/log/wirety/wirety.log
+StandardError=append:/var/log/wirety/wirety.log
+
+# Runtime directories (created by systemd before start)
+RuntimeDirectory=wireguard
+RuntimeDirectoryMode=0755
+LogsDirectory=wirety
+LogsDirectoryMode=0750
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/wireguard
+PrivateTmp=yes
+PrivateDevices=no
+ProtectKernelTunables=no
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=512
 
 [Install]
 WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable wirety-agent
-systemctl start wirety-agent
 ```
+
+For **reverse-proxy setups** where the server is accessed by IP (no DNS), add `--server-host` and optionally `--skip-tls-verify` if the proxy uses a self-signed certificate:
+
+```ini
+ExecStart=/usr/local/bin/wirety-agent \
+  --token <ENROLLMENT_TOKEN> \
+  --server https://10.0.0.1 \
+  --server-host wirety.internal \
+  --portal-url https://wirety.internal/captive-portal \
+  --skip-tls-verify
+```
+
+Enable and start the service:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now wirety
+```
+
+View logs:
+
+```bash
+journalctl -u wirety -f
+```
+
+### Cloud-Init (Automated Jump Peer Provisioning)
+
+The following cloud-init config fully provisions a jump peer VM from scratch — kernel modules, sysctl tuning, security hardening, automatic updates, and Wirety agent installation. Substitute the `${token}`, `${server}`, and `${host}` variables before use.
+
+```yaml
+#cloud-config
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+
+timezone: Europe/Paris
+locale: en_US.UTF-8
+
+packages:
+  # Base utilities
+  - curl
+  - wget
+  - ca-certificates
+  - git
+  - jq
+  # WireGuard
+  - wireguard
+  - wireguard-tools
+  # Network diagnostics
+  - net-tools
+  - bind9-dnsutils
+  - iputils-ping
+  - traceroute
+  - tcpdump
+  # System monitoring
+  - htop
+  - lsof
+  # Log management
+  - logrotate
+  # Security
+  - fail2ban
+  - unattended-upgrades
+  # Time sync
+  - chrony
+
+write_files:
+  # Kernel modules required by Wirety iptables rules
+  - path: /etc/modules-load.d/wirety.conf
+    content: |
+      # Required for iptables string matching (SNI / Host-header vhost isolation)
+      xt_string
+      # Required for connection tracking (ESTABLISHED/RELATED rules)
+      nf_conntrack
+
+  # Sysctl tuning: IP forwarding, security hardening, TCP performance
+  - path: /etc/sysctl.d/99-wirety.conf
+    content: |
+      # IP forwarding for WireGuard VPN
+      net.ipv4.ip_forward = 1
+      net.ipv6.conf.all.forwarding = 1
+
+      # Reverse path filtering
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.conf.default.rp_filter = 1
+
+      # Disable ICMP redirects
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv4.conf.default.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv6.conf.all.accept_redirects = 0
+
+      # Ignore broadcast pings
+      net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+      # TCP tuning
+      net.core.somaxconn = 65535
+      net.ipv4.tcp_rmem = 4096 87380 16777216
+      net.ipv4.tcp_wmem = 4096 65536 16777216
+
+      # Increase file descriptor limit
+      fs.file-max = 1000000
+
+  - path: /etc/security/limits.d/99-wirety.conf
+    content: |
+      * soft nofile 65536
+      * hard nofile 65536
+      root soft nofile 65536
+      root hard nofile 65536
+
+  # Log rotation for Wirety logs
+  - path: /etc/logrotate.d/wirety
+    content: |
+      /var/log/wirety/*.log {
+        daily
+        rotate 14
+        compress
+        delaycompress
+        missingok
+        notifempty
+        create 0640 root root
+      }
+
+  # fail2ban: protect SSH
+  - path: /etc/fail2ban/jail.local
+    content: |
+      [DEFAULT]
+      bantime  = 1h
+      findtime = 10m
+      maxretry = 5
+
+      [sshd]
+      enabled = true
+
+  # Unattended security upgrades
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+  - path: /etc/apt/apt.conf.d/50unattended-upgrades
+    content: |
+      Unattended-Upgrade::Allowed-Origins {
+        "${distro_id}:${distro_codename}-security";
+      };
+      Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+      Unattended-Upgrade::MinimalSteps "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Automatic-Reboot "false";
+
+  # Wirety systemd unit
+  - path: /etc/systemd/system/wirety.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Wirety Agent VPN Service
+      Documentation=https://github.com/pewty-fr/wirety
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/wirety-agent \
+        --token ${token} \
+        --server ${server} \
+        --server-host ${host} \
+        --portal-url https://${host}/captive-portal \
+        --skip-tls-verify
+      Restart=on-failure
+      RestartSec=5
+      TimeoutStopSec=30
+      StandardOutput=append:/var/log/wirety/wirety.log
+      StandardError=append:/var/log/wirety/wirety.log
+      RuntimeDirectory=wireguard
+      RuntimeDirectoryMode=0755
+      LogsDirectory=wirety
+      LogsDirectoryMode=0750
+      NoNewPrivileges=yes
+      ProtectSystem=strict
+      ProtectHome=yes
+      ReadWritePaths=/etc/wireguard
+      PrivateTmp=yes
+      PrivateDevices=no
+      ProtectKernelTunables=no
+      ProtectKernelModules=yes
+      ProtectControlGroups=yes
+      RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+      RestrictNamespaces=yes
+      LockPersonality=yes
+      MemoryDenyWriteExecute=yes
+      RestrictRealtime=yes
+      LimitNOFILE=65536
+      LimitNPROC=512
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Install script: downloads the agent binary and configures the system
+  - path: /usr/local/bin/install-wirety.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      WIRETY_VERSION="1.0.0"
+      ARCH=$(uname -m)
+      case $ARCH in
+        x86_64)  ARCH="amd64" ;;
+        aarch64) ARCH="arm64" ;;
+        *)
+          echo "Unsupported architecture: $ARCH" >&2
+          exit 1
+          ;;
+      esac
+
+      echo "Downloading wirety-agent v${WIRETY_VERSION} for ${ARCH}..."
+      curl -fsSL \
+        "https://github.com/pewty-fr/wirety/releases/download/wirety-agent%2Fv${WIRETY_VERSION}/wirety-agent-linux-${ARCH}" \
+        -o /usr/local/bin/wirety-agent
+      chmod +x /usr/local/bin/wirety-agent
+
+      systemctl daemon-reload
+      systemctl enable --now wirety
+      systemctl enable --now fail2ban
+
+runcmd:
+  - modprobe xt_string || true
+  - modprobe nf_conntrack || true
+  - sysctl --system
+  - /usr/local/bin/install-wirety.sh
+  - echo "Wirety installation completed at $(date -u)" >> /var/log/cloud-init-output.log
+```
+
+:::caution `--skip-tls-verify`
+The `--skip-tls-verify` flag disables TLS certificate validation for the connection between the agent and the Wirety server. Only use it when the server is behind a reverse proxy with a self-signed certificate that the agent cannot verify (e.g. internal CA). Never use it in production environments with publicly signed certificates.
+:::
 
 ### Ansible Playbook
 
@@ -259,32 +536,31 @@ systemctl start wirety-agent
 - name: Deploy Wirety Agent
   hosts: wirety_peers
   become: yes
-  
+
   vars:
     wirety_server_url: "https://wirety.example.com"
     wirety_token: "{{ lookup('env', 'WIRETY_TOKEN') }}"
-    wirety_interface: "wg0"
-    
+
   tasks:
     - name: Install WireGuard
       apt:
         name: wireguard
         state: present
-        
+
     - name: Download Wirety agent
       get_url:
-        url: https://github.com/pewty-fr/wirety/releases/latest/download/wirety-agent-linux-amd64
+        url: "https://github.com/pewty-fr/wirety/releases/latest/download/wirety-agent-linux-{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
         dest: /usr/local/bin/wirety-agent
         mode: '0755'
-        
+
     - name: Create systemd service
       template:
-        src: wirety-agent.service.j2
-        dest: /etc/systemd/system/wirety-agent.service
-        
+        src: wirety.service.j2
+        dest: /etc/systemd/system/wirety.service
+
     - name: Enable and start agent
       systemd:
-        name: wirety-agent
+        name: wirety
         enabled: yes
         state: started
         daemon_reload: yes
