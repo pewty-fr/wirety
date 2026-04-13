@@ -86,11 +86,16 @@ html[data-theme='dark'] .iconWrap {
   letter-spacing: .25px;
   background: linear-gradient(90deg, var(--wirety-primary-500), var(--wirety-accent-amber));
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
 html[data-theme='dark'] .title {
-  background: linear-gradient(90deg, var(--wirety-primary-600), #c2410c);
+  /* Use lighter shades so the gradient text is legible on the dark card surface */
+  background: linear-gradient(90deg, #fb923c, var(--wirety-accent-amber));
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 .desc {

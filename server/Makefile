@@ -48,7 +48,7 @@ clean: ## Clean build artifacts
 	rm -f coverage.out coverage.html
 
 swagger: ## Generate Swagger documentation
-	swag init  -o docs/swagger
+	swag init -g cmd/main.go --parseDependency --parseInternal -o docs/swagger
 
 lint: ## Run linters
 	golangci-lint run
