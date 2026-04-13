@@ -945,11 +945,22 @@ function AddRuleModal({
   // Load routes whenever the user switches target type to "route"
   useEffect(() => {
     if (!isOpen || !networkId || targetType !== 'route') return;
-    setLoadingRoutes(true);
-    api.getRoutes(networkId)
-      .then(routesData => setRoutes(routesData))
-      .catch(err => console.error('Failed to load routes:', err))
-      .finally(() => setLoadingRoutes(false));
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => {
+        if (!cancelled) setLoadingRoutes(true);
+        return api.getRoutes(networkId);
+      })
+      .then(routesData => {
+        if (!cancelled) setRoutes(routesData);
+      })
+      .catch(err => {
+        if (!cancelled) console.error('Failed to load routes:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRoutes(false);
+      });
+    return () => { cancelled = true; };
   }, [isOpen, networkId, targetType]);
 
   const handleSubmit = (e: React.FormEvent) => {

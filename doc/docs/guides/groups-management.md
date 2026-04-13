@@ -459,7 +459,4 @@ Schedule regular reviews:
 
 ## Related Documentation
 
-- [Policies Management Guide](./policies-management.md)
-- [Routes Management Guide](./routes-management.md)
-- [Default Groups Configuration](./default-groups.md)
 - [API Reference](../api-reference.md)

@@ -78,6 +78,9 @@ type Runner struct {
 	// Set once by startCaptivePortalServer; protected by captivePortalSrvMu.
 	captivePortalSrv   *captiveportal.Server
 	captivePortalSrvMu sync.Mutex
+	// ifaceMu protects wgInterface which can be updated by handlePeerNameChange
+	// while being read concurrently by the heartbeat and tunnel-monitor goroutines.
+	ifaceMu sync.RWMutex
 }
 
 func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string, peerID string, networkID string) *Runner {
@@ -210,7 +213,7 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					r.sendHeartbeat()
 
 					// Update last known endpoints after sending
-					sysInfo, err := CollectSystemInfo(r.wgInterface)
+					sysInfo, err := CollectSystemInfo(r.getInterface())
 					if err == nil {
 						lastPeerEndpointsMu.Lock()
 						lastPeerEndpoints = sysInfo.PeerEndpoints
@@ -218,7 +221,7 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					}
 				case <-endpointCheckTicker.C:
 					// Check for endpoint changes every 300ms
-					sysInfo, err := CollectSystemInfo(r.wgInterface)
+					sysInfo, err := CollectSystemInfo(r.getInterface())
 					if err != nil {
 						continue
 					}
@@ -390,7 +393,7 @@ func (r *Runner) Start(stop <-chan struct{}) {
 
 // sendHeartbeat sends system information to the server
 func (r *Runner) sendHeartbeat() {
-	sysInfo, err := CollectSystemInfo(r.wgInterface)
+	sysInfo, err := CollectSystemInfo(r.getInterface())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to collect system info for heartbeat")
 		return
@@ -449,6 +452,20 @@ func (r *Runner) SetCurrentPeerName(peerName string) {
 	r.currentPeerName = peerName
 }
 
+// getInterface returns the current WireGuard interface name safely.
+func (r *Runner) getInterface() string {
+	r.ifaceMu.RLock()
+	defer r.ifaceMu.RUnlock()
+	return r.wgInterface
+}
+
+// setInterface updates the WireGuard interface name safely.
+func (r *Runner) setInterface(iface string) {
+	r.ifaceMu.Lock()
+	defer r.ifaceMu.Unlock()
+	r.wgInterface = iface
+}
+
 // handlePeerNameChange detects if the peer name has changed and handles interface transition
 func (r *Runner) handlePeerNameChange(newPeerName string) error {
 	// Skip if no name provided or same as current
@@ -483,7 +500,7 @@ func (r *Runner) handlePeerNameChange(newPeerName string) error {
 
 	// Update our tracking variables
 	r.currentPeerName = newPeerName
-	r.wgInterface = newInterface
+	r.setInterface(newInterface)
 
 	audit.Agent(r.peerID, r.networkID).
 		Str("action", "peer.rename").
@@ -576,8 +593,8 @@ func (r *Runner) monitorTunnels(done <-chan struct{}) {
 		case <-ticker.C:
 		}
 
-		handshakes := GetWireGuardHandshakes(r.wgInterface)
-		endpoints := getWireGuardEndpoints(r.wgInterface)
+		handshakes := GetWireGuardHandshakes(r.getInterface())
+		endpoints := getWireGuardEndpoints(r.getInterface())
 		now := time.Now()
 
 		// Mark peers that still appear in handshakes as seen.
