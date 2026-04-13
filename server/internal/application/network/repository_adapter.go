@@ -158,12 +158,20 @@ func (c *CombinedRepository) RemoveCaptivePortalWhitelist(ctx context.Context, n
 	return c.netRepo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP)
 }
 
+func (c *CombinedRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error {
+	return c.netRepo.RemoveCaptivePortalWhitelistByPeerIP(ctx, networkID, peerIP)
+}
+
 func (c *CombinedRepository) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
 	return c.netRepo.GetCaptivePortalWhitelist(ctx, networkID, jumpPeerID)
 }
 
 func (c *CombinedRepository) ClearCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) error {
 	return c.netRepo.ClearCaptivePortalWhitelist(ctx, networkID, jumpPeerID)
+}
+
+func (c *CombinedRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
+	return c.netRepo.CleanupExpiredCaptivePortalWhitelist(ctx)
 }
 
 // Captive portal token operations

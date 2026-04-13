@@ -15,15 +15,39 @@ class ApiClient {
       },
     });
 
-    // Redirect to login on 401 (session expired or not authenticated)
+    // Redirect to login on 401 (session expired or not authenticated).
+    // Before redirecting, we verify the session via a direct fetch call (bypassing
+    // this interceptor) so that a transient 401 caused by an in-flight token refresh
+    // does not unnecessarily log the user out.  The server refreshes tokens
+    // transparently in its middleware, so a single retry is sufficient.
     this.client.interceptors.response.use(
       (response) => response,
-      (error) => {
+      async (error) => {
         if (error.response?.status === 401) {
-          // Avoid redirect loop if already on login page
-          if (!window.location.pathname.startsWith('/login') && window.location.pathname !== '/') {
-            window.location.href = '/?session_expired=1';
+          // Avoid redirect loop if already on login / root page
+          if (window.location.pathname.startsWith('/login') || window.location.pathname === '/') {
+            return Promise.reject(error);
           }
+
+          // Don't retry a request that is already a retry (avoids infinite loops)
+          if (error.config?._retry) {
+            window.location.href = '/?session_expired=1';
+            return Promise.reject(error);
+          }
+
+          try {
+            // Use native fetch to bypass this Axios interceptor
+            const verifyResp = await fetch('/api/v1/users/me', { credentials: 'include' });
+            if (verifyResp.ok) {
+              // Session is valid (server refreshed the token) — retry original request once
+              error.config._retry = true;
+              return this.client.request(error.config);
+            }
+          } catch {
+            // Network error — fall through to redirect
+          }
+
+          window.location.href = '/?session_expired=1';
         }
         return Promise.reject(error);
       }

@@ -4,15 +4,18 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds the application configuration
 type Config struct {
-	HTTPPort   string     `json:"http_port"`
-	CORSOrigin string     `json:"cors_origin"` // CORS_ORIGIN env var (use * only in development)
-	AuditLog   bool       `json:"audit_log"`   // AUDIT_LOG env var — emit JSON audit events to stdout
-	Auth       AuthConfig `json:"auth"`
-	Database   DBConfig   `json:"database"`
+	HTTPPort    string     `json:"http_port"`
+	CORSOrigins []string   `json:"cors_origins"` // CORS_ORIGIN env var — comma-separated list of allowed origins (use * only in development)
+	AuditLog    bool       `json:"audit_log"`    // AUDIT_LOG env var — emit JSON audit events to stdout
+	LogLevel    string     `json:"log_level"`    // LOG_LEVEL env var — trace|debug|info|warn|error|fatal (default: info)
+	LogFormat   string     `json:"log_format"`   // LOG_FORMAT env var — text|json (default: text)
+	Auth        AuthConfig `json:"auth"`
+	Database    DBConfig   `json:"database"`
 }
 
 // AuthConfig holds authentication-related configuration
@@ -28,9 +31,11 @@ type AuthConfig struct {
 // LoadConfig loads configuration from environment variables
 func LoadConfig() *Config {
 	return &Config{
-		HTTPPort:   getEnv("HTTP_PORT", "8080"),
-		CORSOrigin: getCORSOrigin(),
-		AuditLog:   getEnv("AUDIT_LOG", "false") == "true",
+		HTTPPort:    getEnv("HTTP_PORT", "8080"),
+		CORSOrigins: getCORSOrigins(),
+		AuditLog:    getEnv("AUDIT_LOG", "false") == "true",
+		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		LogFormat:   getEnv("LOG_FORMAT", "text"),
 		Auth: AuthConfig{
 			Enabled:       getEnv("AUTH_ENABLED", "false") == "true",
 			IssuerURL:     getEnv("AUTH_ISSUER_URL", ""),
@@ -54,15 +59,27 @@ type DBConfig struct {
 	Migrations string `json:"migrations"`
 }
 
-// getCORSOrigin reads CORS_ORIGIN with a fallback to the legacy ALLOWED_ORIGIN env var.
-func getCORSOrigin() string {
-	if v := os.Getenv("CORS_ORIGIN"); v != "" {
-		return v
+// getCORSOrigins reads CORS_ORIGIN (or legacy ALLOWED_ORIGIN) and returns a
+// slice of allowed origins.  Multiple origins can be specified as a
+// comma-separated list, e.g. "https://app.example.com,https://admin.example.com".
+func getCORSOrigins() []string {
+	raw := os.Getenv("CORS_ORIGIN")
+	if raw == "" {
+		raw = os.Getenv("ALLOWED_ORIGIN")
 	}
-	if v := os.Getenv("ALLOWED_ORIGIN"); v != "" {
-		return v
+	if raw == "" {
+		return []string{"*"}
 	}
-	return "*"
+	var origins []string
+	for _, o := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(o); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	if len(origins) == 0 {
+		return []string{"*"}
+	}
+	return origins
 }
 
 func getEnv(key, defaultValue string) string {

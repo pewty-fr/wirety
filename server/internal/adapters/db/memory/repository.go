@@ -545,6 +545,21 @@ func (r *Repository) GetCaptivePortalWhitelist(ctx context.Context, networkID, j
 	return ips, nil
 }
 
+func (r *Repository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.captiveWhitelist == nil {
+		return nil
+	}
+	for key, entries := range r.captiveWhitelist {
+		if len(key) > len(networkID) && key[:len(networkID)] == networkID {
+			delete(entries, peerIP)
+		}
+	}
+	return nil
+}
+
 func (r *Repository) ClearCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -553,6 +568,11 @@ func (r *Repository) ClearCaptivePortalWhitelist(ctx context.Context, networkID,
 	if r.captiveWhitelist != nil {
 		delete(r.captiveWhitelist, key)
 	}
+	return nil
+}
+
+func (r *Repository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
+	// In-memory repo has no TTL tracking — no-op
 	return nil
 }
 

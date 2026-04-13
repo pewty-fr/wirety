@@ -293,19 +293,19 @@ func (w *Writer) CleanupOldConfigs() error {
 		basename := filepath.Base(configPath)
 		ifaceName := strings.TrimSuffix(basename, ".conf")
 
-		fmt.Printf("Found old Wirety config: %s (interface: %s)\n", configPath, ifaceName)
+		log.Info().Str("config", configPath).Str("interface", ifaceName).Msg("Found old Wirety config")
 
 		// Try to bring down the interface
 		if err := w.disableInterface(ifaceName); err != nil {
-			fmt.Printf("Warning: failed to disable interface %s: %v\n", ifaceName, err)
+			log.Warn().Err(err).Str("interface", ifaceName).Msg("failed to disable old WireGuard interface")
 			// Continue anyway - we still want to remove the config
 		}
 
 		// Remove the config file
 		if err := os.Remove(configPath); err != nil {
-			fmt.Printf("Warning: failed to remove config %s: %v\n", configPath, err)
+			log.Warn().Err(err).Str("config", configPath).Msg("failed to remove old Wirety config")
 		} else {
-			fmt.Printf("Removed old Wirety config: %s\n", configPath)
+			log.Info().Str("config", configPath).Msg("Removed old Wirety config")
 		}
 	}
 

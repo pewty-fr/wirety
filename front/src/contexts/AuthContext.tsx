@@ -20,6 +20,8 @@ interface AuthContextType {
   user: User | null;
   authConfig: AuthConfig | null;
   isLoading: boolean;
+  oauthError: string | null;
+  clearOauthError: () => void;
   login: () => void;
   simpleLogin: (password: string) => Promise<boolean>;
   logout: () => void;
@@ -34,6 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [oauthError, setOauthError] = useState<string | null>(null);
 
   // Fetch auth config then try to restore session from cookie
   useEffect(() => {
@@ -59,16 +62,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
 
         if (response.ok) {
-          // Server sets httpOnly cookie; remove code from URL then fetch user
+          // Server sets httpOnly cookie — no need to handle the response body
           window.history.replaceState({}, document.title, window.location.pathname);
           await fetchCurrentUser();
+
+          // Resume a captive portal flow that was interrupted by the OIDC redirect.
+          // CaptivePortalPage stores its URL in sessionStorage before calling login()
+          // so we can return here after the OAuth callback completes.
+          const pendingCaptivePortal = sessionStorage.getItem('captive_portal_return');
+          if (pendingCaptivePortal) {
+            sessionStorage.removeItem('captive_portal_return');
+            window.location.href = pendingCaptivePortal;
+            return;
+          }
         } else {
-          const errorText = await response.text();
-          console.error('Session creation failed:', response.status, errorText);
+          const body = await response.text();
+          let message = `Authentication failed (HTTP ${response.status})`;
+          try {
+            const json = JSON.parse(body);
+            if (json.error) message = json.error;
+          } catch {
+            if (body) message = body;
+          }
+          console.error('Session creation failed:', response.status, body);
+          setOauthError(message);
           setIsLoading(false);
         }
       } catch (error) {
         console.error('OAuth callback error:', error);
+        setOauthError(error instanceof Error ? error.message : 'Unexpected error during sign-in');
         setIsLoading(false);
       }
     };
@@ -150,7 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!response.ok) return false;
 
-      // Server sets the httpOnly cookie; just re-fetch the user
+      // Server sets the httpOnly cookie — no need to handle the response body
       await fetchCurrentUser();
       return true;
     } catch (error) {
@@ -195,8 +217,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isAuthenticated = user !== null;
 
+  const clearOauthError = () => setOauthError(null);
+
   return (
-    <AuthContext.Provider value={{ user, authConfig, isLoading, login, simpleLogin, logout, isAuthenticated }}>
+    <AuthContext.Provider value={{ user, authConfig, isLoading, oauthError, clearOauthError, login, simpleLogin, logout, isAuthenticated }}>
       {children}
     </AuthContext.Provider>
   );

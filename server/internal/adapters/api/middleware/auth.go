@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"wirety/internal/application/auth"
@@ -13,6 +14,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// sessionRefreshMu prevents multiple concurrent requests from all trying to
+// refresh the same rotating refresh token simultaneously.  Without this, when
+// an access token expires every goroutine that sees the stale session calls the
+// provider's token endpoint with the same refresh token.  The first call
+// succeeds and stores a new rotating refresh token; the others get
+// invalid_grant, delete the session, and the user is logged out.
+//
+// The map is keyed by session hash; values are *sync.Mutex.
+var sessionRefreshMu sync.Map
+
+func getSessionRefreshLock(sessionHash string) *sync.Mutex {
+	v, _ := sessionRefreshMu.LoadOrStore(sessionHash, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
 
 const apiTokenPrefix = "wirety_"
 
@@ -156,44 +172,89 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		return nil, fmt.Errorf("session expired")
 	}
 
-	// Check if access token needs refresh
-	if session.IsAccessTokenExpired() {
-		// Refresh the access token
-		newAccessToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
+	// refreshOnce performs a single token refresh and updates the session in the DB.
+	// It captures the new refresh token from the provider (important for rotating-token
+	// providers such as Azure Entra ID — discarding it would burn the token and cause
+	// the next refresh to fail with invalid_grant).
+	refreshOnce := func() error {
+		newAccessToken, newRefreshToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
 		if err != nil {
-			// If refresh fails, delete the session
-			_ = userRepo.DeleteSession(sessionHash)
-			return nil, fmt.Errorf("failed to refresh token: %w", err)
+			return err
 		}
-
-		// Update session with new access token
 		session.AccessToken = newAccessToken
 		session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
-		if err := userRepo.UpdateSession(session); err != nil {
-			return nil, fmt.Errorf("failed to update session: %w", err)
+		// Only update refresh token when the provider returned a new one (rotating tokens).
+		if newRefreshToken != "" {
+			session.RefreshToken = newRefreshToken
 		}
+		return userRepo.UpdateSession(session)
+	}
+
+	// Check if access token needs refresh.
+	// Use a per-session mutex so that when multiple concurrent requests all see
+	// the same expired access token, only one of them calls the provider's token
+	// endpoint.  After acquiring the lock the session is re-read from the DB so
+	// that the waiting goroutines transparently pick up the fresh tokens written
+	// by the winner and skip the refresh altogether.
+	alreadyRefreshed := false
+	if session.IsAccessTokenExpired() {
+		mu := getSessionRefreshLock(sessionHash)
+		mu.Lock()
+		// Re-read: the goroutine that won the lock may have already refreshed.
+		if fresh, readErr := userRepo.GetSession(sessionHash); readErr == nil {
+			session = fresh
+			// Re-bind refreshOnce to the updated session so it uses the new refresh token.
+			refreshOnce = func() error {
+				newAccessToken, newRefreshToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
+				if err != nil {
+					return err
+				}
+				session.AccessToken = newAccessToken
+				session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+				if newRefreshToken != "" {
+					session.RefreshToken = newRefreshToken
+				}
+				return userRepo.UpdateSession(session)
+			}
+		}
+		if session.IsAccessTokenExpired() {
+			if err := refreshOnce(); err != nil {
+				mu.Unlock()
+				// Do NOT delete the session: the failure may be a lost race
+				// (another goroutine already consumed the rotating refresh token
+				// and this call got invalid_grant).  The session is still valid;
+				// the next request will re-read the updated tokens and succeed.
+				return nil, fmt.Errorf("failed to refresh token: %w", err)
+			}
+			alreadyRefreshed = true
+		}
+		mu.Unlock()
 	}
 
 	// Validate the access token
 	_, err = authService.ValidateToken(c.Request.Context(), session.AccessToken)
 	if err != nil {
-		// If validation fails, try to refresh
-		newAccessToken, expiresIn, refreshErr := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
+		if alreadyRefreshed {
+			// We just refreshed but the new token is already invalid — something is
+			// fundamentally wrong (e.g. clock skew, revoked key). Don't burn another
+			// refresh token; just fail.
+			_ = userRepo.DeleteSession(sessionHash)
+			return nil, fmt.Errorf("token invalid after refresh: %w", err)
+		}
+
+		// Token invalid but we haven't refreshed yet — try one refresh under lock.
+		mu := getSessionRefreshLock(sessionHash)
+		mu.Lock()
+		refreshErr := refreshOnce()
+		mu.Unlock()
 		if refreshErr != nil {
 			_ = userRepo.DeleteSession(sessionHash)
-			return nil, fmt.Errorf("invalid token and refresh failed")
+			return nil, fmt.Errorf("invalid token and refresh failed: %w", refreshErr)
 		}
 
-		// Update session with new access token
-		session.AccessToken = newAccessToken
-		session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
-		if err := userRepo.UpdateSession(session); err != nil {
-			return nil, fmt.Errorf("failed to update session: %w", err)
-		}
-
-		// Validate the new token
-		_, err = authService.ValidateToken(c.Request.Context(), session.AccessToken)
-		if err != nil {
+		// Validate the freshly obtained token
+		if _, err = authService.ValidateToken(c.Request.Context(), session.AccessToken); err != nil {
+			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("token validation failed after refresh: %w", err)
 		}
 	}

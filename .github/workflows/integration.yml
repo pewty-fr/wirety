@@ -1,5 +1,8 @@
 name: Integration Tests
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     branches:
@@ -8,9 +11,6 @@ on:
       - 'server/internal/application/policy/**'
       - 'agent/internal/adapters/firewall/**'
       - '.github/workflows/integration.yml'
-
-permissions:
-  contents: read
   push:
     branches:
       - main

@@ -14,9 +14,9 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 
 	// [Interface] section
 	sb.WriteString("[Interface]\n")
-	sb.WriteString(fmt.Sprintf("# Name: %s\n", peer.Name))
-	sb.WriteString(fmt.Sprintf("PrivateKey = %s\n", peer.PrivateKey))
-	sb.WriteString(fmt.Sprintf("Address = %s\n", peer.Address))
+	fmt.Fprintf(&sb, "# Name: %s\n", peer.Name)
+	fmt.Fprintf(&sb, "PrivateKey = %s\n", peer.PrivateKey)
+	fmt.Fprintf(&sb, "Address = %s\n", peer.Address)
 	if peer.ListenPort > 0 {
 		sb.WriteString(fmt.Sprintf("ListenPort = %d\n", peer.ListenPort))
 	}
@@ -36,8 +36,6 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 		if dns != "" {
 			sb.WriteString(fmt.Sprintf("DNS = %s\n", dns))
 		}
-	} else {
-		sb.WriteString(fmt.Sprintf("DNS = %s\n", peer.Address))
 	}
 
 	// Jump server packet filtering & forwarding now handled dynamically by agent firewall adapter.

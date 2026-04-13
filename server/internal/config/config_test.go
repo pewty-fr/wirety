@@ -16,8 +16,8 @@ func TestLoadConfig_DefaultValues(t *testing.T) {
 		t.Errorf("Expected HTTPPort to be '8080', got '%s'", config.HTTPPort)
 	}
 
-	if config.AllowedOrigin != "*" {
-		t.Errorf("Expected AllowedOrigin to be '*', got '%s'", config.AllowedOrigin)
+	if len(config.CORSOrigins) != 1 || config.CORSOrigins[0] != "*" {
+		t.Errorf("Expected CORSOrigins to be ['*'], got %v", config.CORSOrigins)
 	}
 
 	// Test Auth defaults
@@ -82,8 +82,8 @@ func TestLoadConfig_EnvironmentVariables(t *testing.T) {
 		t.Errorf("Expected HTTPPort to be '9090', got '%s'", config.HTTPPort)
 	}
 
-	if config.AllowedOrigin != "https://example.com" {
-		t.Errorf("Expected AllowedOrigin to be 'https://example.com', got '%s'", config.AllowedOrigin)
+	if len(config.CORSOrigins) != 1 || config.CORSOrigins[0] != "https://example.com" {
+		t.Errorf("Expected CORSOrigins to be ['https://example.com'], got %v", config.CORSOrigins)
 	}
 
 	// Test Auth environment values
@@ -119,6 +119,24 @@ func TestLoadConfig_EnvironmentVariables(t *testing.T) {
 	expectedMigrations := "/custom/path/migrations"
 	if config.Database.Migrations != expectedMigrations {
 		t.Errorf("Expected Database.Migrations to be '%s', got '%s'", expectedMigrations, config.Database.Migrations)
+	}
+}
+
+func TestLoadConfig_MultipleOrigins(t *testing.T) {
+	clearEnvVars()
+	_ = os.Setenv("CORS_ORIGIN", "https://app.example.com, https://admin.example.com , https://dev.example.com")
+	defer clearEnvVars()
+
+	config := LoadConfig()
+
+	if len(config.CORSOrigins) != 3 {
+		t.Fatalf("Expected 3 CORSOrigins, got %d: %v", len(config.CORSOrigins), config.CORSOrigins)
+	}
+	expected := []string{"https://app.example.com", "https://admin.example.com", "https://dev.example.com"}
+	for i, want := range expected {
+		if config.CORSOrigins[i] != want {
+			t.Errorf("CORSOrigins[%d]: expected %q, got %q", i, want, config.CORSOrigins[i])
+		}
 	}
 }
 
@@ -287,6 +305,7 @@ func TestAuthConfig_BooleanParsing(t *testing.T) {
 func clearEnvVars() {
 	envVars := []string{
 		"HTTP_PORT",
+		"CORS_ORIGIN",
 		"ALLOWED_ORIGIN",
 		"AUTH_ENABLED",
 		"AUTH_ISSUER_URL",

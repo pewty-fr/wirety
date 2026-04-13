@@ -103,7 +103,6 @@ func TestGenerateConfig(t *testing.T) {
 				"PrivateKey = private-key-jump",
 				"Address = 10.0.0.1",
 				"ListenPort = 51820",
-				"DNS = 10.0.0.1",
 				"[Peer]",
 				"# Name: client-peer",
 				"PublicKey = public-key-1",
@@ -113,6 +112,7 @@ func TestGenerateConfig(t *testing.T) {
 			notExpected: []string{
 				"PresharedKey",
 				"Endpoint",
+				"DNS",
 			},
 		},
 		{

@@ -2,6 +2,8 @@ package firewall
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os/exec"
 	"strings"
 	dom "wirety/agent/internal/domain/policy"
@@ -14,21 +16,22 @@ import (
 // Simplified: rules applied each sync by flushing dedicated chain.
 
 type Adapter struct {
-	iface        string
-	natInterface string
-	httpPort     int
-	httpsPort    int
+	iface         string
+	natInterfaces []string // explicit override; nil means auto-detect
+	httpPort      int
+	httpsPort     int
+	serverURL     string // Wirety server URL — peers must always be able to reach it
 }
 
-// NewAdapter creates a new firewall adapter
+// NewAdapter creates a new firewall adapter.
 // wgIface: WireGuard interface name (e.g., "wg0")
-// natIface: NAT interface override (empty string for auto-detection)
-func NewAdapter(wgIface, natIface string) *Adapter {
+// natIfaces: explicit NAT interfaces override; nil or empty slice means auto-detect all
+func NewAdapter(wgIface string, natIfaces []string) *Adapter {
 	return &Adapter{
-		iface:        wgIface,
-		natInterface: natIface, // Empty string means auto-detect
-		httpPort:     3128,     // Default HTTP proxy port
-		httpsPort:    3129,     // Default HTTPS proxy port
+		iface:         wgIface,
+		natInterfaces: natIfaces,
+		httpPort:      3128,
+		httpsPort:     3129,
 	}
 }
 
@@ -38,75 +41,185 @@ func (a *Adapter) SetProxyPorts(httpPort, httpsPort int) {
 	a.httpsPort = httpsPort
 }
 
-// detectDefaultNATInterface detects the default network interface for NAT
-// Returns the interface with the default route (usually the one with internet access)
-func (a *Adapter) detectDefaultNATInterface() string {
-	// Try to get the default route interface
-	cmd := exec.Command("ip", "route", "show", "default") // #nosec G204 - static command
-	output, err := cmd.Output()
-	if err != nil {
-		log.Warn().Err(err).Msg("failed to detect default route, falling back to common interfaces")
-		return a.fallbackNATInterface()
+// EnsureKernelModules loads the kernel modules required for Wirety's iptables rules.
+// It is best-effort: a missing module degrades functionality (logged as a warning)
+// but never prevents the agent from starting.
+//
+// Required modules:
+//   - nf_conntrack — conntrack state matching (ESTABLISHED/RELATED).
+//   - nft_compat   — xtables compatibility layer for iptables-nft; allows xt_string
+//     to be used through the nf_tables backend. No-op on legacy iptables.
+//   - xt_string    — payload string matching for SNI / Host-header vhost isolation.
+//     Works on both legacy iptables and iptables-nft (via nft_compat).
+//     If unavailable, Sync() falls back to port-only server ACCEPT rule.
+func (a *Adapter) EnsureKernelModules() {
+	modules := []struct {
+		name    string
+		purpose string
+	}{
+		{"nf_conntrack", "conntrack state matching (ESTABLISHED/RELATED)"},
+		{"nft_compat", "xtables compatibility layer for iptables-nft (needed for xt_string on nf_tables backend)"},
+		{"xt_string", "payload string matching (SNI / Host-header vhost isolation)"},
 	}
 
-	// Parse output like: "default via 192.168.1.1 dev eth0 proto dhcp metric 100"
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "default") && strings.Contains(line, "dev") {
-			parts := strings.Fields(line)
-			for i, part := range parts {
-				if part == "dev" && i+1 < len(parts) {
-					iface := parts[i+1]
-					log.Info().Str("interface", iface).Msg("detected default NAT interface")
-					return iface
+	for _, m := range modules {
+		if err := exec.Command("modprobe", m.name).Run(); err != nil { // #nosec G204 - static module names
+			log.Warn().
+				Str("module", m.name).
+				Str("purpose", m.purpose).
+				Err(err).
+				Msg("firewall: failed to load kernel module — functionality may be degraded")
+		} else {
+			log.Debug().Str("module", m.name).Msg("kernel module loaded")
+		}
+	}
+}
+
+// SetServerURL stores the Wirety server URL so the adapter can add an unconditional
+// ACCEPT rule for traffic destined to it — unauthenticated peers must always be able
+// to reach the server to complete captive portal authentication.
+func (a *Adapter) SetServerURL(serverURL string) {
+	a.serverURL = serverURL
+}
+
+// serverEndpoint holds the resolved IPs, TCP port, and hostname for the Wirety server.
+type serverEndpoint struct {
+	ips      []string
+	port     string // TCP port string, e.g. "443"
+	hostname string // original hostname (used for SNI / Host-header filtering)
+	https    bool   // true when the scheme is https
+}
+
+// resolveServerEndpoint resolves the Wirety server URL to a list of IP addresses,
+// the TCP port, and the original hostname.
+//
+// The hostname is used for L7 filtering: for HTTPS the TLS SNI is matched (cleartext
+// in ClientHello), for HTTP the Host header is matched.  This restricts
+// unauthenticated peers to Wirety's virtual host only — other apps served by the same
+// reverse-proxy IP:port remain unreachable until captive-portal auth completes.
+func (a *Adapter) resolveServerEndpoint() serverEndpoint {
+	if a.serverURL == "" {
+		return serverEndpoint{}
+	}
+	u, err := url.Parse(a.serverURL)
+	if err != nil {
+		log.Warn().Err(err).Str("server_url", a.serverURL).Msg("failed to parse server URL")
+		return serverEndpoint{}
+	}
+	host := u.Hostname()
+	if host == "" {
+		return serverEndpoint{}
+	}
+
+	// Determine the TCP port: explicit in URL, or scheme default.
+	port := u.Port()
+	isHTTPS := u.Scheme == "https"
+	if port == "" {
+		if isHTTPS {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+
+	ep := serverEndpoint{port: port, https: isHTTPS}
+
+	// If the "host" in the URL is already an IP, hostname filtering is not possible
+	// (there is no SNI / Host header to match against an IP literal).  Fall back to
+	// port-only filtering in that case.
+	if net.ParseIP(host) != nil {
+		ep.ips = []string{host}
+		return ep
+	}
+
+	ep.hostname = host
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		log.Warn().Err(err).Str("host", host).Msg("failed to resolve wirety server hostname")
+		return ep
+	}
+	ep.ips = addrs
+	return ep
+}
+
+// detectNATInterfaces auto-detects all physical egress interfaces that need a
+// MASQUERADE rule by scanning the full routing table. Every unique "dev" entry
+// that is not the WireGuard interface, not loopback, and has an IPv4 address is
+// considered a NAT interface. This handles multi-homed hosts where different
+// destinations exit through different interfaces (e.g. ens2 for internet,
+// ens6 for a private VLAN).
+func (a *Adapter) detectNATInterfaces() []string {
+	cmd := exec.Command("ip", "route", "show") // #nosec G204 - static command
+	output, err := cmd.Output()
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to read routing table, falling back to common interfaces")
+		return a.fallbackNATInterfaces()
+	}
+
+	seen := make(map[string]bool)
+	var ifaces []string
+
+	for _, line := range strings.Split(string(output), "\n") {
+		parts := strings.Fields(line)
+		for i, part := range parts {
+			if part == "dev" && i+1 < len(parts) {
+				iface := parts[i+1]
+				if iface == "lo" || iface == a.iface || seen[iface] {
+					continue
+				}
+				// Only include interfaces that actually have an IPv4 address
+				// (filters out WireGuard tunnels and other virtual interfaces)
+				addrOut, addrErr := exec.Command("ip", "addr", "show", iface).Output() // #nosec G204
+				if addrErr == nil && strings.Contains(string(addrOut), "inet ") {
+					seen[iface] = true
+					ifaces = append(ifaces, iface)
 				}
 			}
 		}
 	}
 
-	log.Warn().Msg("could not parse default route, falling back to common interfaces")
-	return a.fallbackNATInterface()
+	if len(ifaces) == 0 {
+		log.Warn().Msg("no NAT interfaces found in routing table, falling back to common interfaces")
+		return a.fallbackNATInterfaces()
+	}
+
+	log.Info().Strs("interfaces", ifaces).Msg("auto-detected NAT interfaces")
+	return ifaces
 }
 
-// fallbackNATInterface tries common interface names as fallback
-func (a *Adapter) fallbackNATInterface() string {
-	commonInterfaces := []string{"eth0", "ens3", "ens18", "enp0s3", "wlan0", "wlp2s0"}
+// fallbackNATInterfaces tries common interface names when routing-table detection fails
+func (a *Adapter) fallbackNATInterfaces() []string {
+	commonInterfaces := []string{"eth0", "ens2", "ens3", "ens6", "ens18", "enp0s3", "wlan0", "wlp2s0"}
 
+	var found []string
 	for _, iface := range commonInterfaces {
-		// Check if interface exists and is up
-		cmd := exec.Command("ip", "link", "show", iface) // #nosec G204 - controlled interface names
-		if err := cmd.Run(); err == nil {
-			// Check if interface has an IP address
-			cmd = exec.Command("ip", "addr", "show", iface) // #nosec G204 - controlled interface names
-			output, err := cmd.Output()
-			if err == nil && strings.Contains(string(output), "inet ") {
-				log.Info().Str("interface", iface).Msg("using fallback NAT interface")
-				return iface
-			}
+		cmd := exec.Command("ip", "addr", "show", iface) // #nosec G204 - controlled interface names
+		output, err := cmd.Output()
+		if err == nil && strings.Contains(string(output), "inet ") {
+			log.Info().Str("interface", iface).Msg("using fallback NAT interface")
+			found = append(found, iface)
 		}
 	}
 
-	log.Warn().Msg("no suitable NAT interface found")
-	return ""
+	if len(found) == 0 {
+		log.Warn().Msg("no suitable NAT interface found")
+	}
+	return found
 }
 
-// getNATInterface returns the NAT interface to use (config override or auto-detected)
-func (a *Adapter) getNATInterface() string {
-	// If explicitly configured, use that
-	if a.natInterface != "" {
-		log.Debug().Str("interface", a.natInterface).Msg("using configured NAT interface")
-		return a.natInterface
+// getNATInterfaces returns the NAT interfaces to use: the explicit override list
+// if configured, otherwise all auto-detected egress interfaces.
+func (a *Adapter) getNATInterfaces() []string {
+	if len(a.natInterfaces) > 0 {
+		log.Debug().Strs("interfaces", a.natInterfaces).Msg("using configured NAT interfaces")
+		return a.natInterfaces
 	}
 
-	// Otherwise, auto-detect
-	detected := a.detectDefaultNATInterface()
-	if detected != "" {
-		log.Info().Str("interface", detected).Msg("auto-detected NAT interface")
-		return detected
+	detected := a.detectNATInterfaces()
+	if len(detected) == 0 {
+		log.Warn().Msg("no NAT interfaces available - peers will not have internet/routed access")
 	}
-
-	log.Warn().Msg("no NAT interface available - NAT rules will be skipped")
-	return ""
+	return detected
 }
 
 // EnableDebugLogging adds LOG rules to help debug packet drops
@@ -139,104 +252,52 @@ func (a *Adapter) run(args ...string) error {
 // 	return nil
 // }
 
-// ruleExists checks if an iptables rule exists by parsing the rule arguments
-func (a *Adapter) ruleExists(args ...string) bool {
-	// Extract table, chain, and target from args
-	table := "filter"
-	var chain, target string
-
-	// Parse arguments to find table, chain, and jump target
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "-t":
-			if i+1 < len(args) {
-				table = args[i+1]
-				i++
-			}
-		case "-A", "-I":
-			if i+1 < len(args) {
-				chain = args[i+1]
-				i++
-				// Skip position number if present (for -I)
-				if args[i-1] == "-I" && i < len(args) && args[i] != "" && args[i][0] >= '0' && args[i][0] <= '9' {
-					i++
-				}
-			}
-		case "-j":
-			if i+1 < len(args) {
-				target = args[i+1]
-				i++
-			}
-		}
-	}
-
-	if chain == "" || target == "" {
-		return false
-	}
-
-	// Use iptables-save to check if rule exists
-	var cmd *exec.Cmd
-	if table == "filter" {
-		cmd = exec.Command("iptables-save", "-t", "filter") // #nosec G204
-	} else {
-		cmd = exec.Command("iptables-save", "-t", table) // #nosec G204
-	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
-	}
-
-	// Look for the rule in the output
-	// Format: -A CHAIN ... -j TARGET
-	searchPattern := fmt.Sprintf("-A %s ", chain)
-	targetPattern := fmt.Sprintf("-j %s", target)
-
-	lines := string(output)
-	for i := 0; i < len(lines); {
-		end := i
-		for end < len(lines) && lines[end] != '\n' {
-			end++
-		}
-		line := lines[i:end]
-
-		// Check if line contains both chain and target
-		if containsSubstring(line, searchPattern) && containsSubstring(line, targetPattern) {
-			return true
-		}
-
-		i = end + 1
-	}
-
-	return false
-}
-
-// containsSubstring checks if s contains substr
-func containsSubstring(s, substr string) bool {
-	if len(substr) > len(s) {
-		return false
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		match := true
-		for j := 0; j < len(substr); j++ {
-			if s[i+j] != substr[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
-	}
-	return false
-}
-
-// runIfNotExists runs an iptables command only if the rule doesn't already exist
+// runIfNotExists runs an iptables command only if the exact rule doesn't already
+// exist. It uses `iptables -C` (the built-in check command) which returns exit
+// code 0 when the rule is present, matching on every parameter — not just chain
+// and target. This avoids the false-positive bug where a rule like
+// `-o ens2 -j MASQUERADE` would mask a distinct rule `-o ens6 -j MASQUERADE`.
 func (a *Adapter) runIfNotExists(args ...string) error {
-	if a.ruleExists(args...) {
-		return nil // Rule already exists, skip
+	checkArgs := toCheckArgs(args)
+	if exec.Command("iptables", checkArgs...).Run() == nil { // #nosec G204
+		return nil // exact rule already present
 	}
 	return a.run(args...)
+}
+
+// toCheckArgs converts -A/-I arguments to their -C (check) equivalent.
+// `iptables -C` does not accept a position number, so for `-I CHAIN N …` the
+// position N is dropped, producing `-C CHAIN …`.
+func toCheckArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-A":
+			out = append(out, "-C")
+		case "-I":
+			out = append(out, "-C")
+			// -I CHAIN [position] → -C CHAIN  (skip numeric position if present)
+			if i+2 < len(args) && isPositiveInt(args[i+2]) {
+				out = append(out, args[i+1]) // chain name
+				i += 2                       // skip chain name + position
+			}
+		default:
+			out = append(out, args[i])
+		}
+	}
+	return out
+}
+
+func isPositiveInt(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // applyIPTablesRule parses and applies a single iptables rule to the specified chain
@@ -312,62 +373,170 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	// TODO: Apply IPv6 firewall rules (ip6tables) based on policies
 	// For now, IPv6 traffic is allowed but not filtered by policies
 	// This should be implemented as part of full dual-stack support
-	// Create custom chain if it doesn't exist, then flush it
+
+	// ── Two-chain design ────────────────────────────────────────────────────
+	//
+	// WIRETY_JUMP (authentication gate, in FORWARD):
+	//   0. ESTABLISHED/RELATED   → ACCEPT  (conntrack: ongoing sessions pass through)
+	//   1. Wirety server IPs     → ACCEPT  (only Wirety port+hostname; captive portal reachable)
+	//   2. Whitelisted peer IP   → jump to WIRETY_POLICY
+	//   3. Everything else       → DROP    (unauthenticated peers blocked on ALL ports)
+	//
+	// WIRETY_POLICY (per-destination rules, only reached by authenticated peers):
+	//   1. Explicit policy rules (ACCEPT/DROP per destination CIDR)
+	//   2. Catch-all ACCEPT    (backward compat: authenticated = full access by default)
+	//
+	// This prevents unauthenticated peers from bypassing the captive portal via HTTPS
+	// or any other port that is not intercepted by the DNAT rule: they hit the DROP in
+	// WIRETY_JUMP before any policy rule is ever evaluated.
+	//
+	// When multiple virtual hosts share the same reverse-proxy IP:port, L7 hostname
+	// filtering is applied:
+	//   - HTTPS: iptables string-matches the TLS SNI (cleartext in ClientHello)
+	//   - HTTP:  iptables string-matches the "Host:" header
+	// Only the Wirety virtual host is reachable before authentication; other vhosts
+	// remain blocked. Subsequent packets in an accepted TCP session are allowed via
+	// the ESTABLISHED/RELATED rule without re-checking the hostname.
+
 	chain := "WIRETY_JUMP"
-	// Try to create the chain (will fail silently if it already exists)
+	policyChain := "WIRETY_POLICY"
+
 	_ = a.run("-N", chain)
 	_ = a.run("-F", chain)
+	_ = a.run("-N", policyChain)
+	_ = a.run("-F", policyChain)
 
-	// Build whitelist map for quick lookup (needed for blocking rules)
-	whitelisted := make(map[string]bool)
-	for _, ip := range whitelistedIPs {
-		whitelisted[ip] = true
+	// Rule 0: allow packets belonging to already-established connections.
+	// Required because string matching (SNI / Host header) only works on the first
+	// packet of a TCP handshake; subsequent packets carry no hostname and would
+	// otherwise be dropped.  Conntrack is available on all modern Linux kernels.
+	_ = a.run("-A", chain, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
+
+	// Rule 1: allow peers to reach the Wirety server so they can complete captive
+	// portal authentication.  Filtering is applied in three layers:
+	//   a) destination IP  — resolved from the server URL at sync time
+	//   b) destination port — derived from the URL scheme (80 / 443 / explicit)
+	//   c) hostname         — SNI for HTTPS, Host header for HTTP
+	// Layer (c) prevents other virtual hosts on the same reverse-proxy from being
+	// reachable. If the server URL uses a bare IP (no hostname), only (a)+(b) apply.
+	endpoint := a.resolveServerEndpoint()
+	for _, ip := range endpoint.ips {
+		base := []string{"-A", chain, "-i", a.iface, "-d", ip, "-p", "tcp", "--dport", endpoint.port}
+
+		if endpoint.hostname != "" {
+			// Build the string-match pattern:
+			//   HTTPS → match raw SNI bytes in TLS ClientHello (appears as the plain
+			//           hostname string inside the extension payload)
+			//   HTTP  → match "Host: <hostname>" header line
+			var pattern string
+			if endpoint.https {
+				pattern = endpoint.hostname
+			} else {
+				pattern = "Host: " + endpoint.hostname
+			}
+
+			rule := append(append([]string{}, base...),
+				"-m", "string", "--algo", "bm", "--string", pattern, "--to", "65535",
+				"-j", "ACCEPT")
+			if err := a.run(rule...); err != nil {
+				// xt_string loaded but rule still failed — fall back to port-only.
+				log.Warn().Err(err).
+					Str("ip", ip).Str("port", endpoint.port).Str("hostname", endpoint.hostname).
+					Msg("string match rule failed — falling back to port-only server ACCEPT rule (other vhosts on same IP:port will be reachable before auth)")
+				fallback := append(append([]string{}, base...), "-j", "ACCEPT")
+				_ = a.run(fallback...)
+			}
+		} else {
+			// Bare-IP server URL: no hostname to match against; use port-only rule.
+			rule := append(append([]string{}, base...), "-j", "ACCEPT")
+			if err := a.run(rule...); err != nil {
+				log.Warn().Err(err).Str("ip", ip).Str("port", endpoint.port).Msg("failed to add Wirety server ACCEPT rule")
+			}
+		}
 	}
 
-	// Apply policy-based iptables rules in order
-	// These rules are generated by the server based on policies attached to groups
+	// Authenticated peers jump to the policy chain; all others hit the DROP below.
+	for _, ip := range whitelistedIPs {
+		if err := a.run("-A", chain, "-i", a.iface, "-s", ip, "-j", policyChain); err != nil {
+			log.Warn().Err(err).Str("ip", ip).Msg("failed to add whitelist jump rule")
+		}
+	}
+
+	// For unauthenticated peers, reject HTTPS (443) with a TCP RST so the
+	// browser fails immediately instead of spinning for ~30 s on a silent DROP.
+	// This also nudges the OS captive-portal detection flow: the HTTP probes
+	// that every modern OS (iOS, Android, Windows, macOS) sends on network join
+	// are plain HTTP — they hit the DNAT rule above and reach the captive portal.
+	// Note: a full HTTPS → captive-portal redirect is not feasible because it
+	// requires TLS termination with a valid certificate; self-signed certs cause
+	// browser warnings and HSTS-preloaded sites (most major domains) refuse to
+	// show the warning at all.
+	_ = a.run("-A", chain, "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "REJECT", "--reject-with", "tcp-reset")
+	_ = a.run("-A", chain, "-i", a.iface, "-j", "DROP")
+
+	// Populate WIRETY_POLICY with per-destination rules for authenticated peers.
+	//
+	// When policy rules are present they define the complete access control for
+	// authenticated peers — typically an allowlist ending with a catch-all DROP.
+	// In that case we must NOT append a catch-all ACCEPT after those rules,
+	// because it would be unreachable (dead code after the DROP) or, if inserted
+	// first, would bypass the policy entirely.
+	//
+	// When no policy rules are present we add a catch-all ACCEPT to preserve
+	// backward-compat behaviour: being on the whitelist implies full access.
 	if len(p.IPTablesRules) > 0 {
 		log.Info().Int("rule_count", len(p.IPTablesRules)).Msg("applying policy-based iptables rules")
 		for i, rule := range p.IPTablesRules {
-			if err := a.applyIPTablesRule(chain, rule); err != nil {
+			if err := a.applyIPTablesRule(policyChain, rule); err != nil {
 				log.Error().Err(err).Int("rule_index", i).Str("rule", rule).Msg("failed to apply iptables rule")
-				// Continue applying other rules even if one fails
 			}
 		}
+		log.Debug().Msg("policy rules applied; default verdict determined by policy")
 	} else {
-		log.Debug().Msg("no policy-based iptables rules to apply")
+		// No policy configured — authenticated peer gets full access (legacy behaviour).
+		_ = a.run("-A", policyChain, "-j", "ACCEPT")
+		log.Debug().Msg("no policy rules — catch-all ACCEPT applied (full access for authenticated peers)")
 	}
 
-	_ = a.run("-A", chain,
-		"-i", a.iface,
-		"-j", "DROP")
-
-	// Default deny rule at the end for policy-based access control
-	// This ensures that any traffic not explicitly allowed by policies is denied
-	// Note: The server generates the final "iptables -A FORWARD -j DROP" rule
-	// which will be applied to our custom chain
-
-	log.Debug().Msg("applied policy-based iptables rules")
+	// Remove legacy WIRETY_CAPTIVE chain if present from a previous agent version
+	// that used DNAT to redirect port-80 traffic to a localhost port.
+	// The captive portal HTTP server now listens directly on the WireGuard interface.
+	_ = a.run("-t", "nat", "-D", "PREROUTING", "-i", a.iface, "-j", "WIRETY_CAPTIVE")
+	_ = a.run("-t", "nat", "-F", "WIRETY_CAPTIVE")
+	_ = a.run("-t", "nat", "-X", "WIRETY_CAPTIVE")
 
 	// Attach chain to FORWARD (insert at top, only if not already attached)
 	_ = a.runIfNotExists("-I", "FORWARD", "1", "-j", chain)
 
-	// NAT (MASQUERADE) for internet access (only add if not already present)
-	natIface := a.getNATInterface()
-	if natIface != "" {
-		if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
-			log.Warn().Err(err).Str("interface", natIface).Msg("failed to add NAT rule")
-		} else {
-			log.Debug().Str("interface", natIface).Msg("NAT rule configured")
-		}
+	// Allow peers to reach the services running on the jump peer itself.
+	// Traffic from a peer to the jump peer's own WG IP goes through the INPUT
+	// chain — not FORWARD — so WIRETY_JUMP never sees it. On servers with a
+	// restrictive INPUT policy (UFW default-deny, firewalld, etc.) these packets
+	// are silently dropped before reaching the HTTP or DNS server.
+	//
+	//   Port 80  — captive portal HTTP server (redirect / probe-success)
+	//   Port 53  — DNS server (probe domain interception + peer name resolution)
+	//
+	// These rules are inserted idempotently and must come before any DROP rule
+	// that the host firewall may have added to the INPUT chain.
+	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
+	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "ACCEPT")
+	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "udp", "--dport", "53", "-j", "ACCEPT")
+	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "53", "-j", "ACCEPT")
 
-		// TODO: Add IPv6 NAT (MASQUERADE) support
-		// IPv6 NAT requires ip6tables -t nat which may not be available on all systems
-		// if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
-		//     log.Debug().Err(err).Msg("IPv6 NAT not available (normal on many systems)")
-		// }
-	} else {
-		log.Info().Msg("no NAT interface configured - peers will not have internet access")
+	// MASQUERADE on every egress interface so that forwarded traffic is NATed
+	// regardless of which interface the routing table selects for a given destination.
+	// Example: ens2 for internet, ens6 for a private VLAN — both need MASQUERADE.
+	natIfaces := a.getNATInterfaces()
+	if len(natIfaces) == 0 {
+		log.Info().Msg("no NAT interfaces configured — peers will not have routed access")
+	}
+	for _, natIface := range natIfaces {
+		if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
+			log.Warn().Err(err).Str("interface", natIface).Msg("failed to add MASQUERADE rule")
+		} else {
+			log.Debug().Str("interface", natIface).Msg("MASQUERADE rule configured")
+		}
 	}
 	return nil
 }

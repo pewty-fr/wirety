@@ -9,13 +9,24 @@ import (
 // Client implements WebSocketClientPort.
 // Minimal wrapper to abstract library specifics.
 type Client struct {
-	conn *websocket.Conn
+	conn   *websocket.Conn
+	dialer *websocket.Dialer
 }
 
-func NewClient() *Client { return &Client{} }
+// NewClient returns a Client using the default WebSocket dialer.
+func NewClient() *Client { return &Client{dialer: websocket.DefaultDialer} }
+
+// NewClientWithDialer returns a Client using the provided dialer.
+// Use this to customise TLS settings (e.g. skip certificate verification).
+func NewClientWithDialer(dialer *websocket.Dialer) *Client {
+	if dialer == nil {
+		dialer = websocket.DefaultDialer
+	}
+	return &Client{dialer: dialer}
+}
 
 func (c *Client) Connect(url string, header http.Header) error {
-	conn, _, err := websocket.DefaultDialer.Dial(url, header)
+	conn, _, err := c.dialer.Dial(url, header)
 	if err != nil {
 		return err
 	}

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"wirety/agent/internal/adapters/captiveportal"
 	dom "wirety/agent/internal/domain/dns"
 	pol "wirety/agent/internal/domain/policy"
 	"wirety/agent/internal/ports"
@@ -50,6 +52,7 @@ type Runner struct {
 	wsURL             string
 	wsHeaders         http.Header
 	wgInterface       string
+	wgIP              string // WireGuard interface IP of this peer
 	currentPeerName   string // Track current peer name to detect changes
 	peerID            string // for audit logging
 	networkID         string // for audit logging
@@ -59,6 +62,22 @@ type Runner struct {
 	backoffBase       time.Duration
 	backoffMax        time.Duration
 	heartbeatInterval time.Duration
+	// Captive portal HTTP server (jump peer only)
+	serverURL        string
+	authToken        string
+	captivePortalURL string
+	captiveStarted   bool
+	httpClient       *http.Client // shared client (may override Host header)
+	vpnDomain        string       // VPN DNS domain (e.g. "wg.example.com"); used for TLS SAN
+	// whitelist holds the current set of authenticated peer IPs, kept in sync
+	// with every firewall policy update so the captive portal server can return
+	// OS probe success responses for already-authenticated peers.
+	whitelist   map[string]struct{}
+	whitelistMu sync.RWMutex
+	// captivePortalSrv is the running captive portal HTTP server (jump peer only).
+	// Set once by startCaptivePortalServer; protected by captivePortalSrvMu.
+	captivePortalSrv   *captiveportal.Server
+	captivePortalSrvMu sync.Mutex
 }
 
 func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string, peerID string, networkID string) *Runner {
@@ -69,19 +88,56 @@ func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort
 		fwAdapter:         fwAdapter,
 		wsURL:             wsURL,
 		wgInterface:       wgInterface,
-		currentPeerName:   "", // Will be set when first message is received
+		currentPeerName:   "",
 		peerID:            peerID,
 		networkID:         networkID,
 		peerNames:         make(map[string]string),
+		whitelist:         make(map[string]struct{}),
 		backoffBase:       time.Second,
 		backoffMax:        30 * time.Second,
-		heartbeatInterval: 30 * time.Second, // Send heartbeat every 30 seconds
+		heartbeatInterval: 30 * time.Second,
+	}
+}
+
+// SetWGIP sets the WireGuard interface IP of this peer. Used to bind the captive
+// portal HTTP server and to configure DNS probe interception.
+func (r *Runner) SetWGIP(ip string) {
+	r.wgIP = ip
+}
+
+// isAuthenticated reports whether the given peer IP is in the current whitelist.
+func (r *Runner) isAuthenticated(peerIP string) bool {
+	r.whitelistMu.RLock()
+	defer r.whitelistMu.RUnlock()
+	_, ok := r.whitelist[peerIP]
+	return ok
+}
+
+// updateWhitelist replaces the in-memory whitelist with the given IP slice.
+func (r *Runner) updateWhitelist(ips []string) {
+	r.whitelistMu.Lock()
+	defer r.whitelistMu.Unlock()
+	r.whitelist = make(map[string]struct{}, len(ips))
+	for _, ip := range ips {
+		r.whitelist[ip] = struct{}{}
 	}
 }
 
 // SetHeaders sets HTTP headers to send on WebSocket connection (e.g. Authorization).
 func (r *Runner) SetHeaders(header http.Header) {
 	r.wsHeaders = header
+}
+
+// SetCaptivePortal configures the captive portal redirect server for jump peers.
+// serverURL: Wirety server HTTP URL (e.g. "https://wirety.example.com")
+// authToken: enrollment token used to call the captive-portal/token API
+// captivePortalURL: full URL of the captive portal page the peer will be redirected to
+// httpClient: shared HTTP client (may carry a Host-override transport for reverse-proxy setups)
+func (r *Runner) SetCaptivePortal(serverURL, authToken, captivePortalURL string, httpClient *http.Client) {
+	r.serverURL = serverURL
+	r.authToken = authToken
+	r.captivePortalURL = captivePortalURL
+	r.httpClient = httpClient
 }
 
 func (r *Runner) Start(stop <-chan struct{}) {
@@ -108,6 +164,19 @@ func (r *Runner) Start(stop <-chan struct{}) {
 		}
 		backoff = r.backoffBase
 		log.Info().Str("url", r.wsURL).Msg("websocket connected")
+
+		// Reset the in-memory whitelist and the policy-received flag on every new
+		// WebSocket connection. The server will push the current state in the first
+		// policy message. Without this, a stale whitelist from a previous connection
+		// would cause the captive portal server to treat formerly-authenticated peers
+		// as authenticated, serving OS probe success responses instead of redirecting
+		// them to the portal page.
+		r.updateWhitelist([]string{})
+		r.captivePortalSrvMu.Lock()
+		if r.captivePortalSrv != nil {
+			r.captivePortalSrv.ResetPolicyReceived()
+		}
+		r.captivePortalSrvMu.Unlock()
 
 		// Start heartbeat goroutine with endpoint change detection
 		heartbeatTicker := time.NewTicker(r.heartbeatInterval)
@@ -235,6 +304,10 @@ func (r *Runner) Start(stop <-chan struct{}) {
 
 			// Handle DNS server: start once, update on subsequent messages
 			if payload.DNS != nil {
+				// Keep vpnDomain in sync for the HTTPS captive portal TLS cert SAN.
+				if payload.DNS.Domain != "" {
+					r.vpnDomain = payload.DNS.Domain
+				}
 				r.dnsServerMu.Lock()
 				if r.dnsServer == nil {
 
@@ -276,6 +349,20 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					whitelistedIPs = []string{}
 				}
 
+				// Keep in-memory whitelist in sync so the captive portal HTTP server
+				// can return OS probe success responses for authenticated peers.
+				r.updateWhitelist(whitelistedIPs)
+
+				// Notify the captive portal server that at least one policy has been
+				// received. Until this point the server treats all peers as
+				// unauthenticated to avoid serving stale whitelist data.
+				r.captivePortalSrvMu.Lock()
+				cpSrv := r.captivePortalSrv
+				r.captivePortalSrvMu.Unlock()
+				if cpSrv != nil {
+					cpSrv.NotifyPolicyReceived()
+				}
+
 				// Apply policy-based iptables rules atomically
 				// The Sync method flushes the chain and applies all rules in order
 				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, whitelistedIPs); err != nil {
@@ -288,6 +375,13 @@ func (r *Runner) Start(stop <-chan struct{}) {
 						Str("action", "firewall.sync").
 						Int("rule_count", len(payload.Policy.IPTablesRules)).
 						Msg("audit")
+				}
+
+				// Start the captive portal redirect server the first time we get a
+				// policy — that's when we know this peer is a jump peer.
+				if !r.captiveStarted && r.serverURL != "" {
+					r.captiveStarted = true
+					go r.startCaptivePortalServer()
 				}
 			}
 		}
@@ -562,5 +656,84 @@ func (r *Runner) monitorTunnels(done <-chan struct{}) {
 				delete(states, pubkey)
 			}
 		}
+	}
+}
+
+// captivePortalExcludedHosts returns the set of hostnames that must not be
+// redirected to the captive portal IP for unauthenticated peers. This includes
+// the Wirety server hostname and the captive portal page hostname. Without these
+// exclusions the redirect target URL itself would resolve to the captive portal
+// IP and cause an infinite redirect loop.
+func (r *Runner) captivePortalExcludedHosts() []string {
+	seen := make(map[string]struct{})
+	var hosts []string
+	for _, rawURL := range []string{r.serverURL, r.captivePortalURL} {
+		if rawURL == "" {
+			continue
+		}
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			continue
+		}
+		h := u.Hostname()
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; !ok {
+			seen[h] = struct{}{}
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}
+
+// startCaptivePortalServer starts the HTTP server that handles captive portal
+// authentication. It listens directly on the WireGuard interface IP:80, so no
+// DNAT rule is required. Unauthenticated peers are redirected to the authentication
+// page; authenticated peers receive OS-specific probe success responses.
+func (r *Runner) startCaptivePortalServer() {
+	srv := captiveportal.NewServer(r.serverURL, r.authToken, r.captivePortalURL, r.networkID, r.peerID, r.httpClient)
+	srv.SetAuthChecker(r.isAuthenticated)
+
+	// Store the reference so the policy-sync path can call NotifyPolicyReceived.
+	r.captivePortalSrvMu.Lock()
+	r.captivePortalSrv = srv
+	r.captivePortalSrvMu.Unlock()
+
+	// Configure DNS:
+	//  - Probe domains (captive.apple.com, connectivitycheck.gstatic.com, …) always
+	//    resolve to the WG IP so OS captive portal detection fires through the tunnel.
+	//  - Internal VPN domain queries from unauthenticated peers also resolve to the
+	//    WG IP, so any attempt to reach a private resource triggers the redirect.
+	//    External DNS is untouched — internet keeps working while unauthenticated.
+	if r.wgIP != "" {
+		type dnsPortalConfigurer interface {
+			SetCaptivePortalIP(string)
+			SetAuthChecker(func(string) bool)
+			SetRedirectExclusions([]string)
+		}
+		if dns, ok := r.dnsServer.(dnsPortalConfigurer); ok {
+			dns.SetCaptivePortalIP(r.wgIP)
+			dns.SetAuthChecker(r.isAuthenticated)
+			dns.SetRedirectExclusions(r.captivePortalExcludedHosts())
+		}
+	}
+
+	// Start the HTTPS server in a background goroutine. It uses a self-signed cert
+	// covering the WG IP and a wildcard for the VPN domain so that internal peer
+	// hostnames match the cert. Internal VPN domains are not HSTS-preloaded, so
+	// browsers allow the user to bypass the self-signed warning and follow the
+	// redirect — unlike public domains (google.com, etc.) which are hard-blocked.
+	go func() {
+		tlsAddr := r.wgIP + ":443"
+		if err := srv.StartTLS(tlsAddr, r.wgIP, r.vpnDomain); err != nil {
+			log.Error().Err(err).Msg("captive portal HTTPS server stopped")
+		}
+	}()
+
+	addr := r.wgIP + ":80"
+	log.Info().Str("addr", addr).Str("portal_url", r.captivePortalURL).Msg("starting captive portal HTTP server")
+	if err := srv.Start(addr); err != nil {
+		log.Error().Err(err).Msg("captive portal HTTP server stopped")
 	}
 }

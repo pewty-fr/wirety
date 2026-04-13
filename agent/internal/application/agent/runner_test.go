@@ -146,7 +146,7 @@ func TestNewRunner(t *testing.T) {
 	dnsServer := &mockDNSServer{}
 	fwAdapter := &mockFirewall{}
 
-	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0")
+	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0", "", "")
 
 	if runner.wsClient != wsClient {
 		t.Error("Expected wsClient to be set")
@@ -370,7 +370,7 @@ func TestProcessWSMessage(t *testing.T) {
 	dnsServer := &mockDNSServer{}
 	fwAdapter := &mockFirewall{}
 
-	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0")
+	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0", "", "")
 
 	// Create a test message
 	msg := WSMessage{
@@ -449,7 +449,7 @@ func TestProcessWSMessageWithErrors(t *testing.T) {
 	dnsServer := &mockDNSServer{}
 	fwAdapter := &mockFirewall{syncErr: &mockError{"sync failed"}}
 
-	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0")
+	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0", "", "")
 
 	// Create a test message
 	msg := WSMessage{
@@ -495,7 +495,7 @@ func TestStartWithConnectionError(t *testing.T) {
 	dnsServer := &mockDNSServer{}
 	fwAdapter := &mockFirewall{}
 
-	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0")
+	runner := NewRunner(wsClient, writer, dnsServer, fwAdapter, "ws://localhost:8080", "wg0", "", "")
 
 	// Start runner in a goroutine and stop it quickly
 	stop := make(chan struct{})

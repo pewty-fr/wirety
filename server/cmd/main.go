@@ -53,12 +53,11 @@ import (
 //	@description				Type "Bearer" followed by a space and JWT token.
 
 func main() {
-	// Configure zerolog
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-
-	// Load configuration
+	// Load configuration first so log settings are available immediately.
 	cfg := config.LoadConfig()
+
+	// Configure zerolog level and format.
+	configureLogger(cfg.LogLevel, cfg.LogFormat)
 
 	// Initialize audit logger
 	audit.Init(cfg.AuditLog)
@@ -67,11 +66,14 @@ func main() {
 		Str("http_port", cfg.HTTPPort).
 		Bool("auth_enabled", cfg.Auth.Enabled).
 		Str("issuer_url", cfg.Auth.IssuerURL).
-		Str("cors_origin", cfg.CORSOrigin).
+		Strs("cors_origins", cfg.CORSOrigins).
 		Msg("Starting Wirety server")
 
-	if cfg.CORSOrigin == "*" && cfg.Auth.Enabled {
-		log.Warn().Msg("CORS_ORIGIN is set to '*' while OIDC auth is enabled - set CORS_ORIGIN to your frontend URL in production")
+	for _, origin := range cfg.CORSOrigins {
+		if origin == "*" && cfg.Auth.Enabled {
+			log.Warn().Msg("CORS_ORIGIN contains '*' while OIDC auth is enabled - set CORS_ORIGIN to your frontend URL(s) in production")
+			break
+		}
 	}
 
 	// Initialize repositories (choose Postgres or in-memory)
@@ -198,13 +200,20 @@ func main() {
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
 
-	// Configure CORS — enable credentials only when a specific origin is set
+	// Configure CORS — enable credentials only when no wildcard origin is present
+	allowCredentials := true
+	for _, origin := range cfg.CORSOrigins {
+		if origin == "*" {
+			allowCredentials = false
+			break
+		}
+	}
 	corsConfig := cors.Config{
-		AllowOrigins:     []string{cfg.CORSOrigin},
+		AllowOrigins:     cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: cfg.CORSOrigin != "*",
+		AllowCredentials: allowCredentials,
 	}
 	r.Use(cors.New(corsConfig))
 
@@ -216,13 +225,16 @@ func main() {
 	// Register routes with middleware
 	handler.RegisterRoutes(r, authMiddleware, requireAdmin, requireNetworkAccess)
 
-	// Background session cleanup (every hour)
+	// Background cleanup (every hour)
 	go func() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
 			if err := userRepo.CleanupExpiredSessions(); err != nil {
 				log.Warn().Err(err).Msg("Session cleanup failed")
+			}
+			if err := networkRepo.CleanupExpiredCaptivePortalWhitelist(context.Background()); err != nil {
+				log.Warn().Err(err).Msg("Captive portal whitelist cleanup failed")
 			}
 		}
 	}()
@@ -240,6 +252,25 @@ func generateAdminPassword() string {
 		log.Fatal().Err(err).Msg("Failed to generate admin password")
 	}
 	return hex.EncodeToString(b)
+}
+
+// configureLogger sets the global zerolog level and output format.
+// level: trace|debug|info|warn|error|fatal (default: info)
+// format: json|text (default: text — coloured console writer)
+func configureLogger(level, format string) {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
+	lvl, err := zerolog.ParseLevel(level)
+	if err != nil {
+		lvl = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(lvl)
+
+	if format == "json" {
+		log.Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+	} else {
+		log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+	}
 }
 
 // ctxWithLog creates a basic context for db operations (placeholder for structured contexts)

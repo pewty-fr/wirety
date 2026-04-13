@@ -137,6 +137,11 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 		api.GET("/agent/resolve", h.ResolveAgent)
 		api.GET("/ws", h.HandleWebSocketToken)               // token-based WebSocket
 		api.GET("/ws/:networkId/:peerId", h.HandleWebSocket) // legacy WebSocket
+
+		// Captive portal: token creation is agent-authenticated (enrollment token),
+		// authenticate is unauthenticated (uses captive_token + session_hash).
+		api.POST("/captive-portal/token", h.CreateCaptivePortalToken)
+		api.POST("/captive-portal/authenticate", h.AuthenticateCaptivePortal)
 	}
 
 	// Protected routes (auth required)
@@ -284,10 +289,10 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 
 	// MCP endpoint (SSE transport) — both GET (stream) and POST (messages) at same path
 	mcpH := h.MCPHandler()
-	r.GET("/mcp", authMiddleware, mcpH)
-	r.POST("/mcp", authMiddleware, mcpH)
+	api.GET("/mcp", authMiddleware, mcpH)
+	api.POST("/mcp", authMiddleware, mcpH)
 
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	api.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 }
 
 // dbOnlyHandler returns a 503 handler explaining a feature requires DB_ENABLED=true

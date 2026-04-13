@@ -108,6 +108,8 @@ export interface SecurityConfig {
   session_conflict_threshold_minutes: number;
   endpoint_change_threshold_minutes: number;
   max_endpoint_changes_per_day: number;
+  port_change_threshold_minutes: number;
+  max_port_changes_per_window: number;
   created_at: string;
   updated_at: string;
 }
@@ -117,6 +119,8 @@ export interface SecurityConfigUpdateRequest {
   session_conflict_threshold_minutes?: number;
   endpoint_change_threshold_minutes?: number;
   max_endpoint_changes_per_day?: number;
+  port_change_threshold_minutes?: number;
+  max_port_changes_per_window?: number;
 }
 
 export interface User {

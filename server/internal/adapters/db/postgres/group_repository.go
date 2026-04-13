@@ -72,12 +72,12 @@ func (r *GroupRepository) CreateGroup(ctx context.Context, networkID string, gro
 		}
 	}
 
-	// Insert group-policy associations
-	for _, policyID := range group.PolicyIDs {
+	// Insert group-policy associations (policy_order is NOT NULL — assign sequential order)
+	for i, policyID := range group.PolicyIDs {
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO group_policies (group_id, policy_id)
-			VALUES ($1, $2)
-		`, group.ID, policyID)
+			INSERT INTO group_policies (group_id, policy_id, attached_at, policy_order)
+			VALUES ($1, $2, NOW(), $3)
+		`, group.ID, policyID, i)
 		if err != nil {
 			return fmt.Errorf("insert group-policy association: %w", err)
 		}

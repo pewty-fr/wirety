@@ -18,9 +18,34 @@ import (
 	"wirety/internal/infrastructure/oidc"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 )
 
 // Uses shared OIDC discovery adapter (internal/infrastructure/oidc)
+
+// flexInt unmarshals a JSON number or a quoted number string into an int.
+// Azure Entra ID returns expires_in as a string ("3600") rather than an integer.
+type flexInt int
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	// Try as a plain number first
+	var n int
+	if err := json.Unmarshal(b, &n); err == nil {
+		*f = flexInt(n)
+		return nil
+	}
+	// Fall back to a quoted string
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	var n2 int
+	if _, err := fmt.Sscan(s, &n2); err != nil {
+		return fmt.Errorf("flexInt: cannot parse %q as int", s)
+	}
+	*f = flexInt(n2)
+	return nil
+}
 
 // AuthConfigResponse contains public authentication configuration
 type AuthConfigResponse struct {
@@ -118,10 +143,11 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	}
 
 	var oidcTokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-		TokenType    string `json:"token_type"`
+		AccessToken  string  `json:"access_token"`
+		IDToken      string  `json:"id_token"`      // OIDC identity token — always a JWT
+		RefreshToken string  `json:"refresh_token"`
+		ExpiresIn    flexInt `json:"expires_in"`
+		TokenType    string  `json:"token_type"`
 	}
 	if err := json.Unmarshal(body, &oidcTokenResp); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to parse token response: %v", err)})
@@ -133,10 +159,70 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
-	// Validate the access token and get user claims
-	claims, err := h.authService.ValidateToken(c.Request.Context(), oidcTokenResp.AccessToken)
+	// Prefer id_token for validation: it is always a standard JWT per the OIDC spec.
+	// Some providers (e.g. Azure Entra ID) return an opaque, non-JWT access_token
+	// intended for Microsoft APIs — parsing it as a JWT fails with "invalid number of segments".
+	identityToken := oidcTokenResp.IDToken
+	if identityToken == "" {
+		identityToken = oidcTokenResp.AccessToken
+	}
+
+	// Validate the identity token and get user claims
+	claims, err := h.authService.ValidateToken(c.Request.Context(), identityToken)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to validate token: %v", err)})
+		return
+	}
+
+	// Some providers (e.g. Azure Entra ID) do not include the email claim in the
+	// id_token by default. Fall back to the userinfo endpoint using the access_token.
+	if claims.Email == "" && discovery.UserinfoEndpoint != "" {
+		log.Debug().Str("userinfo_endpoint", discovery.UserinfoEndpoint).Msg("email missing from token claims, fetching userinfo")
+		uiReq, uiErr := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, discovery.UserinfoEndpoint, nil)
+		if uiErr == nil {
+			uiReq.Header.Set("Authorization", "Bearer "+oidcTokenResp.AccessToken)
+			uiResp, uiErr := http.DefaultClient.Do(uiReq)
+			if uiErr != nil {
+				log.Debug().Err(uiErr).Msg("userinfo request failed")
+			} else {
+				defer func() { _ = uiResp.Body.Close() }()
+				body, _ := io.ReadAll(uiResp.Body)
+				log.Debug().Int("status", uiResp.StatusCode).RawJSON("body", body).Msg("userinfo response")
+				var uiClaims struct {
+					Email         string `json:"email"`
+					EmailVerified bool   `json:"email_verified"`
+					Name          string `json:"name"`
+					UPN           string `json:"upn"` // Azure Entra ID: user principal name
+				}
+				if json.Unmarshal(body, &uiClaims) == nil {
+					email := uiClaims.Email
+					if email == "" {
+						email = uiClaims.UPN // Azure fallback
+					}
+					if email != "" {
+						claims.Email = email
+						claims.EmailVerified = uiClaims.EmailVerified
+					}
+					if claims.Name == "" && uiClaims.Name != "" {
+						claims.Name = uiClaims.Name
+					}
+				}
+			}
+		}
+	}
+
+	if claims.Email == "" {
+		log.Debug().
+			Str("subject", claims.Subject).
+			Str("name", claims.Name).
+			Str("preferred_username", claims.PreferredUsername).
+			Str("given_name", claims.GivenName).
+			Str("family_name", claims.FamilyName).
+			Str("issuer", claims.Issuer).
+			Bool("email_verified", claims.EmailVerified).
+			Str("userinfo_endpoint", discovery.UserinfoEndpoint).
+			Msg("OIDC login blocked: email claim is empty after token + userinfo resolution")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Your account does not have an email address. Please configure your identity provider to expose the email claim."})
 		return
 	}
 
@@ -147,8 +233,9 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
-	// Create session with tokens
-	session, err := h.createSession(user.ID, oidcTokenResp.AccessToken, oidcTokenResp.RefreshToken, oidcTokenResp.ExpiresIn)
+	// Store the identity token (id_token / JWT) in the session so that middleware can
+	// re-validate it without hitting the same opaque-token problem on refresh.
+	session, err := h.createSession(user.ID, identityToken, oidcTokenResp.RefreshToken, int(oidcTokenResp.ExpiresIn))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create session: %v", err)})
 		return
@@ -157,7 +244,7 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	setSessionCookie(c, session.SessionHash, 30*24*3600)
 	c.JSON(http.StatusOK, TokenResponse{
 		SessionHash: session.SessionHash,
-		ExpiresIn:   oidcTokenResp.ExpiresIn,
+		ExpiresIn:   int(oidcTokenResp.ExpiresIn),
 	})
 }
 

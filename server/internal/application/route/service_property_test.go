@@ -360,6 +360,12 @@ func (a *networkGetterAdapter) DeleteCaptivePortalToken(ctx context.Context, tok
 func (a *networkGetterAdapter) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
 	return nil
 }
+func (a *networkGetterAdapter) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error {
+	return nil
+}
+func (a *networkGetterAdapter) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
+	return nil
+}
 
 // Security config operations
 func (a *networkGetterAdapter) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
