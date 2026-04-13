@@ -26,6 +26,7 @@ type AuthConfig struct {
 	ClientSecret  string `json:"client_secret"`  // OIDC client secret
 	JWKSCacheTTL  int    `json:"jwks_cache_ttl"` // JWKS cache duration in seconds (default: 3600)
 	AdminPassword string `json:"-"`              // Admin password for simple auth mode (AUTH_ENABLED=false)
+	CookieSecure  bool   `json:"cookie_secure"`  // Set Secure flag on session cookie (default: true)
 }
 
 // LoadConfig loads configuration from environment variables
@@ -43,6 +44,7 @@ func LoadConfig() *Config {
 			ClientSecret:  getEnv("AUTH_CLIENT_SECRET", ""),
 			JWKSCacheTTL:  getEnvAsInt("AUTH_JWKS_CACHE_TTL", 3600),
 			AdminPassword: getEnv("AUTH_PASSWORD", ""),
+			CookieSecure:  getEnv("COOKIE_SECURE", "true") != "false",
 		},
 		Database: DBConfig{
 			Enabled:    getEnv("DB_ENABLED", "false") == "true",

@@ -45,10 +45,15 @@ func (h *Handler) GetAvailableCIDRs(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "max_peers must be a positive integer"})
 		return
 	}
+	const maxCount = 20
 	countStr := c.DefaultQuery("count", "1")
 	count, err := strconv.Atoi(countStr)
 	if err != nil || count <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "count must be a positive integer"})
+		return
+	}
+	if count > maxCount {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "count must not exceed 20"})
 		return
 	}
 	baseCIDR := c.DefaultQuery("base_cidr", "10.0.0.0/8")

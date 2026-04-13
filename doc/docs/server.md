@@ -24,6 +24,7 @@ Wirety Server provides REST + WebSocket APIs, orchestrates peers, incidents, ACL
 | `AUTH_CLIENT_SECRET` | OIDC client secret | - |
 | `AUTH_JWKS_CACHE_TTL` | JWKS cache duration in seconds | `3600` |
 | `AUTH_PASSWORD` | Admin password for simple auth mode | auto-generated (logged at startup) |
+| `COOKIE_SECURE` | Set the `Secure` flag on the session cookie — disable only when serving over plain HTTP (local dev) | `true` |
 
 ### Database
 | Variable | Description | Default |

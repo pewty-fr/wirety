@@ -586,6 +586,7 @@ The `--skip-tls-verify` flag disables TLS certificate validation for the connect
 | AUTH_CLIENT_ID | OIDC client ID | — | If auth enabled |
 | AUTH_CLIENT_SECRET | OIDC client secret | — | If auth enabled |
 | AUTH_JWKS_CACHE_TTL | JWKS cache duration (seconds) | `3600` | No |
+| COOKIE_SECURE | Set `Secure` flag on session cookie — set to `false` only for local HTTP dev | `true` | No |
 | LOG_LEVEL | Log verbosity: `trace`\|`debug`\|`info`\|`warn`\|`error`\|`fatal` | `info` | No |
 | LOG_FORMAT | Log output format: `text`\|`json` | `text` | No |
 | AUDIT_LOG | Emit JSON audit events to stdout | `false` | No |

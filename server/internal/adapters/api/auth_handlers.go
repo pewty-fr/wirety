@@ -241,7 +241,7 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
-	setSessionCookie(c, session.SessionHash, 30*24*3600)
+	h.setSessionCookie(c, session.SessionHash, 30*24*3600)
 	c.JSON(http.StatusOK, TokenResponse{
 		SessionHash: session.SessionHash,
 		ExpiresIn:   int(oidcTokenResp.ExpiresIn),
@@ -316,7 +316,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		_ = h.userRepo.DeleteSession(sessionHash)
 	}
 
-	clearSessionCookie(c)
+	h.clearSessionCookie(c)
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
@@ -368,7 +368,7 @@ func (h *Handler) SimpleLogin(c *gin.Context) {
 		Str("username", req.Username).
 		Msg("audit")
 
-	setSessionCookie(c, session.SessionHash, 30*24*3600)
+	h.setSessionCookie(c, session.SessionHash, 30*24*3600)
 	c.JSON(http.StatusOK, TokenResponse{
 		SessionHash: session.SessionHash,
 		ExpiresIn:   30 * 24 * 3600,
@@ -378,12 +378,13 @@ func (h *Handler) SimpleLogin(c *gin.Context) {
 const sessionCookieName = "wirety_session"
 
 // setSessionCookie sets an HttpOnly session cookie on the response.
-func setSessionCookie(c *gin.Context, sessionHash string, maxAge int) {
-	c.SetCookie(sessionCookieName, sessionHash, maxAge, "/", "", false, true)
+// The Secure flag is controlled by the handler's authConfig.CookieSecure setting.
+func (h *Handler) setSessionCookie(c *gin.Context, sessionHash string, maxAge int) {
+	c.SetCookie(sessionCookieName, sessionHash, maxAge, "/", "", h.authConfig.CookieSecure, true)
 }
 
 // clearSessionCookie clears the session cookie.
-func clearSessionCookie(c *gin.Context) {
-	c.SetCookie(sessionCookieName, "", -1, "/", "", false, true)
+func (h *Handler) clearSessionCookie(c *gin.Context) {
+	c.SetCookie(sessionCookieName, "", -1, "/", "", h.authConfig.CookieSecure, true)
 }
 

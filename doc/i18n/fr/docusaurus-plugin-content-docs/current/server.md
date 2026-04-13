@@ -24,6 +24,7 @@ Le serveur Wirety fournit des API REST et WebSocket, orchestre les peers, les in
 | `AUTH_CLIENT_SECRET` | Secret client OIDC | - |
 | `AUTH_JWKS_CACHE_TTL` | Durée du cache JWKS en secondes | `3600` |
 | `AUTH_PASSWORD` | Mot de passe administrateur pour le mode auth simple | généré automatiquement (journalisé au démarrage) |
+| `COOKIE_SECURE` | Active l'attribut `Secure` sur le cookie de session — désactiver uniquement en HTTP local (développement) | `true` |
 
 ### Base de données
 | Variable | Description | Défaut |

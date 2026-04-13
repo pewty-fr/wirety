@@ -586,6 +586,7 @@ Le flag `--skip-tls-verify` désactive la validation du certificat TLS pour la c
 | AUTH_CLIENT_ID | ID client OIDC | — | Si auth activée |
 | AUTH_CLIENT_SECRET | Secret client OIDC | — | Si auth activée |
 | AUTH_JWKS_CACHE_TTL | Durée du cache JWKS (secondes) | `3600` | Non |
+| COOKIE_SECURE | Active l'attribut `Secure` sur le cookie de session — mettre à `false` uniquement en HTTP local | `true` | Non |
 | LOG_LEVEL | Verbosité des logs : `trace`\|`debug`\|`info`\|`warn`\|`error`\|`fatal` | `info` | Non |
 | LOG_FORMAT | Format de sortie des logs : `text`\|`json` | `text` | Non |
 | AUDIT_LOG | Émettre des événements d'audit JSON sur stdout | `false` | Non |
