@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/pewty-fr/wirety/compare/wirety-agent/v2.0.0...wirety-agent/v2.1.0) (2026-04-13)
+
+
+### Features
+
+* mcp, audit, reachability, regular peer auth ([#138](https://github.com/pewty-fr/wirety/issues/138)) ([ba24b97](https://github.com/pewty-fr/wirety/commit/ba24b97c49728c160352a36e05d891c2ffa232c5))
+
 ## [2.0.0](https://github.com/pewty-fr/wirety/compare/wirety-agent/v1.1.0...wirety-agent/v2.0.0) (2025-12-08)
 
 
