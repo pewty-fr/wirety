@@ -4,15 +4,15 @@ on:
   pull_request:
     branches:
       - main
-
-permissions:
-  contents: read
     paths:
       - 'agent/**'
       - 'server/**'
       - 'front/**'
       - 'doc/**'
       - 'helm/**'
+
+permissions:
+  contents: read
   push:
     branches:
       - main
