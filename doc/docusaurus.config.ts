@@ -7,7 +7,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'Wirety',
   tagline: 'Secure, dynamic WireGuard mesh with agents and ACL-based incident response',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/logo.svg',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
@@ -15,7 +15,7 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://doc.wirety.fr',
+  url: 'https://docs-wirety.pewty.fr',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
   baseUrl: '/',
@@ -24,6 +24,7 @@ const config: Config = {
   // If you aren't using GitHub pages, you don't need these.
   organizationName: 'pewty-fr', // Usually your GitHub org/user name.
   projectName: 'wirety', // Usually your repo name.
+  trailingSlash: false,
 
   onBrokenLinks: 'throw',
 
