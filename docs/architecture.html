@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en-US" dir="ltr" class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-architecture" data-has-hydrated="false">
+<head>
+<meta charset="UTF-8">
+<meta name="generator" content="Docusaurus v3.9.2">
+<title data-rh="true">Architecture | Wirety</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://wirety-docs.pewty.fr/img/docusaurus-social-card.jpg"><meta data-rh="true" name="twitter:image" content="https://wirety-docs.pewty.fr/img/docusaurus-social-card.jpg"><meta data-rh="true" property="og:url" content="https://wirety-docs.pewty.fr/docs/architecture"><meta data-rh="true" property="og:locale" content="en_US"><meta data-rh="true" property="og:locale:alternate" content="fr_FR"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Architecture | Wirety"><meta data-rh="true" name="description" content="This document describes the Wirety system architecture, components, and design decisions."><meta data-rh="true" property="og:description" content="This document describes the Wirety system architecture, components, and design decisions."><link data-rh="true" rel="icon" href="/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://wirety-docs.pewty.fr/docs/architecture"><link data-rh="true" rel="alternate" href="https://wirety-docs.pewty.fr/docs/architecture" hreflang="en-US"><link data-rh="true" rel="alternate" href="https://wirety-docs.pewty.fr/fr/docs/architecture" hreflang="fr-FR"><link data-rh="true" rel="alternate" href="https://wirety-docs.pewty.fr/docs/architecture" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Architecture","item":"https://wirety-docs.pewty.fr/docs/architecture"}]}</script><link rel="alternate" type="application/rss+xml" href="/blog/rss.xml" title="Wirety RSS Feed">
+<link rel="alternate" type="application/atom+xml" href="/blog/atom.xml" title="Wirety Atom Feed"><link rel="stylesheet" href="/assets/css/styles.b18a16f3.css">
+<script src="/assets/js/runtime~main.26040c02.js" defer="defer"></script>
+<script src="/assets/js/main.40333b12.js" defer="defer"></script>
+</head>
+<body class="navigation-with-keyboard">
+<svg style="display: none;"><defs>
+<symbol id="theme-svg-external-link" viewBox="0 0 24 24"><path fill="currentColor" d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t=function(){try{return new URLSearchParams(window.location.search).get("docusaurus-theme")}catch(t){}}()||function(){try{return window.localStorage.getItem("theme")}catch(t){}}();document.documentElement.setAttribute("data-theme",t||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")),document.documentElement.setAttribute("data-theme-choice",t||"system")}(),function(){try{const c=new URLSearchParams(window.location.search).entries();for(var[t,e]of c)if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}()</script><div id="__docusaurus"><link rel="preload" as="image" href="/img/logo.svg"><div role="region" aria-label="Skip to main content"><a class="skipToContent_fXgn" href="#__docusaurus_skipToContent_fallback">Skip to main content</a></div><nav aria-label="Main" class="theme-layout-navbar navbar navbar--fixed-top"><div class="navbar__inner"><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded="false" class="navbar__toggle clean-btn" type="button"><svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-miterlimit="10" stroke-width="2" d="M4 7h22M4 15h22M4 23h22"></path></svg></button><a class="navbar__brand" href="/"><div class="navbar__logo"><img src="/img/logo.svg" alt="Wirety Logo" class="themedComponent_mlkZ themedComponent--light_NVdE"><img src="/img/logo.svg" alt="Wirety Logo" class="themedComponent_mlkZ themedComponent--dark_xIcU"></div><b class="navbar__title text--truncate">Wirety</b></a><a aria-current="page" class="navbar__item navbar__link navbar__link--active" href="/docs/intro">Docs</a></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><div class="navbar__item dropdown dropdown--hoverable dropdown--right"><a href="#" aria-haspopup="true" aria-expanded="false" role="button" class="navbar__link"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" class="iconLanguage_nlXk"><path fill="currentColor" d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"></path></svg>English</a><ul class="dropdown__menu"><li><a href="/docs/architecture" target="_self" rel="noopener noreferrer" class="dropdown__link dropdown__link--active" lang="en-US">English</a></li><li><a href="/fr/docs/architecture" target="_self" rel="noopener noreferrer" class="dropdown__link" lang="fr-FR">Français</a></li></ul></div><a href="https://github.com/pewty-fr/wirety" target="_blank" rel="noopener noreferrer" class="navbar__item navbar__link">GitHub<svg width="13.5" height="13.5" aria-label="(opens in new tab)" class="iconExternalLink_nPIU"><use href="#theme-svg-external-link"></use></svg></a><div class="toggle_vylO colorModeToggle_DEke"><button class="clean-btn toggleButton_gllP toggleButtonDisabled_aARS" type="button" disabled="" title="system mode" aria-label="Switch between dark and light mode (currently system mode)"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" class="toggleIcon_g3eP lightToggleIcon_pyhR"><path fill="currentColor" d="M12,9c1.65,0,3,1.35,3,3s-1.35,3-3,3s-3-1.35-3-3S10.35,9,12,9 M12,7c-2.76,0-5,2.24-5,5s2.24,5,5,5s5-2.24,5-5 S14.76,7,12,7L12,7z M2,13l2,0c0.55,0,1-0.45,1-1s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S1.45,13,2,13z M20,13l2,0c0.55,0,1-0.45,1-1 s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S19.45,13,20,13z M11,2v2c0,0.55,0.45,1,1,1s1-0.45,1-1V2c0-0.55-0.45-1-1-1S11,1.45,11,2z M11,20v2c0,0.55,0.45,1,1,1s1-0.45,1-1v-2c0-0.55-0.45-1-1-1C11.45,19,11,19.45,11,20z M5.99,4.58c-0.39-0.39-1.03-0.39-1.41,0 c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0s0.39-1.03,0-1.41L5.99,4.58z M18.36,16.95 c-0.39-0.39-1.03-0.39-1.41,0c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0c0.39-0.39,0.39-1.03,0-1.41 L18.36,16.95z M19.42,5.99c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06c-0.39,0.39-0.39,1.03,0,1.41 s1.03,0.39,1.41,0L19.42,5.99z M7.05,18.36c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06 c-0.39,0.39-0.39,1.03,0,1.41s1.03,0.39,1.41,0L7.05,18.36z"></path></svg><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" class="toggleIcon_g3eP darkToggleIcon_wfgR"><path fill="currentColor" d="M9.37,5.51C9.19,6.15,9.1,6.82,9.1,7.5c0,4.08,3.32,7.4,7.4,7.4c0.68,0,1.35-0.09,1.99-0.27C17.45,17.19,14.93,19,12,19 c-3.86,0-7-3.14-7-7C5,9.07,6.81,6.55,9.37,5.51z M12,3c-4.97,0-9,4.03-9,9s4.03,9,9,9s9-4.03,9-9c0-0.46-0.04-0.92-0.1-1.36 c-0.98,1.37-2.58,2.26-4.4,2.26c-2.98,0-5.4-2.42-5.4-5.4c0-1.81,0.89-3.42,2.26-4.4C12.92,3.04,12.46,3,12,3L12,3z"></path></svg><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" class="toggleIcon_g3eP systemToggleIcon_QzmC"><path fill="currentColor" d="m12 21c4.971 0 9-4.029 9-9s-4.029-9-9-9-9 4.029-9 9 4.029 9 9 9zm4.95-13.95c1.313 1.313 2.05 3.093 2.05 4.95s-0.738 3.637-2.05 4.95c-1.313 1.313-3.093 2.05-4.95 2.05v-14c1.857 0 3.637 0.737 4.95 2.05z"></path></svg></button></div><div class="navbarSearchContainer_Bca1"></div></div></div><div role="presentation" class="navbar-sidebar__backdrop"></div></nav><div id="__docusaurus_skipToContent_fallback" class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class="docsWrapper_hBAB"><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type="button"></button><div class="docRoot_UBD9"><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class="sidebarViewport_aRkj"><div class="sidebar_njMd"><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/intro"><span title="Get Started" class="linkLabel_WmDU">Get Started</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/network"><span title="Network" class="linkLabel_WmDU">Network</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/peers"><span title="Peers" class="linkLabel_WmDU">Peers</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/ipam"><span title="IPAM" class="linkLabel_WmDU">IPAM</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/incidents"><span title="Incidents" class="linkLabel_WmDU">Incidents</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/agent"><span title="Agent" class="linkLabel_WmDU">Agent</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/captive-portal"><span title="Captive Portal" class="linkLabel_WmDU">Captive Portal</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/server"><span title="Server" class="linkLabel_WmDU">Server</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/deployment"><span title="Deployment Guide" class="linkLabel_WmDU">Deployment Guide</span></a></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item menu__list-item--collapsed"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist" href="/docs/category/guides"><span title="Guides" class="categoryLinkLabel_W154">Guides</span></a><button aria-label="Expand sidebar category &#x27;Guides&#x27;" aria-expanded="false" type="button" class="clean-btn menu__caret"></button></div></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/mcp"><span title="MCP Server" class="linkLabel_WmDU">MCP Server</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/troubleshooting"><span title="Troubleshooting" class="linkLabel_WmDU">Troubleshooting</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/api-reference"><span title="API Reference" class="linkLabel_WmDU">API Reference</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link menu__link--active" aria-current="page" href="/docs/architecture"><span title="Architecture" class="linkLabel_WmDU">Architecture</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/audit-logs"><span title="Audit Logs" class="linkLabel_WmDU">Audit Logs</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/groups-policies-routes-overview"><span title="Groups, Policies, and Routes Overview" class="linkLabel_WmDU">Groups, Policies, and Routes Overview</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/migration-guide"><span title="Migration Guide: Groups, Policies, and Routes" class="linkLabel_WmDU">Migration Guide: Groups, Policies, and Routes</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/quick-reference"><span title="Quick Reference" class="linkLabel_WmDU">Quick Reference</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/docs/user-guide"><span title="User Guide" class="linkLabel_WmDU">User Guide</span></a></li></ul></nav></div></div></aside><main class="docMainContainer_TBSr"><div class="container padding-top--md padding-bottom--lg"><div class="row"><div class="col docItemCol_VOVn"><div class="docItemContainer_Djhp"><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label="Breadcrumbs"><ul class="breadcrumbs"><li class="breadcrumbs__item"><a aria-label="Home page" class="breadcrumbs__link" href="/"><svg viewBox="0 0 24 24" class="breadcrumbHomeIcon_YNFT"><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill="currentColor"></path></svg></a></li><li class="breadcrumbs__item breadcrumbs__item--active"><span class="breadcrumbs__link">Architecture</span></li></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type="button" class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>Architecture</h1></header><p>This document describes the Wirety system architecture, components, and design decisions.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="system-overview">System Overview<a href="#system-overview" class="hash-link" aria-label="Direct link to System Overview" title="Direct link to System Overview" translate="no">​</a></h2>
+<p>Wirety is a distributed system that orchestrates WireGuard mesh networks with dynamic security capabilities. It consists of several key components that work together to provide automated peer management, incident response, and centralized monitoring.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="components">Components<a href="#components" class="hash-link" aria-label="Direct link to Components" title="Direct link to Components" translate="no">​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="frontend">Frontend<a href="#frontend" class="hash-link" aria-label="Direct link to Frontend" title="Direct link to Frontend" translate="no">​</a></h3>
+<p><strong>Technology:</strong> React 19, TypeScript, Vite<br>
+<strong>Purpose:</strong> Web-based UI for managing networks, peers, and incidents</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li class="">Dashboard with network overview and statistics</li>
+<li class="">Network creation and CIDR management</li>
+<li class="">Peer management (jump, dynamic, static)</li>
+<li class="">Incident monitoring and resolution</li>
+<li class="">User management (when OIDC enabled)</li>
+<li class="">Real-time topology visualization</li>
+<li class="">IPAM capacity monitoring</li>
+</ul>
+<p><strong>Communication:</strong></p>
+<ul>
+<li class="">REST API for CRUD operations</li>
+<li class="">WebSocket for real-time updates</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="server">Server<a href="#server" class="hash-link" aria-label="Direct link to Server" title="Direct link to Server" translate="no">​</a></h3>
+<p><strong>Technology:</strong> Go 1.21+, Gin framework<br>
+<strong>Purpose:</strong> Central orchestration and API server</p>
+<p><strong>Responsibilities:</strong></p>
+<ul>
+<li class="">RESTful API for frontend and agents</li>
+<li class="">Peer lifecycle management</li>
+<li class="">Network and IPAM orchestration</li>
+<li class="">ACL-based security enforcement</li>
+<li class="">Incident detection and management</li>
+<li class="">WebSocket notifications</li>
+<li class="">OIDC authentication (optional)</li>
+<li class="">WireGuard config generation</li>
+</ul>
+<p><strong>Key Services:</strong></p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="network-service">Network Service<a href="#network-service" class="hash-link" aria-label="Direct link to Network Service" title="Direct link to Network Service" translate="no">​</a></h4>
+<ul>
+<li class="">Create/update/delete networks</li>
+<li class="">CIDR validation and constraints</li>
+<li class="">Jump peer assignment</li>
+<li class="">Capacity monitoring</li>
+</ul>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="peer-service">Peer Service<a href="#peer-service" class="hash-link" aria-label="Direct link to Peer Service" title="Direct link to Peer Service" translate="no">​</a></h4>
+<ul>
+<li class="">Peer creation (jump, dynamic, static)</li>
+<li class="">Token generation for enrollment</li>
+<li class="">Config generation per peer type</li>
+<li class="">Heartbeat processing</li>
+<li class="">Endpoint observation</li>
+</ul>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="incident-service">Incident Service<a href="#incident-service" class="hash-link" aria-label="Direct link to Incident Service" title="Direct link to Incident Service" translate="no">​</a></h4>
+<ul>
+<li class="">Session conflict detection</li>
+<li class="">Shared config detection</li>
+<li class="">Suspicious activity detection</li>
+<li class="">ACL blocking automation</li>
+<li class="">Resolution and audit logging</li>
+</ul>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="ipam-service">IPAM Service<a href="#ipam-service" class="hash-link" aria-label="Direct link to IPAM Service" title="Direct link to IPAM Service" translate="no">​</a></h4>
+<ul>
+<li class="">IP allocation from network CIDR</li>
+<li class="">Address conflict prevention</li>
+<li class="">Deallocation on peer deletion</li>
+<li class="">Capacity calculation</li>
+</ul>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="acl-service">ACL Service<a href="#acl-service" class="hash-link" aria-label="Direct link to ACL Service" title="Direct link to ACL Service" translate="no">​</a></h4>
+<ul>
+<li class="">Blocked peer tracking</li>
+<li class="">Config generation filtering</li>
+<li class="">Incident integration</li>
+</ul>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="notifier-service">Notifier Service<a href="#notifier-service" class="hash-link" aria-label="Direct link to Notifier Service" title="Direct link to Notifier Service" translate="no">​</a></h4>
+<ul>
+<li class="">WebSocket broadcast</li>
+<li class="">Network update events</li>
+<li class="">Agent config refresh triggers</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="agent">Agent<a href="#agent" class="hash-link" aria-label="Direct link to Agent" title="Direct link to Agent" translate="no">​</a></h3>
+<p><strong>Technology:</strong> Go 1.21+ (cross-platform binary)<br>
+<strong>Purpose:</strong> Automated peer configuration and health reporting</p>
+<p><strong>Responsibilities:</strong></p>
+<ul>
+<li class="">Token-based enrollment</li>
+<li class="">WireGuard config retrieval</li>
+<li class="">Interface management (wg-quick/syncconf)</li>
+<li class="">NAT configuration (jump peers)</li>
+<li class="">Heartbeat reporting</li>
+<li class="">Real-time config updates via WebSocket</li>
+</ul>
+<p><strong>Deployment:</strong></p>
+<ul>
+<li class="">Linux (systemd service)</li>
+<li class="">macOS (launchd)</li>
+<li class="">Windows (service)</li>
+<li class="">Docker container</li>
+</ul>
+<p><strong>Security:</strong></p>
+<ul>
+<li class="">Token used only during enrollment</li>
+<li class="">Ephemeral session authentication</li>
+<li class="">Config retrieved over HTTPS</li>
+<li class="">Private keys never transmitted</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="storage">Storage<a href="#storage" class="hash-link" aria-label="Direct link to Storage" title="Direct link to Storage" translate="no">​</a></h3>
+<p><strong>Current:</strong> In-memory (default)<br>
+<strong>Future:</strong> PostgreSQL support</p>
+<p><strong>Data Model:</strong></p>
+<ul>
+<li class="">Networks (CIDR, domain, peers)</li>
+<li class="">Peers (type, keys, endpoint, metadata)</li>
+<li class="">ACL (blocked peer IDs)</li>
+<li class="">Incidents (type, state, audit)</li>
+<li class="">IPAM allocations</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="architecture-patterns">Architecture Patterns<a href="#architecture-patterns" class="hash-link" aria-label="Direct link to Architecture Patterns" title="Direct link to Architecture Patterns" translate="no">​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="hexagonal-architecture-ports--adapters">Hexagonal Architecture (Ports &amp; Adapters)<a href="#hexagonal-architecture-ports--adapters" class="hash-link" aria-label="Direct link to Hexagonal Architecture (Ports &amp; Adapters)" title="Direct link to Hexagonal Architecture (Ports &amp; Adapters)" translate="no">​</a></h3>
+<p>The server follows hexagonal architecture principles:</p>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-text codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#393A34"><span class="token plain">Domain (Core Business Logic)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    ├── peer/</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    ├── network/</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    ├── incident/</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    └── ipam/</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Application (Use Cases)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    ├── peer service</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    ├── network service</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    └── incident service</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Adapters (External Interfaces)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    ├── api/ (HTTP handlers)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    ├── db/ (repositories)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    ├── ws/ (WebSocket)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    └── wg/ (WireGuard config)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Ports (Interfaces)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    └── ports.go</span><br></span></code></pre></div></div>
+<p><strong>Benefits:</strong></p>
+<ul>
+<li class="">Testable core logic</li>
+<li class="">Technology-agnostic domain</li>
+<li class="">Easy adapter replacement</li>
+<li class="">Clear dependency direction</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="event-driven-updates">Event-Driven Updates<a href="#event-driven-updates" class="hash-link" aria-label="Direct link to Event-Driven Updates" title="Direct link to Event-Driven Updates" translate="no">​</a></h3>
+<p>Real-time updates use event-driven architecture:</p>
+<ol>
+<li class="">State change occurs (peer created, incident detected)</li>
+<li class="">Service emits notification event</li>
+<li class="">Notifier broadcasts via WebSocket</li>
+<li class="">Agents/Frontend receive and react</li>
+<li class="">Agents fetch updated config</li>
+</ol>
+<p><strong>Benefits:</strong></p>
+<ul>
+<li class="">Near-instant config propagation</li>
+<li class="">Reduced polling overhead</li>
+<li class="">Scalable notification delivery</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="token-based-enrollment">Token-Based Enrollment<a href="#token-based-enrollment" class="hash-link" aria-label="Direct link to Token-Based Enrollment" title="Direct link to Token-Based Enrollment" translate="no">​</a></h3>
+<p>Agent enrollment follows secure token pattern:</p>
+<ol>
+<li class="">Server generates unique enrollment token</li>
+<li class="">Token displayed in UI (one-time view)</li>
+<li class="">Agent uses token for enrollment</li>
+<li class="">Server validates token and creates session</li>
+<li class="">Session used for subsequent requests</li>
+<li class="">Token invalidated on peer deletion</li>
+</ol>
+<p><strong>Security properties:</strong></p>
+<ul>
+<li class="">Token serves as authorization</li>
+<li class="">Short-lived credential usage</li>
+<li class="">No password storage</li>
+<li class="">Revocable access</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="data-flow">Data Flow<a href="#data-flow" class="hash-link" aria-label="Direct link to Data Flow" title="Direct link to Data Flow" translate="no">​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="peer-enrollment-dynamic">Peer Enrollment (Dynamic)<a href="#peer-enrollment-dynamic" class="hash-link" aria-label="Direct link to Peer Enrollment (Dynamic)" title="Direct link to Peer Enrollment (Dynamic)" translate="no">​</a></h3>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-text codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#393A34"><span class="token plain">Frontend → Server: Create peer (use_agent=true)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server generates token + stores peer</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Frontend ← Server: Return token</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Agent → Server: Enroll with token</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server validates token</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server generates WireGuard keys</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server stores session</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Agent ← Server: Return config + session ID</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Agent → Server: Heartbeat (periodic)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server updates last_seen, endpoint</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Agent ← Server: ACK</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Server: Network update event</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server → Notifier: Broadcast event</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Notifier → Agent: WebSocket push</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Agent → Server: Fetch updated config</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Agent: Apply config to WireGuard</span><br></span></code></pre></div></div>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="incident-detection--response">Incident Detection &amp; Response<a href="#incident-detection--response" class="hash-link" aria-label="Direct link to Incident Detection &amp; Response" title="Direct link to Incident Detection &amp; Response" translate="no">​</a></h3>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-text codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#393A34"><span class="token plain">Agent → Server: Heartbeat #1 from IP-A</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server records session</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Agent → Server: Heartbeat #2 from IP-B (within 5 min)</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server detects session conflict</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server creates incident</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server adds peer to ACL blocked list</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server → Notifier: Broadcast ACL update</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Notifier → Agents: Network update event</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Agents → Server: Fetch config</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server excludes blocked peer from configs</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Frontend: Admin reviews incident</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Frontend → Server: Resolve incident</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server removes peer from ACL</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server logs resolution audit</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">    Server → Notifier: Broadcast update</span><br></span><span class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></span><span class="token-line" style="color:#393A34"><span class="token plain">Agents: Receive config with peer restored</span><br></span></code></pre></div></div>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="config-generation">Config Generation<a href="#config-generation" class="hash-link" aria-label="Direct link to Config Generation" title="Direct link to Config Generation" translate="no">​</a></h3>
+<p>Server generates peer-specific configs:</p>
+<ol>
+<li class=""><strong>Fetch network and all peers</strong></li>
+<li class=""><strong>Filter by ACL</strong>: Exclude blocked peers</li>
+<li class=""><strong>Apply peer constraints</strong>:<!-- -->
+<ul>
+<li class="">Isolated peers: Only jump peers in allowed IPs</li>
+<li class="">Full encapsulation: Add 0.0.0.0/0</li>
+<li class="">Additional allowed IPs: Include custom CIDRs</li>
+</ul>
+</li>
+<li class=""><strong>Generate WireGuard syntax</strong></li>
+<li class=""><strong>Return config to agent</strong></li>
+</ol>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="security-considerations">Security Considerations<a href="#security-considerations" class="hash-link" aria-label="Direct link to Security Considerations" title="Direct link to Security Considerations" translate="no">​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="authentication--authorization">Authentication &amp; Authorization<a href="#authentication--authorization" class="hash-link" aria-label="Direct link to Authentication &amp; Authorization" title="Direct link to Authentication &amp; Authorization" translate="no">​</a></h3>
+<p><strong>Frontend:</strong></p>
+<ul>
+<li class="">Optional OIDC integration</li>
+<li class="">JWT tokens for API access</li>
+<li class="">Role-based access control (future)</li>
+</ul>
+<p><strong>Agent:</strong></p>
+<ul>
+<li class="">Token-based enrollment</li>
+<li class="">Session-based subsequent access</li>
+<li class="">No stored credentials</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="secrets-management">Secrets Management<a href="#secrets-management" class="hash-link" aria-label="Direct link to Secrets Management" title="Direct link to Secrets Management" translate="no">​</a></h3>
+<p><strong>Private Keys:</strong></p>
+<ul>
+<li class="">Generated server-side</li>
+<li class="">Never included in API responses</li>
+<li class="">Tagged <code>json:&quot;-&quot;</code> in structs</li>
+<li class="">Stored securely in repository</li>
+</ul>
+<p><strong>Enrollment Tokens:</strong></p>
+<ul>
+<li class="">Unique per peer</li>
+<li class="">Invalidated on peer deletion</li>
+<li class="">Should be treated as secrets</li>
+<li class="">Time-limited validity (future enhancement)</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="network-security">Network Security<a href="#network-security" class="hash-link" aria-label="Direct link to Network Security" title="Direct link to Network Security" translate="no">​</a></h3>
+<p><strong>Communication:</strong></p>
+<ul>
+<li class="">HTTPS required for production</li>
+<li class="">WebSocket over TLS (WSS)</li>
+<li class="">WireGuard provides transport encryption</li>
+</ul>
+<p><strong>Firewall:</strong></p>
+<ul>
+<li class="">Server API should be behind ingress</li>
+<li class="">WireGuard ports need UDP access</li>
+<li class="">Agent needs outbound HTTPS</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="incident-response">Incident Response<a href="#incident-response" class="hash-link" aria-label="Direct link to Incident Response" title="Direct link to Incident Response" translate="no">​</a></h3>
+<p><strong>Automated Blocking:</strong></p>
+<ul>
+<li class="">ACL-based containment</li>
+<li class="">Non-destructive (peer not deleted)</li>
+<li class="">Auditable resolution</li>
+</ul>
+<p><strong>Detection Mechanisms:</strong></p>
+<ul>
+<li class="">Session conflicts (multiple simultaneous agents)</li>
+<li class="">Shared configs (rapid endpoint changes)</li>
+<li class="">Suspicious activity (excessive changes)</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="scalability">Scalability<a href="#scalability" class="hash-link" aria-label="Direct link to Scalability" title="Direct link to Scalability" translate="no">​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="current-limitations">Current Limitations<a href="#current-limitations" class="hash-link" aria-label="Direct link to Current Limitations" title="Direct link to Current Limitations" translate="no">​</a></h3>
+<p><strong>In-Memory Storage:</strong></p>
+<ul>
+<li class="">Single server instance</li>
+<li class="">Data lost on restart</li>
+<li class="">Limited to server memory</li>
+</ul>
+<p><strong>Future Enhancements:</strong></p>
+<p><strong>Database Backend:</strong></p>
+<ul>
+<li class="">PostgreSQL support</li>
+<li class="">Multi-instance deployment</li>
+<li class="">Persistent storage</li>
+</ul>
+<p><strong>Agent Connection Pooling:</strong></p>
+<ul>
+<li class="">WebSocket connection scaling</li>
+<li class="">Load balancer sticky sessions</li>
+<li class="">Horizontal scaling</li>
+</ul>
+<p><strong>Caching:</strong></p>
+<ul>
+<li class="">Config generation caching</li>
+<li class="">JWKS caching (already implemented)</li>
+<li class="">Network topology caching</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="technology-stack">Technology Stack<a href="#technology-stack" class="hash-link" aria-label="Direct link to Technology Stack" title="Direct link to Technology Stack" translate="no">​</a></h2>
+<table><thead><tr><th>Component</th><th>Technology</th><th>Version</th></tr></thead><tbody><tr><td>Server</td><td>Go</td><td>1.21+</td></tr><tr><td>Server Framework</td><td>Gin</td><td>Latest</td></tr><tr><td>Agent</td><td>Go</td><td>1.21+</td></tr><tr><td>Frontend</td><td>React</td><td>19.x</td></tr><tr><td>Frontend Build</td><td>Vite</td><td>Latest</td></tr><tr><td>Frontend Language</td><td>TypeScript</td><td>5.x</td></tr><tr><td>Documentation</td><td>Docusaurus</td><td>3.x</td></tr><tr><td>Deployment</td><td>Kubernetes + Helm</td><td>1.24+</td></tr><tr><td>Container Registry</td><td>Scaleway</td><td>-</td></tr></tbody></table>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="development-principles">Development Principles<a href="#development-principles" class="hash-link" aria-label="Direct link to Development Principles" title="Direct link to Development Principles" translate="no">​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="clean-architecture">Clean Architecture<a href="#clean-architecture" class="hash-link" aria-label="Direct link to Clean Architecture" title="Direct link to Clean Architecture" translate="no">​</a></h3>
+<ul>
+<li class="">Separation of concerns</li>
+<li class="">Dependency inversion</li>
+<li class="">Testable components</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="api-first-design">API-First Design<a href="#api-first-design" class="hash-link" aria-label="Direct link to API-First Design" title="Direct link to API-First Design" translate="no">​</a></h3>
+<ul>
+<li class="">OpenAPI/Swagger documentation</li>
+<li class="">Versioned endpoints (/api/v1)</li>
+<li class="">RESTful conventions</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="security-by-default">Security by Default<a href="#security-by-default" class="hash-link" aria-label="Direct link to Security by Default" title="Direct link to Security by Default" translate="no">​</a></h3>
+<ul>
+<li class="">HTTPS enforcement</li>
+<li class="">ACL-based isolation</li>
+<li class="">Automated incident response</li>
+<li class="">Minimal credential storage</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="cloud-native">Cloud-Native<a href="#cloud-native" class="hash-link" aria-label="Direct link to Cloud-Native" title="Direct link to Cloud-Native" translate="no">​</a></h3>
+<ul>
+<li class="">Stateless services (future with DB)</li>
+<li class="">Containerized deployment</li>
+<li class="">Kubernetes-ready</li>
+<li class="">Horizontal scaling support</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="implemented-features-formerly-roadmap">Implemented Features (formerly roadmap)<a href="#implemented-features-formerly-roadmap" class="hash-link" aria-label="Direct link to Implemented Features (formerly roadmap)" title="Direct link to Implemented Features (formerly roadmap)" translate="no">​</a></h2>
+<p>The following items were previously listed as future work and are now implemented:</p>
+<ul>
+<li class="">✅ <strong>PostgreSQL backend</strong> — enable with <code>DB_ENABLED=true</code> + <code>DB_DSN</code></li>
+<li class="">✅ <strong>Database migrations</strong> — applied automatically at startup via <code>cmd/kodata/migrations/</code></li>
+<li class="">✅ <strong>Peer groups</strong> — full Groups/Policies/Routes system</li>
+<li class="">✅ <strong>Audit logging</strong> — structured JSON audit trail on server and agent (enable with <code>AUDIT_LOG=true</code>)</li>
+<li class="">✅ <strong>API tokens</strong> — long-lived personal access tokens (<code>wirety_</code> prefix, SHA-256 hashed)</li>
+<li class="">✅ <strong>MCP server</strong> — embedded at <code>GET/POST /mcp</code> with Streamable HTTP transport</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="future-roadmap">Future Roadmap<a href="#future-roadmap" class="hash-link" aria-label="Direct link to Future Roadmap" title="Direct link to Future Roadmap" translate="no">​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="security-enhancements">Security Enhancements<a href="#security-enhancements" class="hash-link" aria-label="Direct link to Security Enhancements" title="Direct link to Security Enhancements" translate="no">​</a></h3>
+<ul>
+<li class="">Automatic key rotation</li>
+<li class="">Token expiration enforcement per-policy</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="monitoring--observability">Monitoring &amp; Observability<a href="#monitoring--observability" class="hash-link" aria-label="Direct link to Monitoring &amp; Observability" title="Direct link to Monitoring &amp; Observability" translate="no">​</a></h3>
+<ul>
+<li class="">Prometheus metrics</li>
+<li class="">OpenTelemetry tracing</li>
+<li class="">Grafana dashboards</li>
+<li class="">Health checks</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="features">Features<a href="#features" class="hash-link" aria-label="Direct link to Features" title="Direct link to Features" translate="no">​</a></h3>
+<ul>
+<li class="">Network templates</li>
+<li class="">Bulk operations</li>
+<li class="">Config versioning</li>
+<li class="">Backup/restore</li>
+<li class="">Multi-instance support (requires shared storage)</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="related-documentation">Related Documentation<a href="#related-documentation" class="hash-link" aria-label="Direct link to Related Documentation" title="Direct link to Related Documentation" translate="no">​</a></h2>
+<ul>
+<li class=""><a class="" href="/docs/deployment">Deployment Guide</a></li>
+<li class=""><a class="" href="/docs/server">Server Configuration</a></li>
+<li class=""><a class="" href="/docs/agent">Agent Setup</a></li>
+<li class=""><a class="" href="/docs/network">Network Management</a></li>
+<li class=""><a class="" href="/docs/incidents">Security &amp; Incidents</a></li>
+</ul></div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href="https://github.com/pewty-fr/wirety/tree/main/doc/docs/architecture.md" target="_blank" rel="noopener noreferrer" class="theme-edit-this-page"><svg fill="currentColor" height="20" width="20" viewBox="0 0 40 40" class="iconEdit_Z9Sw" aria-hidden="true"><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"></path></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/docs/api-reference"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">API Reference</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/docs/audit-logs"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Audit Logs</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#system-overview" class="table-of-contents__link toc-highlight">System Overview</a></li><li><a href="#components" class="table-of-contents__link toc-highlight">Components</a><ul><li><a href="#frontend" class="table-of-contents__link toc-highlight">Frontend</a></li><li><a href="#server" class="table-of-contents__link toc-highlight">Server</a></li><li><a href="#agent" class="table-of-contents__link toc-highlight">Agent</a></li><li><a href="#storage" class="table-of-contents__link toc-highlight">Storage</a></li></ul></li><li><a href="#architecture-patterns" class="table-of-contents__link toc-highlight">Architecture Patterns</a><ul><li><a href="#hexagonal-architecture-ports--adapters" class="table-of-contents__link toc-highlight">Hexagonal Architecture (Ports &amp; Adapters)</a></li><li><a href="#event-driven-updates" class="table-of-contents__link toc-highlight">Event-Driven Updates</a></li><li><a href="#token-based-enrollment" class="table-of-contents__link toc-highlight">Token-Based Enrollment</a></li></ul></li><li><a href="#data-flow" class="table-of-contents__link toc-highlight">Data Flow</a><ul><li><a href="#peer-enrollment-dynamic" class="table-of-contents__link toc-highlight">Peer Enrollment (Dynamic)</a></li><li><a href="#incident-detection--response" class="table-of-contents__link toc-highlight">Incident Detection &amp; Response</a></li><li><a href="#config-generation" class="table-of-contents__link toc-highlight">Config Generation</a></li></ul></li><li><a href="#security-considerations" class="table-of-contents__link toc-highlight">Security Considerations</a><ul><li><a href="#authentication--authorization" class="table-of-contents__link toc-highlight">Authentication &amp; Authorization</a></li><li><a href="#secrets-management" class="table-of-contents__link toc-highlight">Secrets Management</a></li><li><a href="#network-security" class="table-of-contents__link toc-highlight">Network Security</a></li><li><a href="#incident-response" class="table-of-contents__link toc-highlight">Incident Response</a></li></ul></li><li><a href="#scalability" class="table-of-contents__link toc-highlight">Scalability</a><ul><li><a href="#current-limitations" class="table-of-contents__link toc-highlight">Current Limitations</a></li></ul></li><li><a href="#technology-stack" class="table-of-contents__link toc-highlight">Technology Stack</a></li><li><a href="#development-principles" class="table-of-contents__link toc-highlight">Development Principles</a><ul><li><a href="#clean-architecture" class="table-of-contents__link toc-highlight">Clean Architecture</a></li><li><a href="#api-first-design" class="table-of-contents__link toc-highlight">API-First Design</a></li><li><a href="#security-by-default" class="table-of-contents__link toc-highlight">Security by Default</a></li><li><a href="#cloud-native" class="table-of-contents__link toc-highlight">Cloud-Native</a></li></ul></li><li><a href="#implemented-features-formerly-roadmap" class="table-of-contents__link toc-highlight">Implemented Features (formerly roadmap)</a></li><li><a href="#future-roadmap" class="table-of-contents__link toc-highlight">Future Roadmap</a><ul><li><a href="#security-enhancements" class="table-of-contents__link toc-highlight">Security Enhancements</a></li><li><a href="#monitoring--observability" class="table-of-contents__link toc-highlight">Monitoring &amp; Observability</a></li><li><a href="#features" class="table-of-contents__link toc-highlight">Features</a></li></ul></li><li><a href="#related-documentation" class="table-of-contents__link toc-highlight">Related Documentation</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class="footer__title">Docs</div><ul class="footer__items clean-list"><li class="footer__item"><a class="footer__link-item" href="/docs/intro">Docs</a></li></ul></div><div class="theme-layout-footer-column col footer__col"><div class="footer__title">Community</div><ul class="footer__items clean-list"></ul></div><div class="theme-layout-footer-column col footer__col"><div class="footer__title">More</div><ul class="footer__items clean-list"><li class="footer__item"><a href="https://github.com/pewty-fr/wirety" target="_blank" rel="noopener noreferrer" class="footer__link-item">GitHub<svg width="13.5" height="13.5" aria-label="(opens in new tab)" class="iconExternalLink_nPIU"><use href="#theme-svg-external-link"></use></svg></a></li></ul></div></div><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2026 Pewty. Built with Docusaurus.</div></div></div></footer></div>
+</body>
+</html>

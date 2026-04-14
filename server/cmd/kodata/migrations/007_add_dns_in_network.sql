@@ -1,2 +1,0 @@
-ALTER TABLE networks
-ADD COLUMN dns TEXT[] NOT NULL DEFAULT '{}';
