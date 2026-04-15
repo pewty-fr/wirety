@@ -17,6 +17,7 @@ type Discovery struct {
 	TokenEndpoint         string `json:"token_endpoint"`
 	UserinfoEndpoint      string `json:"userinfo_endpoint"`
 	JwksURI               string `json:"jwks_uri"`
+	EndSessionEndpoint    string `json:"end_session_endpoint"`
 }
 
 var (
@@ -32,8 +33,20 @@ type cachedItem struct {
 }
 
 // Discover returns provider metadata, performing a network request only when necessary.
+// GitHub (https://github.com) is a special case: it has no OIDC discovery document, so
+// hardcoded endpoints are returned instead.
 func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 	issuerURL = strings.TrimSuffix(issuerURL, "/")
+
+	// GitHub does not expose an OIDC discovery document — return synthetic metadata.
+	if issuerURL == "https://github.com" {
+		return &Discovery{
+			Issuer:                "https://github.com",
+			AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
+			TokenEndpoint:         "https://github.com/login/oauth/access_token",
+		}, nil
+	}
+
 	cacheMu.RLock()
 	item, found := cache[issuerURL]
 	if found && time.Now().Before(item.expiresAt) {

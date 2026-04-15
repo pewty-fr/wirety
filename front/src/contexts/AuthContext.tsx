@@ -14,6 +14,9 @@ export interface AuthConfig {
   issuer_url: string;
   client_id: string;
   simple_auth: boolean;
+  authorization_endpoint: string;
+  end_session_endpoint: string;
+  scope: string;
 }
 
 interface AuthContextType {
@@ -110,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAuthConfig(config);
     } catch (error) {
       console.error('Failed to fetch auth config:', error);
-      setAuthConfig({ enabled: false, issuer_url: '', client_id: '', simple_auth: true });
+      setAuthConfig({ enabled: false, issuer_url: '', client_id: '', simple_auth: true, authorization_endpoint: '', end_session_endpoint: '', scope: '' });
     }
   };
 
@@ -139,26 +142,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async () => {
     if (!authConfig || !authConfig.enabled) return;
 
-    try {
-      const discoveryUrl = `${authConfig.issuer_url}/.well-known/openid-configuration`;
-      const discoveryResponse = await fetch(discoveryUrl);
-      if (!discoveryResponse.ok) throw new Error('Failed to fetch OIDC discovery document');
-
-      const discovery = await discoveryResponse.json();
-      const authorizationEndpoint = discovery.authorization_endpoint;
-      if (!authorizationEndpoint) throw new Error('Authorization endpoint not found');
-
-      const redirectUri = `${window.location.origin}/`;
-      const authUrl = `${authorizationEndpoint}?` +
-        `client_id=${authConfig.client_id}&` +
-        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-        `response_type=code&` +
-        `scope=openid profile email offline_access`;
-
-      window.location.href = authUrl;
-    } catch (error) {
-      console.error('Failed to initiate login:', error);
+    const authorizationEndpoint = authConfig.authorization_endpoint;
+    if (!authorizationEndpoint) {
+      console.error('Authorization endpoint not available');
+      return;
     }
+
+    const redirectUri = `${window.location.origin}/`;
+    const authUrl = `${authorizationEndpoint}?` +
+      `client_id=${authConfig.client_id}&` +
+      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+      `response_type=code&` +
+      `scope=${encodeURIComponent(authConfig.scope)}`;
+
+    window.location.href = authUrl;
   };
 
   const simpleLogin = async (password: string): Promise<boolean> => {
@@ -196,22 +193,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setUser(null);
 
-    if (authConfig && authConfig.enabled) {
-      try {
-        const discoveryUrl = `${authConfig.issuer_url}/.well-known/openid-configuration`;
-        const discoveryResponse = await fetch(discoveryUrl);
-        if (discoveryResponse.ok) {
-          const discovery = await discoveryResponse.json();
-          const endSessionEndpoint = discovery.end_session_endpoint;
-          if (endSessionEndpoint) {
-            const redirectUri = `${window.location.origin}/`;
-            window.location.href = `${endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent(redirectUri)}`;
-            return;
-          }
-        }
-      } catch (error) {
-        console.error('Failed to discover logout endpoint:', error);
-      }
+    if (authConfig && authConfig.enabled && authConfig.end_session_endpoint) {
+      const redirectUri = `${window.location.origin}/`;
+      window.location.href = `${authConfig.end_session_endpoint}?post_logout_redirect_uri=${encodeURIComponent(redirectUri)}`;
+      return;
     }
   };
 

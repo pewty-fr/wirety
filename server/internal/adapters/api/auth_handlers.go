@@ -15,6 +15,7 @@ import (
 
 	"wirety/internal/audit"
 	"wirety/internal/domain/auth"
+	"wirety/internal/infrastructure/github"
 	"wirety/internal/infrastructure/oidc"
 
 	"github.com/gin-gonic/gin"
@@ -49,26 +50,44 @@ func (f *flexInt) UnmarshalJSON(b []byte) error {
 
 // AuthConfigResponse contains public authentication configuration
 type AuthConfigResponse struct {
-	Enabled    bool   `json:"enabled"`
-	IssuerURL  string `json:"issuer_url"`
-	ClientID   string `json:"client_id"`
-	SimpleAuth bool   `json:"simple_auth"` // true when AUTH_ENABLED=false (admin/password login)
+	Enabled               bool   `json:"enabled"`
+	IssuerURL             string `json:"issuer_url"`
+	ClientID              string `json:"client_id"`
+	SimpleAuth            bool   `json:"simple_auth"`             // true when AUTH_ENABLED=false (admin/password login)
+	AuthorizationEndpoint string `json:"authorization_endpoint"` // populated from OIDC discovery (or hardcoded for GitHub)
+	EndSessionEndpoint    string `json:"end_session_endpoint"`    // populated from OIDC discovery; empty if provider does not support RP-initiated logout
+	Scope                 string `json:"scope"`                  // OAuth scopes the frontend must request; provider-specific
 }
 
 // GetAuthConfig godoc
 // @Summary      Get authentication configuration
-// @Description  Get public authentication configuration (no auth required)
+// @Description  Get public authentication configuration (no auth required). When OIDC is enabled, authorization_endpoint and end_session_endpoint are resolved server-side to avoid CORS issues with the IdP discovery document.
 // @Tags         auth
 // @Produce      json
 // @Success      200 {object} AuthConfigResponse
 // @Router       /auth/config [get]
 func (h *Handler) GetAuthConfig(c *gin.Context) {
-	c.JSON(http.StatusOK, AuthConfigResponse{
+	resp := AuthConfigResponse{
 		Enabled:    h.authConfig.Enabled,
 		IssuerURL:  h.authConfig.IssuerURL,
 		ClientID:   h.authConfig.ClientID,
 		SimpleAuth: !h.authConfig.Enabled,
-	})
+		Scope:      "openid profile email offline_access",
+	}
+
+	if h.authConfig.Enabled && h.authConfig.IssuerURL != "" {
+		if github.IsGitHub(h.authConfig.IssuerURL) {
+			resp.AuthorizationEndpoint = github.AuthorizationEndpoint
+			resp.Scope = github.Scope
+		} else if discovery, err := oidc.Discover(c.Request.Context(), h.authConfig.IssuerURL); err == nil {
+			resp.AuthorizationEndpoint = discovery.AuthorizationEndpoint
+			resp.EndSessionEndpoint = discovery.EndSessionEndpoint
+		} else {
+			log.Warn().Err(err).Msg("GetAuthConfig: could not fetch OIDC discovery document")
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // TokenRequest contains the authorization code exchange request
@@ -103,6 +122,12 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	var req TokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// GitHub OAuth: bypass the standard OIDC flow (no JWT, no discovery document).
+	if github.IsGitHub(h.authConfig.IssuerURL) {
+		h.exchangeGitHubToken(c, req)
 		return
 	}
 
@@ -367,6 +392,76 @@ func (h *Handler) SimpleLogin(c *gin.Context) {
 		Str("action", "auth.login").
 		Str("username", req.Username).
 		Msg("audit")
+
+	h.setSessionCookie(c, session.SessionHash, 30*24*3600)
+	c.JSON(http.StatusOK, TokenResponse{
+		SessionHash: session.SessionHash,
+		ExpiresIn:   30 * 24 * 3600,
+	})
+}
+
+// exchangeGitHubToken handles the /auth/token exchange for GitHub OAuth.
+// It replaces the standard OIDC flow because GitHub does not issue JWT ID tokens.
+func (h *Handler) exchangeGitHubToken(c *gin.Context, req TokenRequest) {
+	// 1. Exchange authorization code for a GitHub access token.
+	accessToken, err := github.ExchangeCode(c.Request.Context(), h.authConfig.ClientID, h.authConfig.ClientSecret, req.Code, req.RedirectURI)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("GitHub token exchange failed: %v", err)})
+		return
+	}
+
+	// 2. Fetch user profile.
+	ghUser, err := github.FetchUser(c.Request.Context(), accessToken)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch GitHub user: %v", err)})
+		return
+	}
+
+	// 3. Resolve email — GitHub users may hide their email; fall back to /user/emails.
+	email := ghUser.Email
+	if email == "" {
+		log.Debug().Int("github_id", ghUser.ID).Msg("email missing from GitHub user profile, fetching /user/emails")
+		email, err = github.FetchPrimaryEmail(c.Request.Context(), accessToken)
+		if err != nil {
+			log.Warn().Err(err).Msg("failed to fetch GitHub user emails")
+		}
+	}
+	if email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Your GitHub account does not have a verified email address. Please add and verify an email in your GitHub settings."})
+		return
+	}
+
+	// 4. Resolve display name — fall back to login handle if name is not set.
+	name := ghUser.Name
+	if name == "" {
+		name = ghUser.Login
+	}
+
+	// 5. Build OIDCClaims so we can reuse the existing GetOrCreateUser logic.
+	claims := &auth.OIDCClaims{
+		Subject:       fmt.Sprintf("github:%d", ghUser.ID),
+		Email:         email,
+		EmailVerified: true,
+		Name:          name,
+		Issuer:        github.IssuerURL,
+	}
+
+	// 6. Get or create the Wirety user.
+	user, err := h.authService.GetOrCreateUser(c.Request.Context(), claims)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get user: %v", err)})
+		return
+	}
+
+	// 7. Create server-side session.
+	// Store the GitHub token with a prefix so the middleware can skip JWT validation.
+	// expiresIn=0 → AccessTokenExpiresAt is set to 100 years from now (GitHub tokens
+	// do not expire unless explicitly revoked).
+	session, err := h.createSession(user.ID, github.TokenPrefix+accessToken, "", 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create session: %v", err)})
+		return
+	}
 
 	h.setSessionCookie(c, session.SessionHash, 30*24*3600)
 	c.JSON(http.StatusOK, TokenResponse{

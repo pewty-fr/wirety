@@ -1,4 +1,8 @@
-# User Guide
+---
+id: user
+title: User guide
+sidebar_position: 7
+---
 
 This guide provides step-by-step instructions for common tasks in the WireGuard network management system.
 

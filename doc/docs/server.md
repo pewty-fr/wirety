@@ -44,8 +44,10 @@ Set a fixed password via `AUTH_PASSWORD` to avoid regeneration on restart.
 
 Login via `POST /api/v1/auth/simple-login` with `{"username":"admin","password":"..."}`.
 
-### OIDC (`AUTH_ENABLED=true`)
-See the [OIDC guide](./guides/oidc) for full configuration. Users authenticate via your identity provider; their roles and network access are managed in the Wirety UI.
+### OIDC / OAuth (`AUTH_ENABLED=true`)
+Users authenticate via your identity provider; their roles and network access are managed in the Wirety UI.
+
+See the [Identity Providers guide](./guides/identity-providers) for step-by-step setup with **Keycloak**, **Azure Entra ID**, **Slack**, and **GitHub**. Any other standard OIDC provider also works out of the box.
 
 ## API Tokens
 Users can create long-lived API tokens (same permissions as their account) for scripting and integrations:

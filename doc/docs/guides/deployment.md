@@ -1,7 +1,7 @@
 ---
 id: deployment
 title: Deployment Guide
-sidebar_position: 8
+sidebar_position: 6
 ---
 
 This guide covers deploying Wirety in production environments.

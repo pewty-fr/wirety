@@ -44,8 +44,10 @@ Définir un mot de passe fixe via `AUTH_PASSWORD` pour éviter la régénératio
 
 Connexion via `POST /api/v1/auth/simple-login` avec `{"username":"admin","password":"..."}`.
 
-### OIDC (`AUTH_ENABLED=true`)
-Consultez le [guide OIDC](./guides/oidc) pour la configuration complète. Les utilisateurs s'authentifient via votre fournisseur d'identité ; leurs rôles et accès réseau sont gérés dans l'interface Wirety.
+### OIDC / OAuth (`AUTH_ENABLED=true`)
+Les utilisateurs s'authentifient via votre fournisseur d'identité ; leurs rôles et accès réseau sont gérés dans l'interface Wirety.
+
+Consultez le [guide Fournisseurs d'identité](./guides/identity-providers) pour la configuration étape par étape avec **Keycloak**, **Azure Entra ID**, **Slack** et **GitHub**. Tout autre fournisseur OIDC standard fonctionne également sans configuration supplémentaire.
 
 ## Tokens API
 Les utilisateurs peuvent créer des tokens API à longue durée de vie (mêmes permissions que leur compte) pour les scripts et intégrations :

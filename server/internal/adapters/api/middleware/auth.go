@@ -11,6 +11,7 @@ import (
 	"wirety/internal/application/auth"
 	"wirety/internal/config"
 	domainAuth "wirety/internal/domain/auth"
+	"wirety/internal/infrastructure/github"
 
 	"github.com/gin-gonic/gin"
 )
@@ -229,6 +230,18 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 			alreadyRefreshed = true
 		}
 		mu.Unlock()
+	}
+
+	// GitHub sessions store an opaque access token — skip JWT validation entirely.
+	// Session validity (30-day RefreshTokenExpiresAt) is the only expiry mechanism.
+	if strings.HasPrefix(session.AccessToken, github.TokenPrefix) {
+		user, err := userRepo.GetUser(session.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("user not found: %w", err)
+		}
+		session.LastUsedAt = time.Now()
+		_ = userRepo.UpdateSession(session)
+		return user, nil
 	}
 
 	// Validate the access token

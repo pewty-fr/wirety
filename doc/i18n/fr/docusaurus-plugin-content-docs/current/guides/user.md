@@ -1,4 +1,8 @@
-# Guide utilisateur
+---
+id: user
+title: Guide utilisateur
+sidebar_position: 7
+---
 
 Ce guide fournit des instructions étape par étape pour les tâches courantes dans le système de gestion de réseaux WireGuard.
 
