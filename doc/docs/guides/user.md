@@ -914,10 +914,9 @@ done
 
 ## Additional Resources
 
-- [API Reference](./api-reference.md) - Complete API documentation
-- [Migration Guide](./migration-guide.md) - Migrating from legacy system
-- Architecture - System architecture overview
-- Troubleshooting - Detailed troubleshooting guide
+- [API Reference](/api-reference.md) - Complete API documentation
+- [Architecture](/architecture.md) - System architecture overview
+- [Troubleshooting](/troubleshooting.md) - Detailed troubleshooting guide
 
 ---
 

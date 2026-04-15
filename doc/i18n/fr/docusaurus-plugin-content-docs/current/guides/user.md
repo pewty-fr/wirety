@@ -914,10 +914,9 @@ done
 
 ## Ressources supplémentaires
 
-- [Référence API](./api-reference) — Documentation complète de l'API
-- [Guide de migration](./migration-guide) — Migrer depuis le système hérité
-- Architecture — Vue d'ensemble de l'architecture système
-- Dépannage — Guide de dépannage détaillé
+- [Référence API](/api-reference.md) — Documentation complète de l'API
+- [Architecture](/architecture.md) — Vue d'ensemble de l'architecture système
+- [Dépannage](/troubleshooting.md) — Guide de dépannage détaillé
 
 ---
 

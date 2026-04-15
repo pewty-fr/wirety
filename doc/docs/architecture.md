@@ -444,7 +444,7 @@ The following items were previously listed as future work and are now implemente
 
 ## Related Documentation
 
-- [Deployment Guide](./deployment)
+- [Deployment Guide](./guides/deployment)
 - [Server Configuration](./server)
 - [Agent Setup](./agent)
 - [Network Management](./network)

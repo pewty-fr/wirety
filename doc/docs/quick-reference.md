@@ -331,7 +331,6 @@ Example: `database.aws-vpc.aws.internal`
 
 ## Related Documentation
 
-- [API Reference](./api-reference.md)
-- [User Guide](./user-guide.md)
-- [Migration Guide](./migration-guide.md)
-- [Groups Management](./guides/groups-management.md)
+- [API Reference](api-reference.md)
+- [User Guide](guides/user.md)
+- [Groups Management](guides/groups-management.md)

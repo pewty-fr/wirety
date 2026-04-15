@@ -5,8 +5,7 @@ This document provides an overview of the new groups, policies, and routes archi
 ## Quick Links
 
 - **[API Reference](./api-reference.md)** - Complete API documentation for all endpoints
-- **[Migration Guide](./migration-guide.md)** - Migrate from legacy ACL and peer flag system
-- **[User Guide](./user-guide.md)** - Step-by-step guides for common tasks
+- **[User Guide](./guides/user.md)** - Step-by-step guides for common tasks
 - **[Groups Management Guide](./guides/groups-management.md)** - Detailed groups management
 
 ## What's New
@@ -32,7 +31,7 @@ Define iptables rules applied on jump peers for traffic filtering. Policies are 
 - Target by CIDR, peer, or group
 - Built-in templates for common patterns
 
-**Learn More:** [User Guide - Policies](./user-guide.md#policies-management)
+**Learn More:** [User Guide - Policies](./guides/user.md#policies-management)
 
 ### Routes
 Define external network destinations accessible through jump peers. Routes are added to WireGuard AllowedIPs.
@@ -42,7 +41,7 @@ Define external network destinations accessible through jump peers. Routes are a
 - Attach to groups for automatic configuration
 - Support custom DNS domain suffixes
 
-**Learn More:** [User Guide - Routes](./user-guide.md#routes-management)
+**Learn More:** [User Guide - Routes](./guides/user.md#routes-management)
 
 ### DNS Mappings
 Provide name resolution for IP addresses within route networks.
@@ -52,7 +51,7 @@ Provide name resolution for IP addresses within route networks.
 - FQDN format: `name.route.domain`
 - Propagate to jump peer DNS servers
 
-**Learn More:** [User Guide - DNS](./user-guide.md#dns-mappings)
+**Learn More:** [User Guide - DNS](./guides/user.md#dns-mappings)
 
 ### Default Groups
 Automatically assign groups to peers created by non-administrator users.
@@ -62,12 +61,12 @@ Automatically assign groups to peers created by non-administrator users.
 - Applied only to non-admin created peers
 - Useful for baseline policies
 
-**Learn More:** [User Guide - Default Groups](./user-guide.md#default-groups-configuration)
+**Learn More:** [User Guide - Default Groups](./guides/user.md#default-groups-configuration)
 
 ## Getting Started
 
-1. Read the [User Guide](./user-guide.md) introduction
-2. Follow the [Common Workflows](./user-guide.md#common-workflows)
+1. Read the [User Guide](./guides/user.md) introduction
+2. Follow the [Common Workflows](./guides/user.md#common-workflows)
 3. Explore the [API Reference](./api-reference.md)
 
 ## Architecture
@@ -117,35 +116,35 @@ Create groups for each department and apply appropriate policies and routes.
 
 **Example:** Engineering, Sales, Support groups with different access levels.
 
-**Guide:** [User Guide - Workflow 1](./user-guide.md#workflow-1-setting-up-a-new-team)
+**Guide:** [User Guide - Workflow 1](./guides/user.md#workflow-1-setting-up-a-new-team)
 
 ### 2. Multi-Tier Application Security
 Set up web, app, and database tiers with controlled communication.
 
 **Example:** Web tier can access app tier, app tier can access database tier.
 
-**Guide:** [User Guide - Workflow 4](./user-guide.md#workflow-4-multi-tier-application-security)
+**Guide:** [User Guide - Workflow 4](./guides/user.md#workflow-4-multi-tier-application-security)
 
 ### 3. Cloud Resource Access
 Provide access to cloud networks (AWS, Azure, GCP) through jump peers.
 
 **Example:** Route to AWS VPC with DNS resolution for internal services.
 
-**Guide:** [User Guide - Workflow 3](./user-guide.md#workflow-3-providing-access-to-cloud-resources)
+**Guide:** [User Guide - Workflow 3](./guides/user.md#workflow-3-providing-access-to-cloud-resources)
 
 ### 4. Incident Response
 Quickly isolate compromised peers by moving them to a quarantine group.
 
 **Example:** Move suspicious peer to isolated group with deny-all policy.
 
-**Guide:** [User Guide - Workflow 2](./user-guide.md#workflow-2-isolating-a-compromised-peer)
+**Guide:** [User Guide - Workflow 2](./guides/user.md#workflow-2-isolating-a-compromised-peer)
 
 ### 5. Default User Access
 Configure baseline access for all non-admin created peers.
 
 **Example:** All users get access to office network and internet by default.
 
-**Guide:** [User Guide - Default Groups](./user-guide.md#default-groups-configuration)
+**Guide:** [User Guide - Default Groups](./guides/user.md#default-groups-configuration)
 
 ## API Overview
 
@@ -272,7 +271,7 @@ wg show
 
 ### Documentation
 - [API Reference](./api-reference.md)
-- [User Guide](./user-guide.md)
+- [User Guide](./guides/user.md)
 - Troubleshooting (see sidebar)
 
 ### Getting Help

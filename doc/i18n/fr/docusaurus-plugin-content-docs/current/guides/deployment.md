@@ -695,6 +695,6 @@ ip route | grep wg0
 
 ## Étapes suivantes
 
-- [Configuration OIDC](./guides/oidc)
-- [Gestion des incidents](./incidents)
-- [Configuration réseau](./network)
+- [Configuration OIDC](/guides/oidc.md)
+- [Gestion des incidents](/incidents.md)
+- [Configuration réseau](/network.md)

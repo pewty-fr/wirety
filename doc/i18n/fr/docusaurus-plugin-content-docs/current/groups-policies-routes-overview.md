@@ -8,10 +8,9 @@ Ce document présente une vue d'ensemble de l'architecture des groupes, politiqu
 
 ## Liens rapides
 
-- **[Référence API](./api-reference)** — Documentation complète de l'API pour tous les endpoints
-- **[Guide de migration](./migration-guide)** — Migrer depuis le système ACL et de flags de peers hérité
-- **[Guide utilisateur](./user-guide)** — Guides étape par étape pour les tâches courantes
-- **[Guide de gestion des groupes](./guides/groups-management)** — Gestion détaillée des groupes
+- **[Référence API](/api-reference.md)** — Documentation complète de l'API pour tous les endpoints
+- **[Guide utilisateur](/guides/user.md)** — Guides étape par étape pour les tâches courantes
+- **[Guide de gestion des groupes](/guides/groups-management.md)** — Gestion détaillée des groupes
 
 ## Nouveautés
 
@@ -36,7 +35,7 @@ Définissent les règles iptables appliquées sur les jump peers pour le filtrag
 - Ciblage par CIDR, peer ou groupe
 - Templates intégrés pour les patterns courants
 
-**En savoir plus :** [Guide utilisateur - Politiques](./user-guide#policies-management)
+**En savoir plus :** [Guide utilisateur - Politiques](/guides/user.md#policies-management)
 
 ### Routes
 Définissent les destinations réseau externes accessibles via les jump peers. Les routes sont ajoutées aux AllowedIPs WireGuard.
@@ -46,7 +45,7 @@ Définissent les destinations réseau externes accessibles via les jump peers. L
 - Attacher aux groupes pour une configuration automatique
 - Support de suffixes de domaine DNS personnalisés
 
-**En savoir plus :** [Guide utilisateur - Routes](./user-guide#routes-management)
+**En savoir plus :** [Guide utilisateur - Routes](/guides/user.md#routes-management)
 
 ### Correspondances DNS
 Fournissent la résolution de noms pour les adresses IP au sein des réseaux de routes.
@@ -56,7 +55,7 @@ Fournissent la résolution de noms pour les adresses IP au sein des réseaux de 
 - Format FQDN : `nom.route.domaine`
 - Propagation vers les serveurs DNS des jump peers
 
-**En savoir plus :** [Guide utilisateur - DNS](./user-guide#dns-mappings)
+**En savoir plus :** [Guide utilisateur - DNS](/guides/user.md#dns-mappings)
 
 ### Groupes par défaut
 Assignent automatiquement des groupes aux peers créés par des utilisateurs non administrateurs.
@@ -66,12 +65,12 @@ Assignent automatiquement des groupes aux peers créés par des utilisateurs non
 - Appliqués uniquement aux peers créés par des non-admins
 - Utile pour les politiques de base
 
-**En savoir plus :** [Guide utilisateur - Groupes par défaut](./user-guide#default-groups-configuration)
+**En savoir plus :** [Guide utilisateur - Groupes par défaut](/guides/user.md#default-groups-configuration)
 
 ## Premiers pas
 
-1. Lire l'[introduction du guide utilisateur](./user-guide)
-2. Suivre les [workflows courants](./user-guide#common-workflows)
+1. Lire l'[introduction du guide utilisateur](/guides/user.md)
+2. Suivre les [workflows courants](/guides/user.md#common-workflows)
 3. Explorer la [référence API](./api-reference)
 
 ## Architecture
@@ -121,35 +120,35 @@ Créer des groupes pour chaque département et appliquer les politiques et route
 
 **Exemple :** Groupes Ingénierie, Commercial, Support avec différents niveaux d'accès.
 
-**Guide :** [Guide utilisateur - Workflow 1](./user-guide#workflow-1-setting-up-a-new-team)
+**Guide :** [Guide utilisateur - Workflow 1](/guides/user.md#workflow-1-setting-up-a-new-team)
 
 ### 2. Sécurité d'application multi-niveaux
 Configurer des niveaux web, app et base de données avec des communications contrôlées.
 
 **Exemple :** Le niveau web peut accéder au niveau app, le niveau app peut accéder au niveau base de données.
 
-**Guide :** [Guide utilisateur - Workflow 4](./user-guide#workflow-4-multi-tier-application-security)
+**Guide :** [Guide utilisateur - Workflow 4](/guides/user.md#workflow-4-multi-tier-application-security)
 
 ### 3. Accès aux ressources cloud
 Fournir un accès aux réseaux cloud (AWS, Azure, GCP) via les jump peers.
 
 **Exemple :** Route vers un VPC AWS avec résolution DNS pour les services internes.
 
-**Guide :** [Guide utilisateur - Workflow 3](./user-guide#workflow-3-providing-access-to-cloud-resources)
+**Guide :** [Guide utilisateur - Workflow 3](/guides/user.md#workflow-3-providing-access-to-cloud-resources)
 
 ### 4. Réponse aux incidents
 Isoler rapidement les peers compromis en les déplaçant vers un groupe de quarantaine.
 
 **Exemple :** Déplacer un peer suspect vers un groupe isolé avec une politique de tout-refuser.
 
-**Guide :** [Guide utilisateur - Workflow 2](./user-guide#workflow-2-isolating-a-compromised-peer)
+**Guide :** [Guide utilisateur - Workflow 2](/guides/user.md#workflow-2-isolating-a-compromised-peer)
 
 ### 5. Accès utilisateur par défaut
 Configurer un accès de base pour tous les peers créés par des non-admins.
 
 **Exemple :** Tous les utilisateurs obtiennent par défaut un accès au réseau bureau et à internet.
 
-**Guide :** [Guide utilisateur - Groupes par défaut](./user-guide#default-groups-configuration)
+**Guide :** [Guide utilisateur - Groupes par défaut](/guides/user.md#default-groups-configuration)
 
 ## Vue d'ensemble de l'API
 
@@ -275,8 +274,8 @@ wg show
 ## Support
 
 ### Documentation
-- [Référence API](./api-reference)
-- [Guide utilisateur](./user-guide)
+- [Référence API](/api-reference.md)
+- [Guide utilisateur](/guides/user.md)
 - Dépannage (voir barre latérale)
 
 ### Obtenir de l'aide
