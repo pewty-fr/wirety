@@ -199,6 +199,13 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 	// by the winner and skip the refresh altogether.
 	alreadyRefreshed := false
 	if session.IsAccessTokenExpired() {
+		// Providers without refresh tokens (e.g. Slack) cannot renew the session —
+		// expire it immediately so the user is prompted to log in again.
+		if session.RefreshToken == "" {
+			_ = userRepo.DeleteSession(sessionHash)
+			return nil, fmt.Errorf("session expired")
+		}
+
 		mu := getSessionRefreshLock(sessionHash)
 		mu.Lock()
 		// Re-read: the goroutine that won the lock may have already refreshed.
@@ -253,6 +260,12 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 			// refresh token; just fail.
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("token invalid after refresh: %w", err)
+		}
+
+		// No refresh token available — expire the session immediately.
+		if session.RefreshToken == "" {
+			_ = userRepo.DeleteSession(sessionHash)
+			return nil, fmt.Errorf("session expired")
 		}
 
 		// Token invalid but we haven't refreshed yet — try one refresh under lock.

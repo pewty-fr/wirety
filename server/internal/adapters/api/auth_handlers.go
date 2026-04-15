@@ -72,7 +72,7 @@ func (h *Handler) GetAuthConfig(c *gin.Context) {
 		IssuerURL:  h.authConfig.IssuerURL,
 		ClientID:   h.authConfig.ClientID,
 		SimpleAuth: !h.authConfig.Enabled,
-		Scope:      "openid profile email offline_access",
+		Scope:      "openid profile email",
 	}
 
 	if h.authConfig.Enabled && h.authConfig.IssuerURL != "" {
@@ -180,8 +180,10 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	}
 
 	if oidcTokenResp.RefreshToken == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "No refresh token received. Ensure offline_access scope is requested."})
-		return
+		// Some providers (e.g. Slack) do not issue refresh tokens.
+		// Wirety will keep the session alive until the access token expires,
+		// at which point the user will be prompted to log in again.
+		log.Debug().Msg("ExchangeToken: no refresh token received; session will not auto-renew")
 	}
 
 	// Prefer id_token for validation: it is always a standard JWT per the OIDC spec.

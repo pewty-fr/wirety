@@ -309,7 +309,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	// returns only an opaque access_token which cannot be validated as a JWT,
 	// causing ValidateToken to fail, the session to be deleted, and the user to
 	// be forced to log in again — creating a new session on every expiry.
-	data.Set("scope", "openid profile email offline_access")
+	data.Set("scope", "openid profile email")
 
 	// Make request to token endpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, discovery.TokenEndpoint, strings.NewReader(data.Encode()))
