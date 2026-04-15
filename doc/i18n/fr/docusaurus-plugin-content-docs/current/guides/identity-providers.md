@@ -105,6 +105,7 @@ AUTH_CLIENT_SECRET=<secret-client>
 - Azure Entra ID n'inclut pas la revendication `email` dans le token ID par défaut. Wirety se rabat automatiquement sur l'endpoint userinfo et, si nécessaire, sur la revendication `upn` (user principal name).
 - Azure retourne `expires_in` sous forme de chaîne entre guillemets (`"3600"`) plutôt qu'un entier. Wirety gère cela de manière transparente.
 - Assurez-vous que l'application dispose de la permission déléguée **User.Read**.
+- Lors de l'utilisation du contrôle d'accès basé sur les groupes avec Azure, la revendication `groups` contient des **GUIDs d'objets** (ex. `a1b2c3d4-...`) et non des noms lisibles. Définissez `AUTH_GROUPS_CLAIM=groups` et utilisez les GUIDs dans `AUTH_ADMIN_GROUP` / `AUTH_USER_GROUP`. Les GUIDs se trouvent dans **Azure AD → Groupes → votre groupe → ID d'objet**.
 
 ---
 
@@ -174,7 +175,8 @@ AUTH_CLIENT_SECRET=<secret-client>
 - Si l'email d'un utilisateur est défini comme privé sur GitHub, Wirety le récupère automatiquement depuis l'endpoint API `/user/emails`. L'utilisateur doit avoir au moins une adresse email vérifiée.
 - Les tokens d'accès GitHub n'expirent pas. Les sessions Wirety créées via GitHub durent **30 jours**, après quoi l'utilisateur doit se reconnecter.
 - GitHub ne supporte pas la déconnexion initiée par la partie de confiance. Cliquer sur **Déconnexion** dans Wirety invalide uniquement la session Wirety.
-- **Tout utilisateur GitHub peut se connecter**, que l'application OAuth soit créée sous un compte personnel ou un compte d'organisation. La propriété d'une application OAuth par une organisation GitHub ne contrôle que son *administration* — elle ne restreint pas la page d'autorisation aux membres de l'organisation. L'URL d'autorisation est publique et l'appartenance à une organisation n'est jamais vérifiée dans le flux OAuth GitHub standard. Pour un contrôle d'accès au niveau de l'organisation, utilisez un proxy tel que [Dex](https://dexidp.io) avec GitHub comme connecteur et une liste d'organisations autorisées.
+- **Par défaut, tout utilisateur GitHub peut se connecter**, que l'application OAuth soit créée sous un compte personnel ou un compte d'organisation. La propriété d'une application OAuth par une organisation GitHub ne contrôle que son *administration* — elle ne restreint pas la page d'autorisation aux membres de l'organisation. Pour restreindre l'accès, utilisez `AUTH_ADMIN_GROUP` et `AUTH_USER_GROUP` (voir [Contrôle d'accès basé sur les groupes](#contrôle-daccès-basé-sur-les-groupes) ci-dessous), ou un proxy tel que [Dex](https://dexidp.io).
+- **Contrôle d'accès basé sur les groupes pour GitHub** — définissez `AUTH_USER_GROUP` et/ou `AUTH_ADMIN_GROUP` en utilisant les noms d'organisation (`mon-org`) ou les slugs d'équipe (`mon-org/equipe-plateforme`). Lorsque des groupes sont configurés, Wirety demande automatiquement le scope `read:org` pour vérifier l'appartenance aux organisations et équipes. **Limitation connue :** les changements d'appartenance aux groupes (ajout ou retrait d'un utilisateur d'une organisation ou d'une équipe) ne prennent effet dans Wirety qu'à la prochaine connexion de l'utilisateur, car les sessions GitHub utilisent des tokens opaques et non des JWT rafraîchissables.
 
 ---
 
@@ -185,6 +187,39 @@ Quel que soit le fournisseur, les rôles sont gérés dans Wirety — le fournis
 1. Le **premier utilisateur** à se connecter devient automatiquement `administrator`.
 2. Les **utilisateurs suivants** reçoivent le rôle par défaut configuré sous **Paramètres → Valeurs par défaut des utilisateurs** (`user` par défaut).
 3. Un administrateur peut promouvoir ou rétrograder n'importe quel utilisateur à tout moment depuis **Admin → Utilisateurs**.
+
+---
+
+## Contrôle d'accès basé sur les groupes
+
+Quatre variables d'environnement optionnelles permettent de conditionner la connexion et d'assigner automatiquement les rôles en fonction des appartenances de groupe de votre fournisseur d'identité :
+
+| Variable | Rôle |
+|----------|------|
+| `AUTH_EMAIL_CLAIM` | Revendication JWT utilisée comme email de l'utilisateur (défaut : `email`) |
+| `AUTH_GROUPS_CLAIM` | Revendication JWT portant les appartenances de groupe (ex. `groups`, `roles`) |
+| `AUTH_ADMIN_GROUP` | Groupes dont les membres reçoivent automatiquement le rôle `administrator` |
+| `AUTH_USER_GROUP` | Groupes requis pour la connexion d'un utilisateur ordinaire — les utilisateurs n'appartenant à aucun de ces groupes sont rejetés |
+
+**Règles :**
+- Un utilisateur appartenant à la fois à `AUTH_ADMIN_GROUP` et à `AUTH_USER_GROUP` se voit toujours attribuer le rôle `administrator`.
+- Lorsque `AUTH_USER_GROUP` est défini, les utilisateurs n'appartenant à aucun des groupes configurés reçoivent une réponse générique « You are not authorized ». Le rejet est visible dans le journal d'audit avec les valeurs complètes des revendications pour le débogage.
+- Définir `AUTH_USER_GROUP` sans `AUTH_ADMIN_GROUP` provoque une erreur au démarrage — il serait impossible de créer un administrateur.
+- Lorsque les variables de groupe sont définies, le raccourci « premier utilisateur = administrateur » est désactivé ; le rôle est toujours dérivé des revendications de groupe en cours.
+- Pour les fournisseurs OIDC, l'appartenance aux groupes est réévaluée à chaque renouvellement du token d'accès (généralement toutes les heures). Pour GitHub, elle n'est évaluée qu'à la connexion (voir les notes GitHub ci-dessus).
+
+**Exemple — Keycloak avec groupes :**
+```bash
+AUTH_GROUPS_CLAIM=groups
+AUTH_ADMIN_GROUP=wirety-admins
+AUTH_USER_GROUP=wirety-users
+```
+
+**Exemple — GitHub avec organisation/équipe :**
+```bash
+AUTH_ADMIN_GROUP=mon-org/infra-plateforme
+AUTH_USER_GROUP=mon-org
+```
 
 ---
 

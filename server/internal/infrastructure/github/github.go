@@ -30,6 +30,10 @@ const (
 	// Scope requests read access to the user's profile and email addresses.
 	Scope = "read:user user:email"
 
+	// ScopeOrg should be appended to Scope when group-based access control is
+	// configured.  It grants read access to organisation and team membership.
+	ScopeOrg = "read:org"
+
 	// TokenPrefix is prepended to GitHub access tokens stored in sessions so that
 	// the auth middleware can identify GitHub sessions and skip JWT validation.
 	TokenPrefix = "github:"
@@ -123,6 +127,100 @@ func FetchUser(ctx context.Context, accessToken string) (*UserInfo, error) {
 		return nil, fmt.Errorf("parse user response: %w", err)
 	}
 	return &user, nil
+}
+
+// FetchUserGroups resolves the GitHub organisations and teams a user belongs to.
+// Org membership is represented as "org-login" (e.g. "my-company").
+// Team membership is represented as "org-login/team-slug" (e.g. "my-company/platform-team").
+// This requires the read:org scope.
+func FetchUserGroups(ctx context.Context, accessToken string) ([]string, error) {
+	orgs, err := fetchUserOrgs(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	teams, err := fetchUserTeams(ctx, accessToken)
+	if err != nil {
+		// Non-fatal: return org memberships only if team fetch fails.
+		return orgs, nil
+	}
+	return append(orgs, teams...), nil
+}
+
+func fetchUserOrgs(ctx context.Context, accessToken string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user/orgs?per_page=100", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create orgs request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("orgs request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read orgs response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("orgs endpoint returned %d: %s", resp.StatusCode, body)
+	}
+
+	var orgs []struct {
+		Login string `json:"login"`
+	}
+	if err := json.Unmarshal(body, &orgs); err != nil {
+		return nil, fmt.Errorf("parse orgs response: %w", err)
+	}
+	result := make([]string, 0, len(orgs))
+	for _, o := range orgs {
+		result = append(result, o.Login)
+	}
+	return result, nil
+}
+
+func fetchUserTeams(ctx context.Context, accessToken string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user/teams?per_page=100", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create teams request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("teams request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read teams response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("teams endpoint returned %d: %s", resp.StatusCode, body)
+	}
+
+	var teams []struct {
+		Slug string `json:"slug"`
+		Org  struct {
+			Login string `json:"login"`
+		} `json:"organization"`
+	}
+	if err := json.Unmarshal(body, &teams); err != nil {
+		return nil, fmt.Errorf("parse teams response: %w", err)
+	}
+	result := make([]string, 0, len(teams))
+	for _, t := range teams {
+		if t.Org.Login != "" {
+			result = append(result, t.Org.Login+"/"+t.Slug)
+		}
+	}
+	return result, nil
 }
 
 // FetchPrimaryEmail returns the user's primary verified email address.

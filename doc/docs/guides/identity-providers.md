@@ -105,6 +105,7 @@ AUTH_CLIENT_SECRET=<client-secret>
 - Azure Entra ID does not include the `email` claim in the ID token by default. Wirety automatically falls back to the userinfo endpoint and, if needed, the `upn` (user principal name) claim.
 - Azure returns `expires_in` as a quoted string (`"3600"`) rather than an integer. Wirety handles this transparently.
 - Make sure the application has the **User.Read** delegated permission granted.
+- When using group-based access control with Azure, the `groups` claim contains **object GUIDs** (e.g. `a1b2c3d4-...`), not human-readable names. Set `AUTH_GROUPS_CLAIM=groups` and use the GUID values in `AUTH_ADMIN_GROUP` / `AUTH_USER_GROUP`. You can find the GUIDs in **Azure AD → Groups → your group → Object ID**.
 
 ---
 
@@ -174,7 +175,8 @@ AUTH_CLIENT_SECRET=<client-secret>
 - If a user's email is set to private on GitHub, Wirety fetches it from the `/user/emails` API endpoint automatically. The user must have at least one verified email address.
 - GitHub access tokens do not expire. Wirety sessions created via GitHub last **30 days**, after which the user must log in again.
 - GitHub does not support RP-initiated logout. Clicking **Logout** in Wirety invalidates the Wirety session only.
-- **Any GitHub user can log in**, regardless of whether the OAuth App is created under a personal account or an organisation account. GitHub org ownership of an OAuth App only controls who *administers* the app — it does not restrict the authorisation page to org members. The authorisation URL is public and there is no org membership assertion in the standard GitHub OAuth flow. For org-level access control, use a proxy such as [Dex](https://dexidp.io) with GitHub as a connector and an `orgs` allowlist.
+- **Any GitHub user can log in by default**, regardless of whether the OAuth App is created under a personal account or an organisation account. GitHub org ownership of an OAuth App only controls who *administers* the app — it does not restrict the authorisation page to org members. To restrict access, use `AUTH_ADMIN_GROUP` and `AUTH_USER_GROUP` (see [Group-based access control](#group-based-access-control) below), or use a proxy such as [Dex](https://dexidp.io) with GitHub as a connector.
+- **Group-based access control for GitHub** — set `AUTH_USER_GROUP` and/or `AUTH_ADMIN_GROUP` using org names (`my-org`) or team slugs (`my-org/platform-team`). When groups are configured, Wirety automatically requests the `read:org` scope so it can verify org and team membership. **Known limitation:** group membership changes (adding or removing a user from an org or team) only take effect in Wirety when the user logs in again, because GitHub sessions use opaque tokens rather than refreshable JWTs.
 
 ---
 
@@ -185,6 +187,39 @@ Regardless of provider, roles are managed within Wirety — the IdP only supplie
 1. **First user** to log in becomes an `administrator` automatically.
 2. **Subsequent users** receive the default role configured under **Settings → User Defaults** (`user` by default).
 3. An administrator can promote or demote any user at any time from **Admin → Users**.
+
+---
+
+## Group-based access control
+
+Four optional environment variables let you gate login and auto-assign roles based on group memberships from your IdP:
+
+| Variable | Purpose |
+|----------|---------|
+| `AUTH_EMAIL_CLAIM` | JWT claim to use as the user's email (default: `email`) |
+| `AUTH_GROUPS_CLAIM` | JWT claim carrying group memberships (e.g. `groups`, `roles`) |
+| `AUTH_ADMIN_GROUP` | Groups whose members are automatically assigned the `administrator` role |
+| `AUTH_USER_GROUP` | Groups required for regular user login — users outside these groups are rejected |
+
+**Rules:**
+- A user in both `AUTH_ADMIN_GROUP` and `AUTH_USER_GROUP` is always assigned the `administrator` role.
+- When `AUTH_USER_GROUP` is set, users who belong to none of the configured groups receive a generic "You are not authorized" response. The rejection is visible in the audit log with full claim values for debugging.
+- Setting `AUTH_USER_GROUP` without `AUTH_ADMIN_GROUP` is a startup error — it would make it impossible to ever create an administrator.
+- When group variables are set, the first-user-is-admin shortcut is skipped; role is always derived from live group claims.
+- For OIDC providers, group membership is re-evaluated each time the access token is refreshed (typically hourly). For GitHub, membership is evaluated only at login (see the GitHub notes above).
+
+**Example — Keycloak with groups:**
+```bash
+AUTH_GROUPS_CLAIM=groups
+AUTH_ADMIN_GROUP=wirety-admins
+AUTH_USER_GROUP=wirety-users
+```
+
+**Example — GitHub with org/team:**
+```bash
+AUTH_ADMIN_GROUP=my-org/platform-infra
+AUTH_USER_GROUP=my-org
+```
 
 ---
 

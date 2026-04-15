@@ -25,6 +25,10 @@ Wirety Server provides REST + WebSocket APIs, orchestrates peers, incidents, ACL
 | `AUTH_JWKS_CACHE_TTL` | JWKS cache duration in seconds | `3600` |
 | `AUTH_PASSWORD` | Admin password for simple auth mode | auto-generated (logged at startup) |
 | `COOKIE_SECURE` | Set the `Secure` flag on the session cookie — disable only when serving over plain HTTP (local dev) | `true` |
+| `AUTH_EMAIL_CLAIM` | JWT claim to use as the user's email address (useful when the provider uses a non-standard claim name) | `email` |
+| `AUTH_GROUPS_CLAIM` | JWT claim that carries the user's group memberships (e.g. `groups`, `roles`). Required to enable group-based access control for OIDC providers. | - |
+| `AUTH_ADMIN_GROUP` | Comma-separated list of groups whose members are granted the `administrator` role. Takes precedence over `AUTH_USER_GROUP`. For GitHub, use org names (`my-org`) or team slugs (`my-org/my-team`). | - |
+| `AUTH_USER_GROUP` | Comma-separated list of groups required for regular user login. Users not in any of these groups are rejected. Must be set together with `AUTH_ADMIN_GROUP`. For GitHub, use the same `org` or `org/team` format. | - |
 
 ### Database
 | Variable | Description | Default |
