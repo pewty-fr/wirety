@@ -272,7 +272,7 @@ ingress:
 
 ## 📚 Documentation
 
-Full documentation is available at [https://doc.wirety.fr](https://doc.wirety.fr)
+Full documentation is available at (https://docs-wirety.pewty.fr/)[https://docs-wirety.pewty.fr/]
 
 - 📖 **[Getting Started](https://doc.wirety.fr/docs/intro)** - Quick start guide
 - 🚀 **[Deployment Guide](https://doc.wirety.fr/docs/deployment)** - Production deployment options
@@ -351,7 +351,7 @@ furnished to do so, subject to the following conditions:
 ## 🔗 Links
 
 - 🌐 **Website**: [https://pewty.fr](https://pewty.fr)
-- 📖 **Documentation**: [https://doc.wirety.fr](https://doc.wirety.fr)
+- 📖 **Documentation**: [https://docs-wirety.pewty.fr/](https://docs-wirety.pewty.fr/)
 - 📦 **GitHub**: [https://github.com/pewty-fr/wirety](https://github.com/pewty-fr/wirety)
 - 🐳 **Container Registry**: [rg.fr-par.scw.cloud/wirety](https://console.scaleway.com/registry/)
 - 💬 **Issues**: [GitHub Issues](https://github.com/pewty-fr/wirety/issues)
