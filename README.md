@@ -7,8 +7,11 @@
 **Modern WireGuard Mesh Network with Dynamic Security & Zero-Trust Architecture**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/pewty/wirety)](https://go.dev/)
-[![GitHub Release](https://img.shields.io/github/v/release/pewty/wirety)](https://github.com/pewty-fr/wirety/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/pewty-fr/wirety?filename=server%2Fgo.mod)](https://go.dev/)
+[![GitHub Release]([https://img.shields.io/github/v/release/pewty/wirety](https://img.shields.io/github/v/release/pewty-fr/wirety?sort=semver&filter=wirety-server*))](https://github.com/pewty-fr/wirety/releases)
+[![GitHub Release]([https://img.shields.io/github/v/release/pewty/wirety](https://img.shields.io/github/v/release/pewty-fr/wirety?sort=semver&filter=wirety-agent*))](https://github.com/pewty-fr/wirety/releases)
+[![GitHub Release]([https://img.shields.io/github/v/release/pewty/wirety](https://img.shields.io/github/v/release/pewty-fr/wirety?sort=semver&filter=wirety-front*))](https://github.com/pewty-fr/wirety/releases)
+[![GitHub Release]([https://img.shields.io/github/v/release/pewty/wirety](https://img.shields.io/github/v/release/pewty-fr/wirety?sort=semver&filter=wirety-helm*))](https://github.com/pewty-fr/wirety/releases)
 [![Docker Pulls](https://img.shields.io/badge/docker-pulls-blue)](https://rg.fr-par.scw.cloud/wirety)
 [![Helm Chart](https://img.shields.io/badge/helm-chart-0F1689)](https://rg.fr-par.scw.cloud/wirety/chart)
 
