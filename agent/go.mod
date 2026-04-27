@@ -5,7 +5,7 @@ go 1.25.4
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/miekg/dns v1.1.72
-	github.com/rs/zerolog v1.35.0
+	github.com/rs/zerolog v1.35.1
 )
 
 require (
