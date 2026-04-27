@@ -13,7 +13,7 @@ require (
 	github.com/lib/pq v1.12.3
 	github.com/metal-stack/go-ipam v1.14.14
 	github.com/modelcontextprotocol/go-sdk v1.4.1
-	github.com/rs/zerolog v1.35.0
+	github.com/rs/zerolog v1.35.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
 	github.com/swaggo/swag v1.16.6
