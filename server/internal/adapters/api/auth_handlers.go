@@ -138,7 +138,7 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
-	// Prepare token exchange request with offline_access scope to get refresh token
+	// Prepare token exchange request
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", req.Code)
