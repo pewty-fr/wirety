@@ -41,14 +41,46 @@ type Server struct {
 	// captive portal redirect URL itself would resolve to the captive portal IP,
 	// causing an infinite redirect loop.
 	redirectExclusions map[string]struct{}
-	mu                 sync.RWMutex
+	// routeDomainSuffixes is the set of domain suffixes served by route DNS
+	// mappings (e.g. "home.wg.example.com" derived from peer name
+	// "nas.home.wg.example.com"). Only queries matching these suffixes are
+	// intercepted for unauthenticated peers — external internet queries are
+	// always forwarded to upstream so split-tunnel peers keep internet access.
+	routeDomainSuffixes []string
+	mu                  sync.RWMutex
+}
+
+// computeRouteDomainSuffixes derives the unique domain suffixes served by route
+// DNS mappings. Route entries carry a full FQDN in their Name field (e.g.
+// "nas.home.wg.example.com"); the suffix is everything after the first label
+// ("home.wg.example.com"). These suffixes identify the DNS namespaces that belong
+// to configured routes and should be intercepted for unauthenticated peers.
+func computeRouteDomainSuffixes(peers []dom.DNSPeer) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, p := range peers {
+		if !strings.Contains(p.Name, ".") {
+			continue // plain peer name, not a route DNS mapping
+		}
+		idx := strings.IndexByte(p.Name, '.')
+		if idx < 0 {
+			continue
+		}
+		suffix := p.Name[idx+1:]
+		if _, ok := seen[suffix]; !ok {
+			seen[suffix] = struct{}{}
+			out = append(out, suffix)
+		}
+	}
+	return out
 }
 
 func NewServer(domain string, peers []dom.DNSPeer) *Server {
 	return &Server{
-		domain:          domain,
-		peers:           peers,
-		upstreamServers: []string{"8.8.8.8:53", "1.1.1.1:53"}, // Default upstream DNS
+		domain:              domain,
+		peers:               peers,
+		upstreamServers:     []string{"8.8.8.8:53", "1.1.1.1:53"}, // Default upstream DNS
+		routeDomainSuffixes: computeRouteDomainSuffixes(peers),
 	}
 }
 
@@ -137,6 +169,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	portalIP := s.captivePortalIP
 	authFn := s.isAuthenticated
 	exclusions := s.redirectExclusions
+	routeSuffixes := s.routeDomainSuffixes
 	s.mu.RUnlock()
 
 	// Is this peer unauthenticated and should internal domains be redirected?
@@ -208,6 +241,49 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				}
 				resolved = true
 				continue
+			}
+		}
+
+		// 3. Route domain queries for unauthenticated peers.
+		//
+		// Intercept DNS queries whose names fall under a route domain suffix
+		// (e.g. "home.wg.example.com" derived from route DNS entries like
+		// "nas.home.wg.example.com"). These domains are only meaningful inside
+		// the VPN, so redirecting them to the captive portal IP for unauthenticated
+		// peers is always correct — both for full-tunnel and split-tunnel peers.
+		//
+		// We deliberately do NOT intercept arbitrary external domains here.
+		// For split-tunnel peers external traffic never travels through the jump
+		// peer, so intercepting their DNS would break internet access without
+		// helping the captive portal. Full-tunnel peers are handled by OS probe
+		// interception (section 2 above) which triggers the CNA/NCSI popup.
+		if redirectInternal {
+			_, isExcluded := exclusions[name]
+			if !isExcluded {
+				matchesRoute := false
+				for _, suffix := range routeSuffixes {
+					if name == suffix || strings.HasSuffix(name, "."+suffix) {
+						matchesRoute = true
+						break
+					}
+				}
+				if matchesRoute {
+					if q.Qtype == dns.TypeA {
+						log.Debug().Str("domain", name).Str("peer", peerIP).Str("portal_ip", portalIP).
+							Msg("DNS: unauthenticated peer — intercepting route domain A query for captive portal")
+						m.Answer = append(m.Answer, &dns.A{
+							Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 5},
+							A:   net.ParseIP(portalIP),
+						})
+					} else {
+						// AAAA → NODATA: suppress IPv6 for route domains so that
+						// IPv6-preferring clients fall back to the A record above.
+						log.Debug().Str("domain", name).Str("peer", peerIP).
+							Msg("DNS: unauthenticated peer — suppressing AAAA for route domain (forcing IPv4 captive portal)")
+					}
+					resolved = true
+					continue
+				}
 			}
 		}
 	}
@@ -298,15 +374,19 @@ func (s *Server) lookupPeerIP(name string) string {
 
 // Update updates the DNS server configuration with new domain, peers, and upstream servers
 func (s *Server) Update(domain string, peers []dom.DNSPeer) {
+	suffixes := computeRouteDomainSuffixes(peers)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.domain = domain
 	s.peers = peers
+	s.routeDomainSuffixes = suffixes
 
 	log.Info().
 		Str("domain", domain).
 		Int("peer_count", len(peers)).
 		Strs("upstream_servers", s.upstreamServers).
+		Strs("route_domain_suffixes", suffixes).
 		Msg("DNS server configuration updated")
 }

@@ -451,55 +451,63 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	for _, ip := range endpoint.ips {
 		base := []string{"-A", chain, "-i", a.iface, "-d", ip, "-p", "tcp", "--dport", endpoint.port}
 
-		if endpoint.hostname != "" {
-			// Build the string-match pattern:
-			//   HTTPS → match raw SNI bytes in TLS ClientHello (appears as the plain
-			//           hostname string inside the extension payload)
-			//   HTTP  → match "Host: <hostname>" header line
-			var pattern string
-			if endpoint.https {
-				pattern = endpoint.hostname
-			} else {
-				pattern = "Host: " + endpoint.hostname
-			}
-
-			rule := append(append([]string{}, base...),
-				"-m", "string", "--algo", "bm", "--string", pattern, "--to", "65535",
-				"-j", "ACCEPT")
-			if err := a.run(rule...); err != nil {
-				// xt_string loaded but rule still failed — fall back to port-only.
-				log.Warn().Err(err).
-					Str("ip", ip).Str("port", endpoint.port).Str("hostname", endpoint.hostname).
-					Msg("string match rule failed — falling back to port-only server ACCEPT rule (other vhosts on same IP:port will be reachable before auth)")
-				fallback := append(append([]string{}, base...), "-j", "ACCEPT")
-				_ = a.run(fallback...)
-			}
-		} else {
-			// Bare-IP server URL: no hostname to match against; use port-only rule.
-			rule := append(append([]string{}, base...), "-j", "ACCEPT")
-			if err := a.run(rule...); err != nil {
-				log.Warn().Err(err).Str("ip", ip).Str("port", endpoint.port).Msg("failed to add Wirety server ACCEPT rule")
-			}
+		// NOTE: SNI / Host-header string matching (xt_string) was previously
+		// attempted here for vhost isolation, but it fundamentally cannot work
+		// with iptables+conntrack in this chain:
+		//
+		//   • The TCP SYN (conntrack state NEW — the only packet that is not
+		//     already ESTABLISHED/RELATED) carries zero payload, so the string
+		//     match never fires on it.
+		//   • The TLS ClientHello (which contains the SNI) only arrives after
+		//     the 3-way TCP handshake completes, at which point the connection
+		//     is already in the ESTABLISHED state and is accepted by the
+		//     ESTABLISHED/RELATED rule at the top of the chain, before the
+		//     string-match rule is ever evaluated.
+		//
+		// Using the broken string-match rule made the Wirety server unreachable:
+		// the SYN had no payload → no match → fell through to the port-443 REJECT
+		// rule → tcp-reset before the TLS handshake could begin.
+		//
+		// We therefore always use destination-IP + port filtering only.
+		// The security trade-off (other vhosts on the same reverse-proxy IP:port
+		// being reachable) is acceptable: the alternative is that unauthenticated
+		// peers cannot complete captive-portal auth at all.
+		rule := append(append([]string{}, base...), "-j", "ACCEPT")
+		if err := a.run(rule...); err != nil {
+			log.Warn().Err(err).Str("ip", ip).Str("port", endpoint.port).Msg("failed to add Wirety server ACCEPT rule")
 		}
 	}
 
-	// Authenticated peers jump to the policy chain; all others hit the DROP below.
+	// Authenticated peers jump to the policy chain; all others fall through.
 	for _, ip := range whitelistedIPs {
 		if err := a.run("-A", chain, "-i", a.iface, "-s", ip, "-j", policyChain); err != nil {
 			log.Warn().Err(err).Str("ip", ip).Msg("failed to add whitelist jump rule")
 		}
 	}
 
-	// For unauthenticated peers, reject HTTPS (443) with a TCP RST so the
-	// browser fails immediately instead of spinning for ~30 s on a silent DROP.
-	// This also nudges the OS captive-portal detection flow: the HTTP probes
-	// that every modern OS (iOS, Android, Windows, macOS) sends on network join
-	// are plain HTTP — they hit the DNAT rule above and reach the captive portal.
-	// Note: a full HTTPS → captive-portal redirect is not feasible because it
-	// requires TLS termination with a valid certificate; self-signed certs cause
-	// browser warnings and HSTS-preloaded sites (most major domains) refuse to
-	// show the warning at all.
-	_ = a.run("-A", chain, "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "REJECT", "--reject-with", "tcp-reset")
+	// Block HTTPS to RFC 1918 private address ranges with a TCP RST so the
+	// browser fails immediately (instead of spinning for ~30 s on a silent DROP).
+	// This covers the VPN subnet, private LANs behind the jump peer, and any
+	// other internal resources — unauthenticated peers cannot reach them via HTTPS.
+	for _, privateNet := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		_ = a.run("-A", chain, "-i", a.iface, "-d", privateNet, "-p", "tcp", "--dport", "443", "-j", "REJECT", "--reject-with", "tcp-reset")
+	}
+
+	// Allow HTTPS to all public (external) addresses for unauthenticated peers.
+	// This is necessary for the OIDC captive portal login flow: the browser must
+	// reach the OIDC authorization endpoint (e.g. slack.com, github.com,
+	// accounts.google.com) before it can authenticate. Using specific OIDC issuer
+	// IPs is not viable — CDN-hosted providers (Slack, Google, GitHub) rotate IPs
+	// continuously and the specific IPs resolved at iptables-sync time will be
+	// stale within seconds.
+	//
+	// Security model: VPN-internal resources (RFC 1918, blocked above) remain
+	// inaccessible to unauthenticated peers. External internet access via HTTPS
+	// is intentionally permitted — it is a precondition for OIDC authentication.
+	_ = a.run("-A", chain, "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "ACCEPT")
+
+	// Drop all remaining traffic from unauthenticated peers (covers non-HTTPS
+	// ports to external IPs, and all traffic to internal IPs on non-HTTPS ports).
 	_ = a.run("-A", chain, "-i", a.iface, "-j", "DROP")
 
 	// Populate WIRETY_POLICY with per-destination rules for authenticated peers.
