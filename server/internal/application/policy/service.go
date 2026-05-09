@@ -3,12 +3,42 @@ package policy
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"wirety/internal/domain/network"
 
 	"github.com/google/uuid"
 )
+
+// stripCIDR drops the optional "/prefix" suffix from a CIDR / address string,
+// returning just the host part.  Used so the rule generator can pass plain IPs
+// (e.g. "10.255.236.5") to iptables when the peer.Address field carries a /32.
+func stripCIDR(s string) string {
+	if idx := strings.IndexByte(s, '/'); idx != -1 {
+		return s[:idx]
+	}
+	return s
+}
+
+// isIPv6CIDR reports whether the given CIDR or IP literal is IPv6.  Unparseable
+// inputs default to IPv4 (so the rule still goes through the iptables path and
+// the legacy behaviour is preserved).
+func isIPv6CIDR(s string) bool {
+	if strings.Contains(s, ":") {
+		// Quick path: anything with a colon is IPv6 (CIDR or bare).
+		return true
+	}
+	// Fallback for unusual inputs.
+	if ip, _, err := net.ParseCIDR(s); err == nil && ip.To4() == nil {
+		return true
+	}
+	if ip := net.ParseIP(s); ip != nil && ip.To4() == nil {
+		return true
+	}
+	return false
+}
 
 // WebSocketNotifier is an interface for notifying peers about config updates
 type WebSocketNotifier interface {
@@ -258,32 +288,43 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 			}
 		}
 
-		// Generate rules for this peer based on their policies
+		// Generate rules for this peer based on their policies.
+		//
+		// We pass BOTH the peer's IPv4 and IPv6 addresses (when present) — the
+		// generator picks the right one based on the rule target's family.
+		// Mixing families (IPv4 source / IPv6 dest) produces invalid rules that
+		// iptables rejects with "invalid mask 64" or similar.
+		peerV4 := stripCIDR(peer.Address)
+		peerV6 := stripCIDR(peer.AddressV6)
 		for _, policy := range policyMap {
 			for _, rule := range policy.Rules {
-				peerRules := s.generateIPTablesRulesForPeer(peer.Address, rule)
+				peerRules := s.generateIPTablesRulesForPeer(peerV4, peerV6, rule)
 				rules = append(rules, peerRules...)
 			}
 		}
 	}
 
-	// Add DNS rules to allow DNS queries/responses between jump server and all peers
-	// The jump server runs a DNS server, so we need to allow DNS traffic
+	// Add DNS rules to allow DNS queries/responses between jump server and all peers.
+	// The jump server runs a DNS server, so we need to allow DNS traffic.
+	// Emit one pair per address family the peer has configured.
 	for _, peer := range allPeers {
 		if peer.IsJump {
 			continue // Skip jump peers
 		}
 
-		// Allow DNS queries from peer to jump server (UDP port 53)
-		rules = append(rules, fmt.Sprintf("iptables -A INPUT -s %s -p udp --dport 53 -j ACCEPT", peer.Address))
-
-		// Allow DNS responses from jump server to peer (UDP port 53)
-		rules = append(rules, fmt.Sprintf("iptables -A OUTPUT -d %s -p udp --sport 53 -j ACCEPT", peer.Address))
+		if v4 := stripCIDR(peer.Address); v4 != "" {
+			rules = append(rules, fmt.Sprintf("iptables -A INPUT -s %s -p udp --dport 53 -j ACCEPT", v4))
+			rules = append(rules, fmt.Sprintf("iptables -A OUTPUT -d %s -p udp --sport 53 -j ACCEPT", v4))
+		}
+		if v6 := stripCIDR(peer.AddressV6); v6 != "" {
+			rules = append(rules, fmt.Sprintf("ip6tables -A INPUT -s %s -p udp --dport 53 -j ACCEPT", v6))
+			rules = append(rules, fmt.Sprintf("ip6tables -A OUTPUT -d %s -p udp --sport 53 -j ACCEPT", v6))
+		}
 	}
 
-	// Add WireGuard handshake rules to allow tunnel establishment
-	// WireGuard uses UDP for handshakes and keepalives, which must be allowed in both directions
-	// Without these rules, the tunnel cannot establish or maintain connection
+	// Add WireGuard handshake rules to allow tunnel establishment.
+	// WireGuard uses UDP for handshakes and keepalives, which must be allowed in
+	// both directions, per address family.
 	jumpPeer, err = s.peerRepo.GetPeer(ctx, networkID, jumpPeerID)
 	if err == nil && jumpPeer.ListenPort > 0 {
 		for _, peer := range allPeers {
@@ -291,12 +332,14 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 				continue // Skip jump peers
 			}
 
-			// Allow WireGuard handshake packets FROM jump server TO peer
-			// These are NEW connections (not RELATED/ESTABLISHED) so must be explicitly allowed
-			rules = append(rules, fmt.Sprintf("iptables -A OUTPUT -d %s -p udp --sport %d -j ACCEPT", peer.Address, jumpPeer.ListenPort))
-
-			// Allow WireGuard handshake packets FROM peer TO jump server
-			rules = append(rules, fmt.Sprintf("iptables -A INPUT -s %s -p udp --dport %d -j ACCEPT", peer.Address, jumpPeer.ListenPort))
+			if v4 := stripCIDR(peer.Address); v4 != "" {
+				rules = append(rules, fmt.Sprintf("iptables -A OUTPUT -d %s -p udp --sport %d -j ACCEPT", v4, jumpPeer.ListenPort))
+				rules = append(rules, fmt.Sprintf("iptables -A INPUT -s %s -p udp --dport %d -j ACCEPT", v4, jumpPeer.ListenPort))
+			}
+			if v6 := stripCIDR(peer.AddressV6); v6 != "" {
+				rules = append(rules, fmt.Sprintf("ip6tables -A OUTPUT -d %s -p udp --sport %d -j ACCEPT", v6, jumpPeer.ListenPort))
+				rules = append(rules, fmt.Sprintf("ip6tables -A INPUT -s %s -p udp --dport %d -j ACCEPT", v6, jumpPeer.ListenPort))
+			}
 		}
 	}
 
@@ -306,14 +349,39 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 	return rules, nil
 }
 
-// generateIPTablesRulesForPeer converts a policy rule to iptables commands for a specific peer
-// Since the jump peer routes traffic, we use FORWARD chain rules with the peer's IP
-func (s *Service) generateIPTablesRulesForPeer(peerIP string, rule network.PolicyRule) []string {
+// generateIPTablesRulesForPeer converts a policy rule to iptables (or ip6tables)
+// commands for a specific peer.  Since the jump peer routes traffic, we use
+// FORWARD chain rules with the peer's IP.
+//
+// The rule's target CIDR family decides which command prefix the rule carries:
+//   - IPv4 CIDR target → "iptables …" with the peer's IPv4 source address
+//   - IPv6 CIDR target → "ip6tables …" with the peer's IPv6 source address
+//
+// If the target is IPv6 but the peer has no IPv6 address configured, the rule
+// is silently skipped — there is no way to express "this IPv4 peer can talk to
+// this IPv6 destination" because the kernel routes by family.  Likewise an IPv4
+// target with an empty peer.Address (shouldn't happen) is skipped.
+//
+// The agent's firewall adapter (applyIPTablesRule) detects the prefix and
+// dispatches to the correct table.
+func (s *Service) generateIPTablesRulesForPeer(peerV4, peerV6 string, rule network.PolicyRule) []string {
 	var rules []string
 
 	// Build the iptables rules based on target type
 	switch rule.TargetType {
 	case "cidr":
+		isV6 := isIPv6CIDR(rule.Target)
+		cmd := "iptables"
+		peerIP := peerV4
+		if isV6 {
+			cmd = "ip6tables"
+			peerIP = peerV6
+		}
+		if peerIP == "" {
+			// Peer has no address in the target's family — rule is unrepresentable.
+			return rules
+		}
+
 		// For CIDR targets, generate FORWARD rules
 		switch rule.Direction {
 		case "input":
@@ -324,13 +392,13 @@ func (s *Service) generateIPTablesRulesForPeer(peerIP string, rule network.Polic
 
 			if rule.Action == "allow" {
 				// Outbound: peer → destination
-				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -s %s -d %s -j ACCEPT", peerIP, rule.Target))
+				rules = append(rules, fmt.Sprintf("%s -A FORWARD -s %s -d %s -j ACCEPT", cmd, peerIP, rule.Target))
 
 				// Return traffic: destination → peer (established connections only)
-				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -d %s -s %s -m state --state RELATED,ESTABLISHED -j ACCEPT", peerIP, rule.Target))
+				rules = append(rules, fmt.Sprintf("%s -A FORWARD -d %s -s %s -m state --state RELATED,ESTABLISHED -j ACCEPT", cmd, peerIP, rule.Target))
 			} else {
 				// Deny inbound from destination to peer
-				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -s %s -d %s -j DROP", rule.Target, peerIP))
+				rules = append(rules, fmt.Sprintf("%s -A FORWARD -s %s -d %s -j DROP", cmd, rule.Target, peerIP))
 			}
 		case "output":
 			// "output" means traffic going FROM the peer (peer is sending)
@@ -339,13 +407,13 @@ func (s *Service) generateIPTablesRulesForPeer(peerIP string, rule network.Polic
 
 			if rule.Action == "allow" {
 				// Allow outbound: peer → destination
-				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -s %s -d %s -j ACCEPT", peerIP, rule.Target))
+				rules = append(rules, fmt.Sprintf("%s -A FORWARD -s %s -d %s -j ACCEPT", cmd, peerIP, rule.Target))
 
 				// Allow return traffic: destination → peer (established connections only)
-				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -d %s -s %s -m state --state RELATED,ESTABLISHED -j ACCEPT", peerIP, rule.Target))
+				rules = append(rules, fmt.Sprintf("%s -A FORWARD -d %s -s %s -m state --state RELATED,ESTABLISHED -j ACCEPT", cmd, peerIP, rule.Target))
 			} else {
 				// Deny outbound: peer → destination
-				rules = append(rules, fmt.Sprintf("iptables -A FORWARD -s %s -d %s -j DROP", peerIP, rule.Target))
+				rules = append(rules, fmt.Sprintf("%s -A FORWARD -s %s -d %s -j DROP", cmd, peerIP, rule.Target))
 			}
 		}
 	case "peer":

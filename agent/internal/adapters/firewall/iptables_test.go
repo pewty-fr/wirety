@@ -143,7 +143,7 @@ func TestApplyIPTablesRule(t *testing.T) {
 				t.Skip("Test skipped")
 			}
 
-			err := adapter.applyIPTablesRule(tt.chain, tt.rule)
+			err := adapter.applyIPTablesRule(tt.chain, tt.rule, "")
 			if (err != nil) != tt.wantErr {
 				t.Errorf("applyIPTablesRule() error = %v, wantErr %v", err, tt.wantErr)
 			}

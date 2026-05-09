@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	stdlog "log"
 	"math/big"
 	"net"
 	"net/http"
@@ -210,9 +211,43 @@ func (s *Server) StartTLS(addr, ip, vpnDomain string) error {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	srv := &http.Server{Handler: s, TLSConfig: tlsCfg}
+	srv := &http.Server{
+		Handler:   s,
+		TLSConfig: tlsCfg,
+		// Suppress the firehose of "TLS handshake error … bad certificate /
+		// unknown certificate" log lines emitted by net/http for every
+		// unauthenticated peer browsing to an HTTPS site that DNS redirected
+		// here.  These are EXPECTED — the captive portal serves a self-signed
+		// cert that won't match the requested SNI (google.com, etc.), the
+		// browser correctly aborts the handshake, and we'd see a log line per
+		// blocked HTTPS request otherwise.  We route the http.Server's error
+		// logger through a filter that keeps real server errors but drops the
+		// per-handshake noise.
+		ErrorLog: stdlog.New(&filteredHandshakeWriter{}, "", 0),
+	}
 	log.Info().Str("addr", addr).Str("portal_url", s.portalURL).Msg("captive portal HTTPS server starting (self-signed)")
 	return srv.Serve(ln)
+}
+
+// filteredHandshakeWriter is an io.Writer that drops the noisy per-connection
+// TLS handshake errors net/http emits when a browser aborts the handshake
+// (e.g. because our self-signed cert doesn't match the requested SNI).  Other
+// log lines are forwarded to zerolog at debug level.
+type filteredHandshakeWriter struct{}
+
+func (filteredHandshakeWriter) Write(p []byte) (int, error) {
+	msg := string(bytes.TrimRight(p, "\n"))
+	// Skip the expected handshake-aborted noise.
+	if strings.Contains(msg, "TLS handshake error") &&
+		(strings.Contains(msg, "bad certificate") ||
+			strings.Contains(msg, "unknown certificate") ||
+			strings.Contains(msg, "remote error") ||
+			strings.Contains(msg, "EOF") ||
+			strings.Contains(msg, "connection reset by peer")) {
+		return len(p), nil
+	}
+	log.Debug().Str("source", "captive_portal_https").Msg(msg)
+	return len(p), nil
 }
 
 // generateSelfSignedCert creates an ECDSA P-256 certificate valid for 10 years.

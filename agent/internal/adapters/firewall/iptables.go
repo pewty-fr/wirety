@@ -372,37 +372,61 @@ func isPositiveInt(s string) bool {
 	return true
 }
 
-// applyIPTablesRule parses and applies a single iptables rule to the specified chain
-// The rule string should be in the format: "iptables -A CHAIN [options]"
-// We extract the options and apply them to our custom chain
-func (a *Adapter) applyIPTablesRule(chain, rule string) error {
-	// Parse the rule string to extract iptables arguments
-	// Expected format: "iptables -A CHAIN [options]" or just the options part
-	// We'll replace any chain reference with our custom chain
+// parseRuleFamily classifies a rule string into the (iptables, ip6tables, unknown)
+// space.  Returns "ip6tables" if the rule starts with "ip6tables", otherwise
+// "iptables" (default — handles bare-options rules and explicit "iptables" prefix).
+func parseRuleFamily(rule string) string {
+	tokens := strings.Fields(rule)
+	if len(tokens) > 0 && tokens[0] == "ip6tables" {
+		return "ip6tables"
+	}
+	return "iptables"
+}
 
-	// Split the rule into tokens
+// applyIPTablesRule parses and applies a single iptables / ip6tables rule to the
+// specified chain.  The rule string is in one of these forms:
+//   - "iptables -A CHAIN [options]"   → applied to iptables (IPv4)
+//   - "ip6tables -A CHAIN [options]"  → applied to ip6tables (IPv6)
+//   - "[options]"                     → applied as iptables (legacy default)
+//
+// `family` selects which table this call is allowed to touch:
+//   - "iptables"  → only iptables rules; ip6tables rules are skipped
+//   - "ip6tables" → only ip6tables rules; iptables rules are skipped
+//   - ""          → auto-detect from the prefix (defaults to iptables for bare rules)
+//
+// The chain reference in the rule is rewritten to the supplied `chain`.
+func (a *Adapter) applyIPTablesRule(chain, rule, family string) error {
 	tokens := strings.Fields(rule)
 	if len(tokens) == 0 {
 		return fmt.Errorf("empty iptables rule")
 	}
 
-	// Build the arguments for our iptables command
-	args := make([]string, 0, len(tokens)+2)
-
-	// Skip "iptables" if it's the first token
+	// Detect the rule's native family from its prefix.
+	ruleFamily := "iptables"
 	startIdx := 0
 	if tokens[0] == "iptables" {
 		startIdx = 1
+	} else if tokens[0] == "ip6tables" {
+		ruleFamily = "ip6tables"
+		startIdx = 1
 	}
 
-	// Look for -A or -I and replace the chain name
+	// If the caller restricted to a specific family, skip rules from the other.
+	if family != "" && family != ruleFamily {
+		log.Debug().Str("rule", rule).Str("rule_family", ruleFamily).Str("call_family", family).Msg("rule skipped (family mismatch)")
+		return nil
+	}
+
+	// Build the arguments for the iptables/ip6tables command.
+	args := make([]string, 0, len(tokens)+2)
+
+	// Look for -A or -I and replace the chain name with the supplied one.
 	foundChain := false
 	for i := startIdx; i < len(tokens); i++ {
 		if tokens[i] == "-A" || tokens[i] == "-I" {
-			args = append(args, "-A") // Always use -A for appending
+			args = append(args, "-A") // Always append (the chain is freshly flushed each sync)
 			if i+1 < len(tokens) {
-				// Skip the original chain name and use our custom chain
-				i++
+				i++ // skip the original chain name
 				foundChain = true
 			}
 			args = append(args, chain)
@@ -411,17 +435,22 @@ func (a *Adapter) applyIPTablesRule(chain, rule string) error {
 		}
 	}
 
-	// If no chain was specified, prepend -A CHAIN
 	if !foundChain {
 		args = append([]string{"-A", chain}, args...)
 	}
 
-	// Apply the rule
-	if err := a.run(args...); err != nil {
-		return fmt.Errorf("failed to apply rule: %w", err)
+	// Dispatch to the appropriate table.
+	var runErr error
+	if ruleFamily == "ip6tables" {
+		runErr = a.runIPv6(args...)
+	} else {
+		runErr = a.run(args...)
+	}
+	if runErr != nil {
+		return fmt.Errorf("failed to apply rule: %w", runErr)
 	}
 
-	log.Debug().Str("rule", rule).Strs("args", args).Msg("applied iptables rule")
+	log.Debug().Str("rule", rule).Strs("args", args).Str("family", ruleFamily).Msg("applied iptables rule")
 	return nil
 }
 
@@ -598,12 +627,20 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 		}
 	}
 
-	// Drop all remaining traffic from unauthenticated peers (covers non-HTTPS
-	// ports to external IPs, all traffic to internal IPs on non-HTTPS ports,
-	// and external HTTPS for peers that haven't yet been issued a token).
-	// New peers reach the captive portal via the INPUT chain rules (HTTP/HTTPS
-	// to the jump peer's WG IP), not through FORWARD — so this DROP doesn't
-	// prevent the initial captive-portal redirect from firing.
+	// RST port-443 (HTTPS) connections from unauthenticated peers instead of
+	// silently DROPping them.  A TCP RST causes the browser to fail immediately
+	// rather than waiting for a timeout, and triggers the OS captive-portal
+	// notification on iOS and Android (which monitors for RST-on-443 to infer
+	// that a captive portal is blocking HTTPS).  Without this, the phone shows
+	// a spinning loader for ~30 s before giving up, and the "Sign in to network"
+	// prompt may never appear.
+	//
+	// Note: connections to the jump peer's OWN WireGuard IP (captive portal) go
+	// through the INPUT chain, not FORWARD, so this rule never affects the
+	// captive portal HTTPS listener on the WireGuard interface.
+	_ = a.run("-A", chain, "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "REJECT", "--reject-with", "tcp-reset")
+
+	// Drop all remaining traffic from unauthenticated peers.
 	_ = a.run("-A", chain, "-i", a.iface, "-j", "DROP")
 
 	// Populate WIRETY_POLICY with per-destination rules for authenticated peers.
@@ -617,9 +654,11 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 	// When no policy rules are present we add a catch-all ACCEPT to preserve
 	// backward-compat behaviour: being on the whitelist implies full access.
 	if len(p.IPTablesRules) > 0 {
-		log.Info().Int("rule_count", len(p.IPTablesRules)).Msg("applying policy-based iptables rules")
+		log.Info().Int("rule_count", len(p.IPTablesRules)).Msg("applying policy-based iptables rules (IPv4)")
 		for i, rule := range p.IPTablesRules {
-			if err := a.applyIPTablesRule(policyChain, rule); err != nil {
+			// Family="iptables" — silently skip ip6tables-prefixed rules (they
+			// are applied by syncIPv6 against the WIRETY6_POLICY chain).
+			if err := a.applyIPTablesRule(policyChain, rule, "iptables"); err != nil {
 				log.Error().Err(err).Int("rule_index", i).Str("rule", rule).Msg("failed to apply iptables rule")
 			}
 		}
@@ -636,6 +675,31 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 	_ = a.run("-t", "nat", "-D", "PREROUTING", "-i", a.iface, "-j", "WIRETY_CAPTIVE")
 	_ = a.run("-t", "nat", "-F", "WIRETY_CAPTIVE")
 	_ = a.run("-t", "nat", "-X", "WIRETY_CAPTIVE")
+
+	// HTTP DNAT redirect: any port-80 TCP packet arriving on the WireGuard
+	// interface from an unauthenticated peer that was NOT already directed at the
+	// jump peer's own IP (i.e. the peer bypassed DNS and connected to a public IP
+	// directly) is redirected to this host's port 80 — the captive portal HTTP
+	// server.  The nat table's PREROUTING hook runs before the filter table, so
+	// the redirected packet is then treated as destined for INPUT (local delivery)
+	// and accepted by the INPUT rule for port 80.
+	//
+	// Authenticated peers (whitelisted) are excluded explicitly so their HTTP
+	// traffic continues to be forwarded normally after auth.
+	//
+	// We rebuild the WIRETY_REDIR chain idempotently on each sync so the
+	// authenticated-peer exclusions stay current.
+	redirChain := "WIRETY_REDIR"
+	_ = a.run("-t", "nat", "-N", redirChain)
+	_ = a.run("-t", "nat", "-F", redirChain)
+	// Exclude authenticated peers — their HTTP traffic must be forwarded, not redirected.
+	for _, ip := range whitelistIPv4 {
+		_ = a.run("-t", "nat", "-A", redirChain, "-s", ip, "-j", "RETURN")
+	}
+	// Redirect all remaining port-80 traffic from the WireGuard interface.
+	_ = a.run("-t", "nat", "-A", redirChain, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "80")
+	// Wire the chain into PREROUTING (idempotent).
+	_ = a.runIfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", redirChain)
 
 	// Attach chain to FORWARD (insert at top, only if not already attached)
 	_ = a.runIfNotExists("-I", "FORWARD", "1", "-j", chain)
@@ -813,39 +877,23 @@ func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint s
 		}
 	}
 
+	// RST HTTPS for unauthenticated peers (mirrors IPv4 — see Sync() for rationale).
+	_ = a.runIPv6("-A", chain6, "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "REJECT", "--reject-with", "tcp-reset")
+
 	// Drop all remaining IPv6 traffic from unauthenticated peers.
 	_ = a.runIPv6("-A", chain6, "-i", a.iface, "-j", "DROP")
 
 	// Policy chain: per-destination rules (or catch-all ACCEPT for backward compat).
+	//
+	// Server-side rule generation now emits family-tagged rules ("iptables …" or
+	// "ip6tables …" prefix). We dispatch each rule through applyIPTablesRule with
+	// family="ip6tables" so only the ip6tables-prefixed ones land here — IPv4
+	// rules are silently skipped (they're applied by Sync's IPv4 path).
 	if len(p.IPTablesRules) > 0 {
+		log.Info().Int("rule_count", len(p.IPTablesRules)).Msg("applying policy-based iptables rules (IPv6)")
 		for i, rule := range p.IPTablesRules {
-			// Policy rules are iptables-format; apply the same rules to ip6tables.
-			// Rules with IPv4-specific CIDRs will be rejected by ip6tables and
-			// the error is silently ignored — only IPv6-compatible rules take effect.
-			tokens := strings.Fields(rule)
-			args := make([]string, 0, len(tokens))
-			startIdx := 0
-			if len(tokens) > 0 && tokens[0] == "iptables" {
-				startIdx = 1
-			}
-			foundChain := false
-			for i, t := range tokens[startIdx:] {
-				if t == "-A" || t == "-I" {
-					args = append(args, "-A")
-					if startIdx+i+1 < len(tokens) {
-						foundChain = true
-					}
-					args = append(args, policy6)
-				} else {
-					args = append(args, t)
-				}
-			}
-			if !foundChain {
-				args = append([]string{"-A", policy6}, args...)
-			}
-			_ = a.runIPv6(args...) // best-effort; IPv4-specific rules silently fail
-			if err := a.runIPv6(args...); err != nil {
-				log.Debug().Err(err).Int("rule_index", i).Str("rule", rule).Msg("ip6tables policy rule skipped (may be IPv4-specific)")
+			if err := a.applyIPTablesRule(policy6, rule, "ip6tables"); err != nil {
+				log.Debug().Err(err).Int("rule_index", i).Str("rule", rule).Msg("ip6tables policy rule skipped")
 			}
 		}
 	} else {
@@ -854,6 +902,18 @@ func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint s
 
 	// Attach the IPv6 chain to FORWARD (idempotent).
 	_ = a.runIPv6IfNotExists("-I", "FORWARD", "1", "-j", chain6)
+
+	// IPv6 HTTP DNAT redirect (mirrors IPv4 — see Sync() for rationale).
+	// ip6tables nat PREROUTING redirects port-80 from the WireGuard interface to
+	// the local captive portal HTTP server.  Authenticated peers are excluded.
+	redir6Chain := "WIRETY6_REDIR"
+	_ = a.runIPv6("-t", "nat", "-N", redir6Chain)
+	_ = a.runIPv6("-t", "nat", "-F", redir6Chain)
+	for _, ip := range whitelistIPv6 {
+		_ = a.runIPv6("-t", "nat", "-A", redir6Chain, "-s", ip, "-j", "RETURN")
+	}
+	_ = a.runIPv6("-t", "nat", "-A", redir6Chain, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "80")
+	_ = a.runIPv6IfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", redir6Chain)
 
 	// Allow jump-peer services on the WireGuard interface INPUT chain (IPv6).
 	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
