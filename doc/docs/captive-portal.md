@@ -257,17 +257,37 @@ This replaces the previous design where unauthenticated peers had unrestricted e
 
 When a whitelisted peer's WireGuard endpoint changes (different `ip:port` from `wg show endpoints`), the peer is held out of the iptables whitelist for **10 seconds** of stability before being re-admitted. This prevents the oscillation that occurs when two devices share the same WireGuard private key — each keepalive overrides the recorded endpoint, and without the stability window the legitimate peer would gain and lose access every ~25 s.
 
-### Stolen / shared WireGuard config
+### Stolen / shared WireGuard config — three layers of defence
 
-If a user's WireGuard private key is stolen or shared, the attacker connects from a different public source — different `ip:port` on `wg show endpoints`. Wirety has multiple layers of defence:
+Wirety distinguishes carefully between **legitimate single endpoint changes** (NAT rebinding, mobile network handover, fresh tunnel) and **rogue takeovers** (a second device with the same private key competing for the peer slot). Conflating the two would be catastrophic — denylisting a rogue is right; denylisting the legitimate user after a NAT rebind would lock them out for 24 h with no recovery path.
 
-**Layer 1 — Endpoint binding.** Each whitelist entry stores the peer's full public endpoint (`ip:port`) at authentication time. Any mismatch on the 300 ms firewall re-sync drops the peer from the iptables whitelist.
+The three layers fire in order, escalating only when there's clear evidence the previous layer is insufficient:
 
-**Layer 2 — Endpoint stability.** As described above, 10 seconds of stable endpoint is required before re-admittance, preventing oscillating-endpoint exploitation.
+**Layer 1 — Endpoint binding (whitelist requires endpoint match).** Each whitelist entry stores the peer's full public endpoint (`ip:port`) at authentication time. The 300 ms firewall re-sync compares the live endpoint from `wg show endpoints` against the stored one and drops the peer from the iptables whitelist on any mismatch. Cost to a legitimate user who roamed: a brief loss of access until they re-authenticate via the captive portal (which they CAN reach, because the captive portal is on the jump peer's WG IP and only the iptables FORWARD chain is affected). Cost to a rogue: same thing — they need to authenticate, but they fail the SSO ownership check, so they get nothing.
 
-**Layer 3 — Physical-interface denylist.** When the agent observes an authenticated peer's endpoint flip to a foreign source, it reports a "takeover" to the server. The server persists the rogue source in `captive_portal_endpoint_denylist` (24-hour TTL) and pushes it back to the jump peer's WebSocket. The agent then writes an `iptables -p udp --dport <wg-port> -s <rogue-ip> --sport <rogue-port> -j DROP` rule on the **physical** (egress) interface, **before** the WireGuard kernel module sees the packet. The rogue source can no longer complete WireGuard handshakes — the legitimate peer's stored endpoint is never overwritten again.
+**Layer 2 — Endpoint stability window (10 s).** When any endpoint change is observed, the peer is held out of the iptables whitelist for 10 s of stability before being re-admitted. *Symmetric* — doesn't decide who's "rogue", just refuses to commit during turbulence. Catches both NAT rebinds (they flip once and stabilise) and oscillations (they keep flipping, so the timer never expires and nobody gets access).
 
-The combination is the key: stability stops the *symptoms*, the denylist stops the *cause*. A user whose key is shared can keep working; the second device disappears completely. The only escape for the rogue is to come from a different public IP — at which point the denylist entry doesn't match and the rogue is back to square one (must complete SSO, which they cannot if they aren't the peer's owner).
+**Layer 3 — Physical-interface denylist — only on confirmed oscillation.** This is the heavy hammer: an iptables `-p udp --dport <wg-port> -s <rogue-ip> --sport <rogue-port> -j DROP` rule on the egress interface, BEFORE WireGuard decapsulates. The rogue source can no longer complete WireGuard handshakes at all. **It only fires when the agent observes the endpoint flip stored→foreign at least twice within 60 seconds** — the unambiguous signature of two devices simultaneously sending handshakes. A single endpoint change (NAT rebind, roam, etc.) never trips this layer; layers 1+2 handle it gracefully.
+
+#### Why "oscillation" is the only safe trigger for the denylist
+
+| Pattern observed by `wg show endpoints` | What it really is | What we do |
+|---|---|---|
+| `A` → `B`, then stable at `B` | NAT rebound, user roamed, fresh tunnel | Drop peer from whitelist (Layer 1+2). User re-auths via captive portal. **No denylist.** |
+| `A` → `B` → `A` → `B` (oscillating) | Two devices competing for the slot | Denylist `B` (Layer 3). Legitimate user stops being interrupted. |
+| `A` → `B` → `A`, then stable at `A` | Brief blip (single rogue handshake that didn't repeat, or a transient mis-route) | One flip counted, but the second flip never comes. Counter resets after 60 s. **No denylist.** |
+
+The trade-off: the rogue gets a brief window of disruption before they're identified. Layer 2 (the stability window) prevents either side from having stable access during that window, so the rogue cannot exploit it to do useful work — and the moment they earn their second flip, Layer 3 cuts them off completely.
+
+#### After a denylist fires
+
+Once a foreign endpoint is denylisted on the physical interface:
+- The rogue's WireGuard handshakes are dropped before reaching the kernel.
+- WireGuard's recorded endpoint stops oscillating and settles back on the legitimate user's value.
+- The legitimate user's iptables whitelist rule reappears after the 10 s stability window.
+- Normal service resumes, with the rogue locked out for 24 h.
+
+When the legitimate peer next authenticates via the captive portal (from any source — including a future genuine roam), the server clears the entire endpoint denylist for that peer's wgIP. SSO ownership is the cryptographic ground truth; if the user proved it, prior "rogue" attribution is overridden.
 
 ### Quarantine after repeated abandonments
 

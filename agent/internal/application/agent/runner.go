@@ -175,6 +175,12 @@ type Runner struct {
 	// to something else, or after takeoverReportCooldown.
 	reportedTakeovers   map[string]time.Time // key = wgIP+"|"+observedEP
 	reportedTakeoversMu sync.Mutex
+	// takeoverFlips tracks per-peer endpoint history to distinguish a single
+	// legitimate endpoint change (NAT rebind / roam) from an oscillating
+	// takeover (two devices competing for the same WireGuard peer slot).
+	// See takeoverFlipState comment for details.
+	takeoverFlips   map[string]*takeoverFlipState
+	takeoverFlipsMu sync.Mutex
 	// localAllowedIPs is THIS peer's WireGuard AllowedIPs as parsed from the
 	// applied wg config.  Reported in every heartbeat so the jump peer's DNS
 	// server can decide whether to redirect external queries from this peer.
@@ -196,6 +202,44 @@ type endpointTakeoverReport struct {
 // = 18 s of spam suppression for the same observation; after that we re-arm.
 const takeoverReportCooldown = 60 * time.Second
 
+// flipDetectionWindow is how long the per-peer flip counter is retained.
+// Flips older than this are forgotten — a single endpoint change followed by
+// stability is treated as a legitimate roam (NAT rebind, network handover,
+// fresh tunnel), not as a takeover.
+const flipDetectionWindow = 60 * time.Second
+
+// flipsRequiredForDenylist is how many independent "flip TO foreign" events
+// the agent must observe within flipDetectionWindow before denylisting the
+// foreign source.  A single flip is indistinguishable from a NAT rebind, so
+// we never denylist on the first one — we wait for the second.  Two flips
+// implies the endpoint has bounced back to the authenticated value at least
+// once in between, which is the signature of two devices competing.
+const flipsRequiredForDenylist = 2
+
+// takeoverFlipState tracks per-peer endpoint history so the agent can
+// distinguish a single legitimate endpoint change from an oscillating
+// takeover.  Conceptually:
+//
+//   • lastWasStored — was the most recent observation the authenticated
+//                     endpoint?  Used to detect transitions FROM stored
+//                     TO foreign (which is what we count).
+//   • flipsToForeign — count of stored→foreign transitions inside the
+//                      detection window.  ≥ flipsRequiredForDenylist means
+//                      the endpoint has bounced back at least once: an
+//                      unambiguous signature of two simultaneously-active
+//                      devices.
+//   • firstFlipAt   — timestamp of the first counted flip; the counter
+//                     resets if we go past flipDetectionWindow without
+//                     reaching the threshold.
+//   • lastForeignEP — the most recent foreign endpoint (this is the one we
+//                     denylist when the threshold trips).
+type takeoverFlipState struct {
+	lastWasStored  bool
+	flipsToForeign int
+	firstFlipAt    time.Time
+	lastForeignEP  string
+}
+
 func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string, peerID string, networkID string) *Runner {
 	return &Runner{
 		wsClient:          wsClient,
@@ -213,6 +257,7 @@ func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort
 		wgIPToEndpoint:    make(map[string]string),
 		endpointChangedAt: make(map[string]time.Time),
 		reportedTakeovers: make(map[string]time.Time),
+		takeoverFlips:     make(map[string]*takeoverFlipState),
 		backoffBase:       time.Second,
 		backoffMax:        30 * time.Second,
 		heartbeatInterval: 30 * time.Second,
@@ -848,29 +893,112 @@ func (r *Runner) Start(stop <-chan struct{}) {
 	}
 }
 
-// queueTakeoverIfRogue checks whether the (wgIP, newEP) pair should be reported
-// to the server as a rogue takeover.  Conditions for queueing:
-//   1. The wgIP is currently in the local authenticated whitelist with a stored
-//      endpoint (entries with no endpoint are legacy / non-SSO).
-//   2. The new endpoint is NOT the stored authenticated endpoint.
-//   3. We have not reported this exact (wgIP, newEP) pair within the cooldown
-//      window — avoids flooding the server when the rogue source persists.
+// queueTakeoverIfRogue inspects an endpoint change for an authenticated peer
+// and decides whether it represents a *rogue takeover* (which should be
+// denylisted) or a *legitimate single roam* (which should be left to the
+// captive-portal flow to re-authenticate).
 //
-// Must be called with r.endpointChangedMu held (matching the existing flow in
-// updateWGIPEndpointMap).
+// The distinction is made by counting OSCILLATIONS, not endpoint changes:
+//
+//   • A single change (stored=A, then live=B forever) is a legitimate roam:
+//     NAT port rebinding, mobile network handover, fresh tunnel handshake from
+//     the legitimate user, etc.  Denylisting B in this case would lock the
+//     legitimate user out of the network for 24 h with no recovery path
+//     (their UDP packets get DROPed before reaching WireGuard, so they can't
+//     even reach the captive portal to re-authenticate).
+//
+//   • Multiple A→foreign flips within flipDetectionWindow is the unambiguous
+//     signature of TWO simultaneously-active devices: each device's keepalive
+//     overrides the other's recorded endpoint, so we see the live endpoint
+//     bounce repeatedly between two values.  Only at this point do we have
+//     high confidence one of the values is rogue.
+//
+// We track per-peer endpoint history (lastWasStored, flipsToForeign) to count
+// stored→foreign transitions only.  After flipsRequiredForDenylist (2) such
+// transitions inside flipDetectionWindow (60 s), the most recent foreign
+// endpoint is queued as a takeover report.  Then we reset and start fresh —
+// if a NEW rogue source shows up later it has to earn its denylist entry the
+// same way.
+//
+// Must be called with r.endpointChangedMu held.
 func (r *Runner) queueTakeoverIfRogue(wgIP, newEP string) {
 	r.whitelistMu.RLock()
 	storedEP, isAuthed := r.whitelist[wgIP]
 	r.whitelistMu.RUnlock()
 	if !isAuthed || storedEP == "" {
-		return
-	}
-	if newEP == storedEP {
+		// Peer is not authenticated — captive portal flow handles this case
+		// from scratch; nothing to defend.
 		return
 	}
 
-	key := wgIP + "|" + newEP
+	r.takeoverFlipsMu.Lock()
+	state, ok := r.takeoverFlips[wgIP]
+	if !ok {
+		// First observation for this peer.  Assume the previous live endpoint
+		// was the authenticated one (otherwise it wouldn't be in the whitelist
+		// in the first place).
+		state = &takeoverFlipState{lastWasStored: true}
+		r.takeoverFlips[wgIP] = state
+	}
 	now := time.Now()
+
+	// Forget stale flips: if the first counted flip was longer ago than the
+	// detection window, reset the counter — a rebind that happened a minute
+	// ago and has held since is, by definition, a legitimate roam.
+	if !state.firstFlipAt.IsZero() && now.Sub(state.firstFlipAt) > flipDetectionWindow {
+		state.flipsToForeign = 0
+		state.firstFlipAt = time.Time{}
+	}
+
+	if newEP == storedEP {
+		// Endpoint flipped back to the authenticated value.  This in itself
+		// is normal (legitimate user's keepalive arrived); we just record
+		// "the last reading was at stored" so the next foreign reading
+		// counts as a fresh stored→foreign transition.
+		state.lastWasStored = true
+		r.takeoverFlipsMu.Unlock()
+		return
+	}
+
+	// newEP is foreign.  Count it as a flip ONLY if the previous reading was
+	// at the stored endpoint — successive foreign readings with the SAME
+	// foreign value (no bounce-back to stored in between) is just one event.
+	if state.lastWasStored {
+		state.flipsToForeign++
+		if state.firstFlipAt.IsZero() {
+			state.firstFlipAt = now
+		}
+		log.Debug().
+			Str("wg_ip", wgIP).
+			Str("authenticated_endpoint", storedEP).
+			Str("observed_endpoint", newEP).
+			Int("flips_to_foreign", state.flipsToForeign).
+			Int("required", flipsRequiredForDenylist).
+			Msg("endpoint flipped from authenticated to foreign — counting toward takeover threshold")
+	}
+	state.lastWasStored = false
+	state.lastForeignEP = newEP
+
+	if state.flipsToForeign < flipsRequiredForDenylist {
+		// One flip: indistinguishable from a NAT rebind / roam.  Don't denylist.
+		// The stability window (10 s) plus the captive portal flow take care
+		// of the rest: if the legitimate user just moved networks they will
+		// re-authenticate from the new endpoint and continue working.
+		r.takeoverFlipsMu.Unlock()
+		return
+	}
+
+	// Threshold crossed: we've seen the endpoint bounce stored→foreign at least
+	// twice within flipDetectionWindow.  This is concrete evidence of two
+	// simultaneously-active devices.  Reset the counter so that, if the rogue
+	// later moves to yet a different IP:port, it has to re-cross the threshold
+	// before being denylisted again.
+	state.flipsToForeign = 0
+	state.firstFlipAt = time.Time{}
+	r.takeoverFlipsMu.Unlock()
+
+	// Spam-suppress repeated reports for the same (wgIP, foreign) pair.
+	key := wgIP + "|" + newEP
 	r.reportedTakeoversMu.Lock()
 	if last, ok := r.reportedTakeovers[key]; ok && now.Sub(last) < takeoverReportCooldown {
 		r.reportedTakeoversMu.Unlock()
@@ -891,7 +1019,7 @@ func (r *Runner) queueTakeoverIfRogue(wgIP, newEP string) {
 		Str("wg_ip", wgIP).
 		Str("authenticated_endpoint", storedEP).
 		Str("observed_endpoint", newEP).
-		Msg("captive portal: rogue takeover queued for server denylist (config sharing / theft suspected)")
+		Msg("captive portal: rogue takeover confirmed (endpoint oscillated ≥2× to foreign source within detection window) — queued for server denylist")
 }
 
 // applyPeerRoutesToDNS forwards the per-peer AllowedIPs map to the DNS server,
