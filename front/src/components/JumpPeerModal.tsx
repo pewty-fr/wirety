@@ -97,6 +97,48 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
         const network = networks.filter(network => network.id == networkId)
 
         if (isFirstJumpPeer && network.length === 1) {
+          const net = network[0];
+          // Build the default policy rules.  Networks may be IPv4-only,
+          // IPv6-only, or dual-stack — emit one input/output pair per family
+          // so dual-stack peers actually get IPv6 reachability under the
+          // default policy.
+          const defaultRules: { id: string; direction: 'input' | 'output'; action: 'allow' | 'deny'; target: string; target_type: 'cidr' | 'peer' | 'group' | 'route'; description: string }[] = [];
+          if (net.cidr) {
+            defaultRules.push({
+              id: crypto.randomUUID(),
+              direction: 'input',
+              action: 'allow',
+              target: net.cidr,
+              target_type: 'cidr',
+              description: 'allow network IPv4 CIDR resources to access a peer'
+            });
+            defaultRules.push({
+              id: crypto.randomUUID(),
+              direction: 'output',
+              action: 'allow',
+              target: net.cidr,
+              target_type: 'cidr',
+              description: 'allow a peer to access network IPv4 CIDR resources'
+            });
+          }
+          if (net.cidr_v6) {
+            defaultRules.push({
+              id: crypto.randomUUID(),
+              direction: 'input',
+              action: 'allow',
+              target: net.cidr_v6,
+              target_type: 'cidr',
+              description: 'allow network IPv6 CIDR resources to access a peer'
+            });
+            defaultRules.push({
+              id: crypto.randomUUID(),
+              direction: 'output',
+              action: 'allow',
+              target: net.cidr_v6,
+              target_type: 'cidr',
+              description: 'allow a peer to access network IPv6 CIDR resources'
+            });
+          }
 
           // When a the first jump peer is created, add default group, policy and route
           const group : Group = await api.createGroup(networkId, {
@@ -107,35 +149,31 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
           const policy : Policy = await api.createPolicy(networkId, {
             name: 'default',
             description: 'default policy for network access',
-            rules: [
-              {
-                id: crypto.randomUUID(),
-                direction: 'input',
-                action: 'allow',
-                target: network[0].cidr,
-                target_type: 'cidr',
-                description: 'allow network CIDR resources to access a peer'
-              },
-              {
-                id: crypto.randomUUID(),
-                direction: 'output',
-                action: 'allow',
-                target: network[0].cidr,
-                target_type: 'cidr',
-                description: 'allow a peer to access network CIDR resources'
-              }
-            ]
+            rules: defaultRules,
           })
           api.attachPolicyToGroup(networkId, group.id, policy.id)
-          
-          const route : Route = await api.createRoute(selectedNetworkId, {
-            name: network[0].name,
-            description: 'default route for network',
-            destination_cidr: network[0].cidr,
-            jump_peer_id: jumpPeer.id
-          })
 
-          api.attachRouteToGroup(networkId, group.id, route.id);
+          // Routes are per-CIDR (a single Route entity holds one destination_cidr),
+          // so dual-stack networks get TWO default routes — one IPv4 and one IPv6
+          // — both pointed at this jump peer.
+          if (net.cidr) {
+            const route4 : Route = await api.createRoute(selectedNetworkId, {
+              name: net.name,
+              description: 'default IPv4 route for network',
+              destination_cidr: net.cidr,
+              jump_peer_id: jumpPeer.id
+            })
+            api.attachRouteToGroup(networkId, group.id, route4.id);
+          }
+          if (net.cidr_v6) {
+            const route6 : Route = await api.createRoute(selectedNetworkId, {
+              name: net.name + '-v6',
+              description: 'default IPv6 route for network',
+              destination_cidr: net.cidr_v6,
+              jump_peer_id: jumpPeer.id
+            })
+            api.attachRouteToGroup(networkId, group.id, route6.id);
+          }
 
           regularPeers.forEach(peer => api.addPeerToGroup(networkId, group.id, peer.id));
         }

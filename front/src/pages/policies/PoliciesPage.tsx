@@ -327,16 +327,23 @@ function PolicyModal({
   };
 
   const loadAttachments = async () => {
-    if (!policy || !selectedNetworkId) return;
+    if (!policy) return;
+    // Prefer the policy's own network_id over selectedNetworkId — the latter
+    // is set via setSelectedNetworkId(...) in a sibling useEffect that hasn't
+    // necessarily flushed by the time this function runs (queued state update),
+    // so reading selectedNetworkId here would see the stale empty value and
+    // bail out, leaving attachedGroups always empty.
+    const networkIdToUse = policy.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
 
     try {
       // Load all groups in the network
-      const allGroups = await api.getGroups(selectedNetworkId);
-      
+      const allGroups = await api.getGroups(networkIdToUse);
+
       // Filter groups that have this policy attached
       const groupsWithPolicy = allGroups.filter(g => g.policy_ids?.includes(policy.id));
       setAttachedGroups(groupsWithPolicy);
-      
+
       // Available groups are those without this policy
       const groupsWithoutPolicy = allGroups.filter(g => !g.policy_ids?.includes(policy.id));
       setAvailableGroups(groupsWithoutPolicy);

@@ -50,7 +50,7 @@ export default function RoutesPage() {
     try {
       let routesData;
       let peersData: Peer[] = [];
-      
+
       if (selectedNetworkId) {
         // Load routes and peers for specific network
         [routesData, peersData] = await Promise.all([
@@ -58,9 +58,17 @@ export default function RoutesPage() {
           api.getAllNetworkPeers(selectedNetworkId)
         ]);
       } else {
-        // Load all routes from all networks
+        // "All networks" view — fetch routes globally, then collect jump peers
+        // from every network so the list can resolve jump_peer_id → name.
+        // Without this, the table falls back to displaying the raw UUID.
+        const networksList = await api.getNetworks(1, 100);
+        const peerArrays = await Promise.all(
+          (networksList.data || []).map(n =>
+            api.getAllNetworkPeers(n.id).catch(() => [] as Peer[])
+          )
+        );
+        peersData = peerArrays.flat();
         routesData = await api.getAllRoutes();
-        // For cross-network view, we don't need jump peers data
       }
       setRoutes(routesData || []);
       setJumpPeers((peersData || []).filter((p: Peer) => p.is_jump));
@@ -291,11 +299,16 @@ function RouteModal({
   const [isEditingDomainSuffix, setIsEditingDomainSuffix] = useState(false);
 
   useEffect(() => {
-    if (isOpen && selectedNetworkId) {
+    // Load jump peers whenever the modal opens with either an existing route
+    // (use its network_id) or a selected network.  Without the route?.network_id
+    // fallback, opening the edit modal from "All networks" view leaves the
+    // jump-peer dropdown empty because selectedNetworkId is "" until a render
+    // cycle flushes the setState.
+    if (isOpen && (route?.network_id || selectedNetworkId)) {
       loadJumpPeers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, selectedNetworkId]);
+  }, [isOpen, selectedNetworkId, route]);
 
   useEffect(() => {
     if (route) {

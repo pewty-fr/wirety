@@ -327,7 +327,10 @@ export default function PeersPage() {
                         {peer.network_name || peer.network_id}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-white">
-                        {peer.address}
+                        <div>{peer.address}</div>
+                        {peer.address_v6 && (
+                          <div className="text-xs text-gray-500 dark:text-gray-400">{peer.address_v6}</div>
+                        )}
                       </td>
                       {isAdmin && (
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">

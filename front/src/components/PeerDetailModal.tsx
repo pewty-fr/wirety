@@ -333,13 +333,19 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IP Address</label>
-              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address}</p>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IPv4 Address</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address || <span className="text-gray-400 italic text-base">—</span>}</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
               <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.{network?.domain_suffix || 'internal' }</p>
             </div>
+            {displayPeer.address_v6 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IPv6 Address</label>
+                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address_v6}</p>
+              </div>
+            )}
             {/* Owner */}
             {displayPeer.owner_id && (
             <div>

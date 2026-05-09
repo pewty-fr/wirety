@@ -59,6 +59,7 @@ export interface IPAMAllocation {
   network_id: string;
   network_name: string;
   network_cidr: string;
+  family?: 'ipv4' | 'ipv6';   // present on dual-stack-aware servers; "ipv4" implied if absent
   ip: string;
   peer_id?: string;
   peer_name?: string;

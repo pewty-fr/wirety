@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -96,7 +97,8 @@ type Runner struct {
 	wsURL             string
 	wsHeaders         http.Header
 	wgInterface       string
-	wgIP              string // WireGuard interface IP of this peer
+	wgIP              string // WireGuard interface IPv4 of this peer
+	wgIPv6            string // WireGuard interface IPv6 of this peer (optional, dual-stack)
 	currentPeerName   string // Track current peer name to detect changes
 	peerID            string // for audit logging
 	networkID         string // for audit logging
@@ -268,6 +270,13 @@ func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort
 // portal HTTP server and to configure DNS probe interception.
 func (r *Runner) SetWGIP(ip string) {
 	r.wgIP = ip
+}
+
+// SetWGIPv6 sets the WireGuard interface IPv6 address of this peer (when the
+// network is dual-stack).  Captive portal HTTP/HTTPS listeners are spawned for
+// both families so IPv6 peers can reach the portal too.
+func (r *Runner) SetWGIPv6(ip string) {
+	r.wgIPv6 = ip
 }
 
 // isAuthenticated reports whether the given peer WireGuard IP has completed
@@ -1506,16 +1515,49 @@ func (r *Runner) startCaptivePortalServer() {
 	// hostnames match the cert. Internal VPN domains are not HSTS-preloaded, so
 	// browsers allow the user to bypass the self-signed warning and follow the
 	// redirect — unlike public domains (google.com, etc.) which are hard-blocked.
-	go func() {
-		tlsAddr := r.wgIP + ":443"
-		if err := srv.StartTLS(tlsAddr, r.wgIP, r.vpnDomain); err != nil {
-			log.Error().Err(err).Msg("captive portal HTTPS server stopped")
-		}
-	}()
+	//
+	// We use net.JoinHostPort because IPv6 addresses contain colons and the
+	// "ipv6:port" form is ambiguous; net.JoinHostPort produces "[ipv6]:port".
+	if r.wgIP != "" {
+		tlsAddr := net.JoinHostPort(r.wgIP, "443")
+		go func() {
+			if err := srv.StartTLS(tlsAddr, r.wgIP, r.vpnDomain); err != nil {
+				log.Error().Str("addr", tlsAddr).Err(err).Msg("captive portal HTTPS server (IPv4) stopped")
+			}
+		}()
 
-	addr := r.wgIP + ":80"
-	log.Info().Str("addr", addr).Str("portal_url", r.captivePortalURL).Msg("starting captive portal HTTP server")
-	if err := srv.Start(addr); err != nil {
-		log.Error().Err(err).Msg("captive portal HTTP server stopped")
+		addr := net.JoinHostPort(r.wgIP, "80")
+		log.Info().Str("addr", addr).Str("portal_url", r.captivePortalURL).Msg("starting captive portal HTTP server (IPv4)")
+		go func() {
+			if err := srv.Start(addr); err != nil {
+				log.Error().Str("addr", addr).Err(err).Msg("captive portal HTTP server (IPv4) stopped")
+			}
+		}()
 	}
+
+	// Spawn the same captive portal endpoints on the IPv6 address (dual-stack
+	// deployments).  The same Server instance handles both — the captive portal
+	// is stateless w.r.t. listening address, and `r.RemoteAddr` in handlers
+	// already gives the per-connection peer IP.
+	if r.wgIPv6 != "" {
+		tlsAddr := net.JoinHostPort(r.wgIPv6, "443")
+		go func() {
+			if err := srv.StartTLS(tlsAddr, r.wgIPv6, r.vpnDomain); err != nil {
+				log.Error().Str("addr", tlsAddr).Err(err).Msg("captive portal HTTPS server (IPv6) stopped")
+			}
+		}()
+
+		addr := net.JoinHostPort(r.wgIPv6, "80")
+		log.Info().Str("addr", addr).Str("portal_url", r.captivePortalURL).Msg("starting captive portal HTTP server (IPv6)")
+		go func() {
+			if err := srv.Start(addr); err != nil {
+				log.Error().Str("addr", addr).Err(err).Msg("captive portal HTTP server (IPv6) stopped")
+			}
+		}()
+	}
+
+	// Block forever (one of the goroutines holds the actual listener); this
+	// goroutine is intentionally kept alive so the caller's `go startCaptivePortalServer()`
+	// continues to "own" the lifecycle of the server.
+	select {}
 }

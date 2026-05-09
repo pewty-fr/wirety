@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -96,20 +97,33 @@ func main() {
 	}
 	log.Info().Str("network_id", networkID).Str("peer_id", peerID).Str("peer_name", peerName).Msg("resolved token")
 
-	// Bind the DNS server to the WireGuard interface IP so it is reachable by VPN
-	// peers through the tunnel, without conflicting with systemd-resolved (127.0.0.53:53).
-	wgIP, err := parseWireGuardAddress(cfg)
+	// Bind the DNS server to the WireGuard interface IP(s) so it is reachable by
+	// VPN peers through the tunnel, without conflicting with systemd-resolved
+	// (127.0.0.53:53).  Dual-stack peers get separate listeners on each family.
+	wgIP, wgIPv6, err := parseWireGuardAddresses(cfg)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to parse WireGuard address from config")
 	}
-	dnsListenAddr := wgIP + ":53"
-	log.Info().Str("addr", dnsListenAddr).Msg("starting DNS server")
+	log.Info().Str("ipv4", wgIP).Str("ipv6", wgIPv6).Msg("parsed WireGuard interface addresses")
 	dnsServer := dnsadapter.NewServer("", []dom.DNSPeer{})
-	go func() {
-		if err := dnsServer.Start(dnsListenAddr); err != nil {
-			log.Error().Err(err).Msg("dns server exited")
-		}
-	}()
+	if wgIP != "" {
+		dnsListenAddr := net.JoinHostPort(wgIP, "53")
+		log.Info().Str("addr", dnsListenAddr).Msg("starting DNS server (IPv4)")
+		go func() {
+			if err := dnsServer.Start(dnsListenAddr); err != nil {
+				log.Error().Err(err).Msg("dns server (IPv4) exited")
+			}
+		}()
+	}
+	if wgIPv6 != "" {
+		dnsListenAddr6 := net.JoinHostPort(wgIPv6, "53")
+		log.Info().Str("addr", dnsListenAddr6).Msg("starting DNS server (IPv6)")
+		go func() {
+			if err := dnsServer.Start(dnsListenAddr6); err != nil {
+				log.Error().Err(err).Msg("dns server (IPv6) exited")
+			}
+		}()
+	}
 
 	// Use peer name as interface name - sanitize for valid interface names
 	iface := sanitizeInterfaceName(peerName)
@@ -164,6 +178,9 @@ func main() {
 
 	runner := app.NewRunner(wsClient, writer, dnsServer, fwAdapter, wsURL, iface, peerID, networkID)
 	runner.SetWGIP(wgIP)
+	if wgIPv6 != "" {
+		runner.SetWGIPv6(wgIPv6)
+	}
 
 	// Pass enrollment token as Authorization header (keeps it out of access logs)
 	wsHeaders := http.Header{}
@@ -296,9 +313,19 @@ func newWSDialer(skipTLSVerify bool) *websocket.Dialer {
 	}
 }
 
-// parseWireGuardAddress extracts the bare IP address from the "Address = <ip>/<prefix>"
-// line of a WireGuard configuration string.
-func parseWireGuardAddress(cfg string) (string, error) {
+// parseWireGuardAddresses extracts the bare IPv4 and IPv6 addresses from a
+// WireGuard configuration's `Address = ...` line.  The line may contain one
+// address (single-stack) or two comma-separated addresses (dual-stack), each
+// with an optional `/prefix` suffix that we strip.
+//
+// Returns the IPv4 address (or "" if none) and the IPv6 address (or "" if none).
+// At least one of the two must be set or an error is returned.
+//
+// Examples of valid input lines (from the server's wireguard.GenerateConfig):
+//   Address = 10.0.0.5/22
+//   Address = fd12:3456:789a:bcde::5/64
+//   Address = 10.0.0.5/22, fd12:3456:789a:bcde::5/64
+func parseWireGuardAddresses(cfg string) (ipv4, ipv6 string, err error) {
 	for _, line := range strings.Split(cfg, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(strings.ToLower(line), "address") {
@@ -308,11 +335,41 @@ func parseWireGuardAddress(cfg string) (string, error) {
 		if len(parts) != 2 {
 			continue
 		}
-		// Strip optional CIDR prefix length (e.g. "10.0.0.1/24" → "10.0.0.1")
-		addr := strings.TrimSpace(parts[1])
-		return strings.Split(addr, "/")[0], nil
+		// Address line can carry multiple comma-separated addresses for
+		// dual-stack peers.  Split per-address before stripping CIDR — splitting
+		// on `/` first would chop the "/64" out of an IPv6 address mid-string
+		// and produce garbage (or, like the bug we're fixing, leave the whole
+		// "ipv4, ipv6" pair concatenated).
+		for _, raw := range strings.Split(parts[1], ",") {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			// Strip optional /prefix.  Note: an IPv6 address has many colons;
+			// the slash is unambiguous.
+			if idx := strings.IndexByte(raw, '/'); idx != -1 {
+				raw = raw[:idx]
+			}
+			parsed := net.ParseIP(raw)
+			if parsed == nil {
+				continue
+			}
+			if parsed.To4() != nil {
+				if ipv4 == "" {
+					ipv4 = raw
+				}
+			} else {
+				if ipv6 == "" {
+					ipv6 = raw
+				}
+			}
+		}
+		break
 	}
-	return "", fmt.Errorf("no Address line found in WireGuard config")
+	if ipv4 == "" && ipv6 == "" {
+		return "", "", fmt.Errorf("no Address line found in WireGuard config (or the line had no parseable IP)")
+	}
+	return ipv4, ipv6, nil
 }
 
 type resolveResponse struct {
