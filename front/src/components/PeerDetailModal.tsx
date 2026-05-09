@@ -64,8 +64,13 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     isOpen && !!peer?.network_id
   );
 
-  // Determine which peer data to display
-  const displayPeer = currentPeer || peer;
+  // Determine which peer data to display.
+  // The live `currentPeer` comes from the server endpoint which does not include
+  // network_id (it is only a URL parameter). Preserve network_id and network_name
+  // from the original `peer` prop so that config download / delete operations work.
+  const displayPeer = currentPeer
+    ? { ...currentPeer, network_id: peer?.network_id, network_name: peer?.network_name }
+    : peer;
 
   // Load groups, policies, and routes for this peer
   useEffect(() => {
@@ -387,9 +392,14 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
           {!displayPeer.use_agent && (
             <div className="space-y-2">
               <h4 className="text-sm font-medium text-gray-700 dark:text-gray-200">WireGuard Configuration</h4>
+              {!displayPeer.owner_id && (
+                <p className="text-sm text-amber-600 dark:text-amber-400">
+                  Config download is disabled — this peer has no owner. Assign an owner to enable it.
+                </p>
+              )}
               <div className="flex gap-2">
                 <button
-                  disabled={configLoading || configCopied}
+                  disabled={configLoading || configCopied || !displayPeer.owner_id}
                   onClick={async () => {
                     if (!peer.network_id) return;
                     setConfigLoading(true);
@@ -415,7 +425,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                   {configLoading ? 'Copying...' : configCopied ? 'Copied ✓' : 'Copy Config'}
                 </button>
                 <button
-                  disabled={configLoading}
+                  disabled={configLoading || !displayPeer.owner_id}
                   onClick={async () => {
                     if (!peer.network_id) return;
                     setConfigError(null);

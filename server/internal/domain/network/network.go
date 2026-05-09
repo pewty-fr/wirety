@@ -6,12 +6,13 @@ import "time"
 type Network struct {
 	ID              string           `json:"id"`
 	Name            string           `json:"name"`
-	CIDR            string           `json:"cidr"`              // Network CIDR (e.g., "10.0.0.0/16")
-	Peers           map[string]*Peer `json:"-"`                 // Peer ID -> Peer
-	PeerCount       int              `json:"peer_count"`        // Computed number of peers for lightweight listing
-	DNS             []string         `json:"dns"`               // Additional DNS servers for peers
-	DomainSuffix    string           `json:"domain_suffix"`     // Custom domain (default: .internal)
-	DefaultGroupIDs []string         `json:"default_group_ids"` // Groups for non-admin peers
+	CIDR            string           `json:"cidr"`               // IPv4 network CIDR (e.g., "10.0.0.0/16")
+	CIDRv6          string           `json:"cidr_v6,omitempty"`  // IPv6 network CIDR (e.g., "fd00::/64"), optional
+	Peers           map[string]*Peer `json:"-"`                  // Peer ID -> Peer
+	PeerCount       int              `json:"peer_count"`         // Computed number of peers for lightweight listing
+	DNS             []string         `json:"dns"`                // Additional DNS servers for peers
+	DomainSuffix    string           `json:"domain_suffix"`      // Custom domain (default: .internal)
+	DefaultGroupIDs []string         `json:"default_group_ids"`  // Groups for non-admin peers
 	CreatedAt       time.Time        `json:"created_at"`
 	UpdatedAt       time.Time        `json:"updated_at"`
 }
@@ -19,7 +20,8 @@ type Network struct {
 // NetworkCreateRequest represents the data needed to create a new network
 type NetworkCreateRequest struct {
 	Name         string   `json:"name" binding:"required"`
-	CIDR         string   `json:"cidr" binding:"required"`
+	CIDR         string   `json:"cidr"`                    // IPv4 CIDR (at least one of CIDR / CIDRv6 must be set)
+	CIDRv6       string   `json:"cidr_v6,omitempty"`       // IPv6 CIDR (optional)
 	DNS          []string `json:"dns,omitempty"`
 	DomainSuffix string   `json:"domain_suffix,omitempty"` // Custom domain (default: .internal)
 }
@@ -28,6 +30,7 @@ type NetworkCreateRequest struct {
 type NetworkUpdateRequest struct {
 	Name            string   `json:"name,omitempty"`
 	CIDR            string   `json:"cidr,omitempty"`
+	CIDRv6          string   `json:"cidr_v6,omitempty"`
 	DNS             []string `json:"dns,omitempty"`
 	DomainSuffix    string   `json:"domain_suffix,omitempty"`
 	DefaultGroupIDs []string `json:"default_group_ids,omitempty"`

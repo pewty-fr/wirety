@@ -77,6 +77,10 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
           is_jump: false,
           use_agent: formData.use_agent,
         };
+        // Include owner_id in the creation payload when set
+        if (formData.owner_id) {
+          createData.owner_id = formData.owner_id;
+        }
         const peer : Peer = await api.createPeer(selectedNetworkId, createData);
 
         const groups : Group[] = await api.getGroups(selectedNetworkId);
@@ -165,19 +169,23 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
           </div>
         )}
 
-        {/* Owner (admin only, edit mode only) */}
-        {isAdmin && isEditMode && (
+        {/* Owner — shown in create mode for everyone, in edit mode for admins only */}
+        {(isAdmin || !isEditMode) && (
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Owner
+              Owner {!isEditMode && <span className="text-gray-400 font-normal">(optional)</span>}
             </label>
             <SearchableSelect
               options={userOptions}
               value={formData.owner_id}
               onChange={(value) => setFormData({ ...formData, owner_id: value })}
-              placeholder="Select owner"
+              placeholder={isEditMode ? 'Select owner' : 'Assign to a user (optional)'}
             />
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Change the owner of this peer</p>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {isEditMode
+                ? 'Change the owner of this peer'
+                : 'Without an owner the peer cannot use the captive portal and config download is disabled'}
+            </p>
           </div>
         )}
 

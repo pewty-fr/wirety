@@ -33,8 +33,8 @@ func (r *NetworkRepository) CreateNetwork(ctx context.Context, n *network.Networ
 	if n.DNS == nil {
 		n.DNS = []string{}
 	}
-	_, err := r.db.ExecContext(ctx, `INSERT INTO networks (id,name,cidr,dns,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6)`,
-		n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.CreatedAt, n.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `INSERT INTO networks (id,name,cidr,cidr_v6,dns,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		n.ID, n.Name, n.CIDR, nullableString(n.CIDRv6), pq.Array(n.DNS), n.CreatedAt, n.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create network: %w", err)
 	}
@@ -46,17 +46,19 @@ func (r *NetworkRepository) CreateNetwork(ctx context.Context, n *network.Networ
 
 func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*network.Network, error) {
 	var n network.Network
-	err := r.db.QueryRowContext(ctx, `SELECT id,name,cidr,dns,created_at,updated_at,domain_suffix FROM networks WHERE id=$1`, networkID).
-		Scan(&n.ID, &n.Name, &n.CIDR, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt, &n.DomainSuffix)
+	var cidrV6 sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT id,name,cidr,cidr_v6,dns,created_at,updated_at,domain_suffix FROM networks WHERE id=$1`, networkID).
+		Scan(&n.ID, &n.Name, &n.CIDR, &cidrV6, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt, &n.DomainSuffix)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("network not found")
 		}
 		return nil, fmt.Errorf("get network: %w", err)
 	}
+	n.CIDRv6 = cidrV6.String
 	// Load peers
 	n.Peers = make(map[string]*network.Peer)
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at FROM peers WHERE network_id=$1`, networkID)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,public_key,private_key,address,address_v6,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at FROM peers WHERE network_id=$1`, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("load peers: %w", err)
 	}
@@ -67,11 +69,13 @@ func (r *NetworkRepository) GetNetwork(ctx context.Context, networkID string) (*
 	for rows.Next() {
 		var p network.Peer
 		var addrs []string
-		err = rows.Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
+		var addrV6 sql.NullString
+		err = rows.Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &addrV6, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan peer: %w", err)
 		}
 		p.AdditionalAllowedIPs = addrs
+		p.AddressV6 = addrV6.String
 		n.AddPeer(&p)
 		count++
 	}
@@ -86,7 +90,8 @@ func (r *NetworkRepository) UpdateNetwork(ctx context.Context, n *network.Networ
 	if n.DNS == nil {
 		n.DNS = []string{}
 	}
-	_, err := r.db.ExecContext(ctx, `UPDATE networks SET name=$2,cidr=$3,dns=$4,updated_at=$5,domain_suffix=$6 WHERE id=$1`, n.ID, n.Name, n.CIDR, pq.Array(n.DNS), n.UpdatedAt, n.DomainSuffix)
+	_, err := r.db.ExecContext(ctx, `UPDATE networks SET name=$2,cidr=$3,cidr_v6=$4,dns=$5,updated_at=$6,domain_suffix=$7 WHERE id=$1`,
+		n.ID, n.Name, n.CIDR, nullableString(n.CIDRv6), pq.Array(n.DNS), n.UpdatedAt, n.DomainSuffix)
 	if err != nil {
 		return fmt.Errorf("update network: %w", err)
 	}
@@ -107,7 +112,7 @@ func (r *NetworkRepository) DeleteNetwork(ctx context.Context, networkID string)
 }
 
 func (r *NetworkRepository) ListNetworks(ctx context.Context) ([]*network.Network, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT n.id,n.name,n.cidr,n.dns,n.created_at,n.updated_at,n.domain_suffix, COALESCE(p.peer_count,0) AS peer_count FROM networks n LEFT JOIN (SELECT network_id, COUNT(*) AS peer_count FROM peers GROUP BY network_id) p ON p.network_id = n.id ORDER BY n.created_at ASC`)
+	rows, err := r.db.QueryContext(ctx, `SELECT n.id,n.name,n.cidr,n.cidr_v6,n.dns,n.created_at,n.updated_at,n.domain_suffix, COALESCE(p.peer_count,0) AS peer_count FROM networks n LEFT JOIN (SELECT network_id, COUNT(*) AS peer_count FROM peers GROUP BY network_id) p ON p.network_id = n.id ORDER BY n.created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
@@ -117,10 +122,12 @@ func (r *NetworkRepository) ListNetworks(ctx context.Context) ([]*network.Networ
 	out := make([]*network.Network, 0)
 	for rows.Next() {
 		var n network.Network
-		err = rows.Scan(&n.ID, &n.Name, &n.CIDR, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt, &n.DomainSuffix, &n.PeerCount)
+		var cidrV6 sql.NullString
+		err = rows.Scan(&n.ID, &n.Name, &n.CIDR, &cidrV6, pq.Array(&n.DNS), &n.CreatedAt, &n.UpdatedAt, &n.DomainSuffix, &n.PeerCount)
 		if err != nil {
 			return nil, err
 		}
+		n.CIDRv6 = cidrV6.String
 		n.Peers = make(map[string]*network.Peer) // not loaded to keep call light
 		// ACL system removed
 		out = append(out, &n)
@@ -137,8 +144,8 @@ func (r *NetworkRepository) CreatePeer(ctx context.Context, networkID string, p 
 	if p.AdditionalAllowedIPs == nil {
 		p.AdditionalAllowedIPs = []string{}
 	}
-	_, err := r.db.ExecContext(ctx, `INSERT INTO peers (id,network_id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-		p.ID, networkID, p.Name, p.PublicKey, p.PrivateKey, p.Address, p.Endpoint, p.ListenPort, pq.Array(p.AdditionalAllowedIPs), p.Token, p.IsJump, p.UseAgent, p.OwnerID, p.CreatedAt, p.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `INSERT INTO peers (id,network_id,name,public_key,private_key,address,address_v6,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		p.ID, networkID, p.Name, p.PublicKey, p.PrivateKey, p.Address, nullableString(p.AddressV6), p.Endpoint, p.ListenPort, pq.Array(p.AdditionalAllowedIPs), p.Token, p.IsJump, p.UseAgent, p.OwnerID, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create peer: %w", err)
 	}
@@ -148,8 +155,9 @@ func (r *NetworkRepository) CreatePeer(ctx context.Context, networkID string, p 
 func (r *NetworkRepository) GetPeer(ctx context.Context, networkID, peerID string) (*network.Peer, error) {
 	var p network.Peer
 	var addrs []string
-	err := r.db.QueryRowContext(ctx, `SELECT id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at FROM peers WHERE id=$1 AND network_id=$2`, peerID, networkID).
-		Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
+	var addrV6 sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT id,name,public_key,private_key,address,address_v6,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at FROM peers WHERE id=$1 AND network_id=$2`, peerID, networkID).
+		Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &addrV6, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("peer not found")
@@ -157,6 +165,7 @@ func (r *NetworkRepository) GetPeer(ctx context.Context, networkID, peerID strin
 		return nil, fmt.Errorf("get peer: %w", err)
 	}
 	p.AdditionalAllowedIPs = addrs
+	p.AddressV6 = addrV6.String
 
 	// Load group IDs for this peer
 	groupIDs, err := r.loadPeerGroupIDs(ctx, peerID)
@@ -172,8 +181,9 @@ func (r *NetworkRepository) GetPeerByToken(ctx context.Context, token string) (s
 	var p network.Peer
 	var networkID string
 	var addrs []string
-	err := r.db.QueryRowContext(ctx, `SELECT network_id,id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at FROM peers WHERE token=$1`, token).
-		Scan(&networkID, &p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
+	var addrV6 sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT network_id,id,name,public_key,private_key,address,address_v6,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at FROM peers WHERE token=$1`, token).
+		Scan(&networkID, &p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &addrV6, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil, fmt.Errorf("token not found")
@@ -181,6 +191,7 @@ func (r *NetworkRepository) GetPeerByToken(ctx context.Context, token string) (s
 		return "", nil, fmt.Errorf("get peer by token: %w", err)
 	}
 	p.AdditionalAllowedIPs = addrs
+	p.AddressV6 = addrV6.String
 	return networkID, &p, nil
 }
 
@@ -190,8 +201,8 @@ func (r *NetworkRepository) UpdatePeer(ctx context.Context, networkID string, p 
 	if p.AdditionalAllowedIPs == nil {
 		p.AdditionalAllowedIPs = []string{}
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE peers SET name=$3,public_key=$4,private_key=$5,address=$6,endpoint=$7,listen_port=$8,additional_allowed_ips=$9,token=$10,is_jump=$11,use_agent=$12,owner_id=$13,updated_at=$14 WHERE id=$1 AND network_id=$2`,
-		p.ID, networkID, p.Name, p.PublicKey, p.PrivateKey, p.Address, p.Endpoint, p.ListenPort, pq.Array(p.AdditionalAllowedIPs), p.Token, p.IsJump, p.UseAgent, p.OwnerID, p.UpdatedAt)
+	res, err := r.db.ExecContext(ctx, `UPDATE peers SET name=$3,public_key=$4,private_key=$5,address=$6,address_v6=$7,endpoint=$8,listen_port=$9,additional_allowed_ips=$10,token=$11,is_jump=$12,use_agent=$13,owner_id=$14,updated_at=$15 WHERE id=$1 AND network_id=$2`,
+		p.ID, networkID, p.Name, p.PublicKey, p.PrivateKey, p.Address, nullableString(p.AddressV6), p.Endpoint, p.ListenPort, pq.Array(p.AdditionalAllowedIPs), p.Token, p.IsJump, p.UseAgent, p.OwnerID, p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update peer: %w", err)
 	}
@@ -215,7 +226,7 @@ func (r *NetworkRepository) DeletePeer(ctx context.Context, networkID, peerID st
 }
 
 func (r *NetworkRepository) ListPeers(ctx context.Context, networkID string) ([]*network.Peer, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,public_key,private_key,address,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at FROM peers WHERE network_id=$1 ORDER BY created_at ASC`, networkID)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,public_key,private_key,address,address_v6,endpoint,listen_port,additional_allowed_ips,token,is_jump,use_agent,owner_id,created_at,updated_at FROM peers WHERE network_id=$1 ORDER BY created_at ASC`, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %w", err)
 	}
@@ -226,11 +237,13 @@ func (r *NetworkRepository) ListPeers(ctx context.Context, networkID string) ([]
 	for rows.Next() {
 		var p network.Peer
 		var addrs []string
-		err = rows.Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
+		var addrV6 sql.NullString
+		err = rows.Scan(&p.ID, &p.Name, &p.PublicKey, &p.PrivateKey, &p.Address, &addrV6, &p.Endpoint, &p.ListenPort, pq.Array(&addrs), &p.Token, &p.IsJump, &p.UseAgent, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
 		p.AdditionalAllowedIPs = addrs
+		p.AddressV6 = addrV6.String
 
 		// Load group IDs for this peer
 		groupIDs, err := r.loadPeerGroupIDs(ctx, p.ID)
@@ -267,6 +280,15 @@ func (r *NetworkRepository) loadPeerGroupIDs(ctx context.Context, peerID string)
 	}
 
 	return groupIDs, rows.Err()
+}
+
+// nullableString converts an empty string to sql.NullString{Valid:false} so that
+// optional text columns (cidr_v6, address_v6) store NULL instead of "".
+func nullableString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
 }
 
 // ACL operations (ephemeral)

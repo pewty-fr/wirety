@@ -76,6 +76,11 @@ type Runner struct {
 	// can return OS probe success responses for already-authenticated peers.
 	whitelist   map[string]string
 	whitelistMu sync.RWMutex
+	// ipv4ToIPv6 maps each peer's IPv4 WireGuard address to its IPv6 WireGuard address.
+	// Built from DNS peer config and used to extend the ip6tables whitelist when an
+	// IPv4 address is authenticated via the captive portal.
+	ipv4ToIPv6   map[string]string
+	ipv4ToIPv6Mu sync.RWMutex
 	// wgIPToEndpoint maps each peer's WireGuard private IP to its current public
 	// endpoint as reported by `wg show endpoints` ("ip:port", no stripping).
 	// Refreshed every 300 ms by the heartbeat goroutine so that isAuthenticated
@@ -115,6 +120,7 @@ func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort
 		networkID:         networkID,
 		peerNames:         make(map[string]string),
 		whitelist:         make(map[string]string),
+		ipv4ToIPv6:        make(map[string]string),
 		wgIPToEndpoint:    make(map[string]string),
 		backoffBase:       time.Second,
 		backoffMax:        30 * time.Second,
@@ -197,6 +203,40 @@ func (r *Runner) updateWGIPEndpointMap() {
 	r.wgIPToEndpointMu.Unlock()
 }
 
+// updateIPv4ToIPv6Map rebuilds the IPv4 WireGuard IP → IPv6 WireGuard IP lookup
+// from the DNS peer list. Called whenever a DNS config update is received.
+func (r *Runner) updateIPv4ToIPv6Map(peers []dom.DNSPeer) {
+	m := make(map[string]string, len(peers))
+	for _, p := range peers {
+		if p.IP != "" && p.IPv6 != "" {
+			m[p.IP] = p.IPv6
+		}
+	}
+	r.ipv4ToIPv6Mu.Lock()
+	r.ipv4ToIPv6 = m
+	r.ipv4ToIPv6Mu.Unlock()
+}
+
+// extendWhitelistWithIPv6 appends IPv6 WireGuard addresses for each whitelisted
+// IPv4 address. This is how authenticated peers get their IPv6 address whitelisted
+// in ip6tables without requiring a separate captive portal authentication flow.
+func (r *Runner) extendWhitelistWithIPv6(wgIPs []string) []string {
+	r.ipv4ToIPv6Mu.RLock()
+	mapping := r.ipv4ToIPv6
+	r.ipv4ToIPv6Mu.RUnlock()
+	if len(mapping) == 0 {
+		return wgIPs
+	}
+	out := make([]string, len(wgIPs), len(wgIPs)+len(mapping))
+	copy(out, wgIPs)
+	for _, ipv4 := range wgIPs {
+		if ipv6, ok := mapping[ipv4]; ok {
+			out = append(out, ipv6)
+		}
+	}
+	return out
+}
+
 // updateWhitelist replaces the in-memory whitelist with the given entries.
 // Each entry is either "wgIP@endpointIP" (endpoint-checked) or plain "wgIP"
 // (legacy / no endpoint check).
@@ -256,6 +296,7 @@ func (r *Runner) resyncFirewall() {
 	}
 
 	filtered := r.filterWhitelistByEndpoint(whitelist)
+	filteredWithIPv6 := r.extendWhitelistWithIPv6(filtered)
 
 	r.lastSyncMu.Lock()
 	if stringSliceEqual(r.lastFwState, filtered) {
@@ -265,7 +306,7 @@ func (r *Runner) resyncFirewall() {
 	r.lastFwState = filtered
 	r.lastSyncMu.Unlock()
 
-	if err := r.fwAdapter.Sync(policy, policy.IP, filtered); err != nil {
+	if err := r.fwAdapter.Sync(policy, policy.IP, filteredWithIPv6); err != nil {
 		log.Error().Err(err).Msg("firewall re-sync after endpoint change failed")
 	} else {
 		log.Info().Strs("whitelist", filtered).Msg("firewall re-synced after endpoint change")
@@ -465,9 +506,10 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				}
 			}
 
-			// Update pubkey → name map used by the tunnel monitor
+			// Update pubkey → name map and IPv4→IPv6 address mapping from DNS peers.
 			if payload.DNS != nil {
 				r.updatePeerNames(payload.Config, payload.DNS.Peers)
+				r.updateIPv4ToIPv6Map(payload.DNS.Peers)
 			}
 
 			if err := r.cfgWriter.WriteAndApply(payload.Config); err != nil {
@@ -555,11 +597,15 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				// config from a different network) is dropped from iptables, so
 				// non-HTTP traffic is also denied — not just captive-portal HTTP.
 				filtered := r.filterWhitelistByEndpoint(whitelistedIPs)
+				// For dual-stack networks, also whitelist each peer's IPv6 WireGuard
+				// address when their IPv4 is authenticated. This avoids a separate
+				// captive portal flow for IPv6 traffic from the same peer.
+				filteredWithIPv6 := r.extendWhitelistWithIPv6(filtered)
 				r.lastSyncMu.Lock()
 				r.lastFwState = filtered
 				r.lastSyncMu.Unlock()
 
-				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, filtered); err != nil {
+				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, filteredWithIPv6); err != nil {
 					log.Error().Err(err).Msg("failed applying firewall policy update")
 				} else {
 					log.Info().

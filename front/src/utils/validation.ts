@@ -1,5 +1,37 @@
 /**
+ * Checks whether the host bits of an IPv4 address are zero, i.e. whether it
+ * is the actual network address for the given prefix length.
+ * e.g. 10.255.236.0/22 → ok; 10.255.238.0/22 → NOT the network address.
+ */
+function isIPv4NetworkAddress(ip: string, prefixLen: number): boolean {
+  const octets = ip.split('.').map(Number);
+  if (octets.length !== 4) return false;
+  // Build 32-bit integer
+  const ipInt = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+  const mask = prefixLen === 0 ? 0 : (0xffffffff << (32 - prefixLen)) >>> 0;
+  return (ipInt & mask) >>> 0 === ipInt;
+}
+
+/**
+ * For an IPv4 CIDR with host bits set, return the corrected network address.
+ * e.g. "10.255.238.0/22" → "10.255.236.0/22"
+ */
+function correctIPv4NetworkAddress(ip: string, prefixLen: number): string {
+  const octets = ip.split('.').map(Number);
+  const ipInt = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+  const mask = prefixLen === 0 ? 0 : (0xffffffff << (32 - prefixLen)) >>> 0;
+  const netInt = (ipInt & mask) >>> 0;
+  return [
+    (netInt >>> 24) & 0xff,
+    (netInt >>> 16) & 0xff,
+    (netInt >>> 8) & 0xff,
+    netInt & 0xff,
+  ].join('.') + '/' + prefixLen;
+}
+
+/**
  * Validates if a string is a valid CIDR notation (e.g., 192.168.1.0/24 or 2001:db8::/32)
+ * Also checks that the IP is the actual network address (host bits are zero).
  * @param cidr - The CIDR string to validate
  * @returns true if valid, false otherwise
  */
@@ -24,12 +56,10 @@ export function isValidCIDR(cidr: string): boolean {
   // Check for IPv4
   const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
   if (ipv4Regex.test(ip)) {
-    // Validate each octet is 0-255
     const octets = ip.split('.').map(Number);
     const validOctets = octets.every(octet => octet >= 0 && octet <= 255);
-    
-    // Validate prefix is 0-32 for IPv4
-    return validOctets && prefixNum >= 0 && prefixNum <= 32;
+    if (!validOctets || prefixNum < 0 || prefixNum > 32) return false;
+    return isIPv4NetworkAddress(ip, prefixNum);
   }
 
   // Check for IPv6
@@ -76,6 +106,10 @@ export function getCIDRError(cidr: string): string | null {
     }
     if (prefixNum < 0 || prefixNum > 32) {
       return 'IPv4 prefix must be between 0 and 32';
+    }
+    if (!isIPv4NetworkAddress(ip, prefixNum)) {
+      const corrected = correctIPv4NetworkAddress(ip, prefixNum);
+      return `${ip} has host bits set — did you mean ${corrected}?`;
     }
     return null;
   }

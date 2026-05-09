@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -98,10 +99,25 @@ func (s *Service) CreateNetwork(ctx context.Context, req *network.NetworkCreateR
 
 	now := time.Now()
 
+	if req.CIDR == "" && req.CIDRv6 == "" {
+		return nil, fmt.Errorf("at least one of cidr (IPv4) or cidr_v6 (IPv6) must be provided")
+	}
+	if req.CIDR != "" {
+		if err := validateNetworkCIDR(req.CIDR); err != nil {
+			return nil, fmt.Errorf("invalid cidr: %w", err)
+		}
+	}
+	if req.CIDRv6 != "" {
+		if err := validateNetworkCIDR(req.CIDRv6); err != nil {
+			return nil, fmt.Errorf("invalid cidr_v6: %w", err)
+		}
+	}
+
 	net := &network.Network{
 		ID:              uuid.New().String(),
 		Name:            req.Name,
 		CIDR:            req.CIDR,
+		CIDRv6:          req.CIDRv6,
 		Peers:           make(map[string]*network.Peer),
 		DomainSuffix:    domainSuffix,
 		DefaultGroupIDs: []string{}, // Initialize empty default groups
@@ -114,9 +130,16 @@ func (s *Service) CreateNetwork(ctx context.Context, req *network.NetworkCreateR
 		return nil, fmt.Errorf("failed to create network: %w", err)
 	}
 
-	// Ensure IPAM root prefix exists for this network CIDR so future IP allocations succeed.
-	if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDR); err != nil {
-		return nil, fmt.Errorf("failed to ensure root prefix: %w", err)
+	// Ensure IPAM root prefix(es) exist for future IP allocations.
+	if net.CIDR != "" {
+		if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDR); err != nil {
+			return nil, fmt.Errorf("failed to ensure IPv4 root prefix: %w", err)
+		}
+	}
+	if net.CIDRv6 != "" {
+		if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDRv6); err != nil {
+			return nil, fmt.Errorf("failed to ensure IPv6 root prefix: %w", err)
+		}
 	}
 
 	return net, nil
@@ -253,25 +276,38 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 		return nil, fmt.Errorf("invalid peer name: %w", err)
 	}
 
-	// Ownership rule (v2):
-	//   - Agent-managed peers (jump peers, server agents on dedicated hosts) MAY
-	//     be ownerless — they are infrastructure, not user devices, and they
-	//     don't go through the captive portal.
-	//   - Every other peer (a user device) MUST have an owner so that the
-	//     captive portal can match the authenticated user against the peer.
-	if !req.IsJump && !req.UseAgent && ownerID == "" {
-		return nil, fmt.Errorf("a non-agent peer must have an owner — assign owner_id, or set use_agent=true if this peer runs the wirety agent on a dedicated host")
-	}
+	// Ownership: jump peers and agent-managed peers are typically ownerless
+	// infrastructure. Regular user-device peers may optionally have an owner.
+	// Without an owner, the captive portal cannot match the authenticated user to
+	// the peer, so config download is disabled for ownerless non-agent peers on
+	// the frontend. No hard server-side enforcement — admins may create ownerless
+	// peers for testing or shared use cases.
 
 	net, err := s.repo.GetNetwork(ctx, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
 	}
 
-	// Allocate IP address for the peer using IPAM repository (hexagonal compliant)
-	address, err := s.repo.AcquireIP(ctx, net.CIDR)
-	if err != nil {
-		return nil, fmt.Errorf("failed to acquire IP from IPAM: %w", err)
+	// Allocate IP address(es) for the peer using IPAM repository (hexagonal compliant).
+	// At least one of CIDR / CIDRv6 is set (validated at network creation).
+	var address, addressV6 string
+	if net.CIDR != "" {
+		var err error
+		address, err = s.repo.AcquireIP(ctx, net.CIDR)
+		if err != nil {
+			return nil, fmt.Errorf("failed to acquire IPv4 address from IPAM: %w", err)
+		}
+	}
+	if net.CIDRv6 != "" {
+		var err error
+		addressV6, err = s.repo.AcquireIP(ctx, net.CIDRv6)
+		if err != nil {
+			// Release the already-acquired IPv4 address to avoid leaking it.
+			if address != "" {
+				_ = s.repo.ReleaseIP(ctx, net.CIDR, address)
+			}
+			return nil, fmt.Errorf("failed to acquire IPv6 address from IPAM: %w", err)
+		}
 	}
 
 	// Generate WireGuard keys for the peer
@@ -293,6 +329,7 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 		PublicKey:            publicKey,
 		PrivateKey:           privateKey,
 		Address:              address,
+		AddressV6:            addressV6,
 		Endpoint:             req.Endpoint,
 		ListenPort:           req.ListenPort,
 		IsJump:               req.IsJump,
@@ -424,10 +461,7 @@ func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req 
 	peer.UpdatedAt = time.Now()
 	// Preserve token (do not allow overwrite via update)
 
-	// Re-check the ownership rule: a non-agent peer must keep an owner.
-	if !peer.IsJump && !peer.UseAgent && peer.OwnerID == "" {
-		return nil, fmt.Errorf("a non-agent peer must have an owner; cannot leave owner_id empty")
-	}
+	// No server-side owner enforcement; ownerless peers are allowed.
 
 	if err := s.repo.UpdatePeer(ctx, networkID, peer); err != nil {
 		return nil, fmt.Errorf("failed to update peer: %w", err)
@@ -479,9 +513,16 @@ func (s *Service) DeletePeer(ctx context.Context, networkID, peerID string) erro
 		_ = s.repo.DeleteConnection(ctx, networkID, peerID, otherPeer.ID)
 	}
 
-	// Release IP back to IPAM
-	if err := s.repo.ReleaseIP(ctx, net.CIDR, peer.Address); err != nil {
-		return fmt.Errorf("failed to release IP: %w", err)
+	// Release IP address(es) back to IPAM.
+	if net.CIDR != "" && peer.Address != "" {
+		if err := s.repo.ReleaseIP(ctx, net.CIDR, peer.Address); err != nil {
+			return fmt.Errorf("failed to release IPv4 address: %w", err)
+		}
+	}
+	if net.CIDRv6 != "" && peer.AddressV6 != "" {
+		if err := s.repo.ReleaseIP(ctx, net.CIDRv6, peer.AddressV6); err != nil {
+			log.Warn().Err(err).Str("ip", peer.AddressV6).Str("cidr", net.CIDRv6).Msg("failed to release IPv6 address")
+		}
 	}
 
 	return s.repo.DeletePeer(ctx, networkID, peerID)
@@ -545,6 +586,7 @@ func (s *Service) GeneratePeerConfig(ctx context.Context, networkID, peerID stri
 type DNSPeer struct {
 	Name string `json:"name"`
 	IP   string `json:"ip"`
+	IPv6 string `json:"ipv6,omitempty"` // IPv6 WireGuard address (optional)
 }
 
 type PeerDNSConfig struct {
@@ -655,9 +697,9 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 			}
 		}
 
-		// Add peer DNS records
+		// Add peer DNS records (include IPv6 when available for dual-stack networks)
 		for _, p := range net.Peers {
-			peerList = append(peerList, DNSPeer{Name: sanitizeDNSLabel(p.Name), IP: p.Address})
+			peerList = append(peerList, DNSPeer{Name: sanitizeDNSLabel(p.Name), IP: p.Address, IPv6: p.AddressV6})
 			policy.Peers = append(policy.Peers, struct {
 				ID       string `json:"id"`
 				Name     string `json:"name"`
@@ -757,20 +799,24 @@ func (s *Service) DeleteNetwork(ctx context.Context, networkID string) error {
 		return fmt.Errorf("failed to delete network: %w", err)
 	}
 
-	// Release the CIDR from IPAM to allow reuse
-	if err := s.repo.DeletePrefix(ctx, net.CIDR); err != nil {
-		// Log the error but don't fail the network deletion
-		// The network is already deleted, so we don't want to rollback
-		log.Warn().
-			Err(err).
-			Str("network_id", networkID).
-			Str("cidr", net.CIDR).
-			Msg("Failed to release CIDR from IPAM after network deletion")
-	} else {
-		log.Info().
-			Str("network_id", networkID).
-			Str("cidr", net.CIDR).
-			Msg("Successfully released CIDR from IPAM after network deletion")
+	// Release CIDR(s) from IPAM to allow reuse.
+	if net.CIDR != "" {
+		if err := s.repo.DeletePrefix(ctx, net.CIDR); err != nil {
+			log.Warn().Err(err).Str("network_id", networkID).Str("cidr", net.CIDR).
+				Msg("Failed to release IPv4 CIDR from IPAM after network deletion")
+		} else {
+			log.Info().Str("network_id", networkID).Str("cidr", net.CIDR).
+				Msg("Successfully released IPv4 CIDR from IPAM after network deletion")
+		}
+	}
+	if net.CIDRv6 != "" {
+		if err := s.repo.DeletePrefix(ctx, net.CIDRv6); err != nil {
+			log.Warn().Err(err).Str("network_id", networkID).Str("cidr_v6", net.CIDRv6).
+				Msg("Failed to release IPv6 CIDR from IPAM after network deletion")
+		} else {
+			log.Info().Str("network_id", networkID).Str("cidr_v6", net.CIDRv6).
+				Msg("Successfully released IPv6 CIDR from IPAM after network deletion")
+		}
 	}
 
 	return nil
@@ -1081,4 +1127,20 @@ func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, netw
 	return nil
 }
 
-
+// validateNetworkCIDR verifies that cidr is syntactically valid AND that the IP
+// address is the actual network address for the given prefix (host bits are zero).
+// For example, "10.255.238.0/22" is rejected because the network address is
+// "10.255.236.0/22" — accepting host addresses silently causes IPAM prefix
+// mismatches and confusing peer IP allocations.
+func validateNetworkCIDR(cidr string) error {
+	ip, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return fmt.Errorf("%q is not a valid CIDR: %w", cidr, err)
+	}
+	// net.ParseCIDR returns the masked (network) address in ipnet.IP.
+	// If the supplied IP differs from the masked address, host bits were set.
+	if !ip.Equal(ipnet.IP) {
+		return fmt.Errorf("%q has host bits set — did you mean %s?", cidr, ipnet.String())
+	}
+	return nil
+}

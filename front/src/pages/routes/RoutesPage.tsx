@@ -96,8 +96,9 @@ export default function RoutesPage() {
   const handleDelete = async (route: Route, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm(`Are you sure you want to delete route "${route.name}"?`)) {
+      const networkIdToUse = route.network_id || selectedNetworkId;
       try {
-        await api.deleteRoute(selectedNetworkId, route.id);
+        await api.deleteRoute(networkIdToUse, route.id);
         loadRoutes();
       } catch (error) {
         console.error('Failed to delete route:', error);
@@ -178,7 +179,6 @@ export default function RoutesPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Destination CIDR</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Jump Peer</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Domain Suffix</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Created</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
@@ -210,9 +210,6 @@ export default function RoutesPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                       {route.domain_suffix || 'internal'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                      {new Date(route.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex items-center gap-2">

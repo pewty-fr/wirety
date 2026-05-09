@@ -16,7 +16,12 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 	sb.WriteString("[Interface]\n")
 	fmt.Fprintf(&sb, "# Name: %s\n", peer.Name)
 	fmt.Fprintf(&sb, "PrivateKey = %s\n", peer.PrivateKey)
-	fmt.Fprintf(&sb, "Address = %s\n", peer.Address)
+	// Address — comma-separated dual-stack when the peer has both IPv4 and IPv6.
+	if peer.AddressV6 != "" {
+		fmt.Fprintf(&sb, "Address = %s, %s\n", peer.Address, peer.AddressV6)
+	} else {
+		fmt.Fprintf(&sb, "Address = %s\n", peer.Address)
+	}
 	if peer.ListenPort > 0 {
 		fmt.Fprintf(&sb, "ListenPort = %d\n", peer.ListenPort)
 	}
@@ -75,14 +80,43 @@ func GenerateConfig(peer *domain.Peer, allowedPeers []*domain.Peer, network *dom
 	return sb.String()
 }
 
+// hostPrefix returns an IP address with a /32 (IPv4) or /128 (IPv6) host-route
+// prefix so that WireGuard AllowedIPs routes traffic to exactly that address.
+func hostPrefix(ip string) string {
+	if ip == "" {
+		return ""
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ip + "/32" // fall back gracefully
+	}
+	if parsed.To4() != nil {
+		return ip + "/32"
+	}
+	return ip + "/128"
+}
+
+// peerHostPrefixes returns the host-route AllowedIPs entries for all addresses
+// (IPv4 and/or IPv6) of the given peer.
+func peerHostPrefixes(p *domain.Peer) []string {
+	var out []string
+	if p.Address != "" {
+		out = append(out, hostPrefix(p.Address))
+	}
+	if p.AddressV6 != "" {
+		out = append(out, hostPrefix(p.AddressV6))
+	}
+	return out
+}
+
 // determineAllowedIPs determines the AllowedIPs for a peer connection
 // Implements policy-based routing with group routes
 func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network, routes []*domain.Route) []string {
 	var allowedIPs []string
 
-	// For jump peers: include network CIDR and all route CIDRs
+	// For jump peers: host routes to the other peer + all route CIDRs
 	if peer.IsJump {
-		allowedIPs = []string{fmt.Sprintf("%s/32", allowedPeer.Address)}
+		allowedIPs = peerHostPrefixes(allowedPeer)
 
 		// Include all route destination CIDRs for external network access
 		for _, route := range routes {
@@ -97,7 +131,7 @@ func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network
 
 	// For regular peers connecting to a jump peer
 	if allowedPeer.IsJump {
-		allowedIPs = []string{fmt.Sprintf("%s/32", allowedPeer.Address)}
+		allowedIPs = peerHostPrefixes(allowedPeer)
 
 		// Include route CIDRs that use this jump peer as gateway
 		for _, route := range routes {
@@ -109,8 +143,8 @@ func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network
 		// Include any additional allowed IPs configured for the jump peer
 		allowedIPs = append(allowedIPs, allowedPeer.AdditionalAllowedIPs...)
 	} else {
-		// Regular peer to regular peer: just the peer's address
-		allowedIPs = []string{allowedPeer.Address + "/32"}
+		// Regular peer to regular peer: host routes to the peer's address(es)
+		allowedIPs = peerHostPrefixes(allowedPeer)
 	}
 
 	return allowedIPs

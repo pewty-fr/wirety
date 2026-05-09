@@ -2,6 +2,7 @@ export interface Network {
   id: string;
   name: string;
   cidr: string;
+  cidr_v6?: string;      // IPv6 CIDR (optional, dual-stack)
   dns: string[];
   domain_suffix?: string;
   default_group_ids?: string[];
@@ -20,6 +21,7 @@ export interface Peer {
   name: string;
   public_key: string;
   address: string;
+  address_v6?: string;   // IPv6 WireGuard address (optional, dual-stack)
   endpoint: string;
   listen_port?: number;
   token?: string;

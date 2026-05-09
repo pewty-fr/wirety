@@ -84,10 +84,11 @@ func (a *Adapter) SetServerURL(serverURL string) {
 
 // serverEndpoint holds the resolved IPs, TCP port, and hostname for the Wirety server.
 type serverEndpoint struct {
-	ips      []string
-	port     string // TCP port string, e.g. "443"
-	hostname string // original hostname (used for SNI / Host-header filtering)
-	https    bool   // true when the scheme is https
+	ips      []string // IPv4 addresses
+	ipsv6    []string // IPv6 addresses
+	port     string   // TCP port string, e.g. "443"
+	hostname string   // original hostname (used for SNI / Host-header filtering)
+	https    bool     // true when the scheme is https
 }
 
 // resolveServerEndpoint resolves the Wirety server URL to a list of IP addresses,
@@ -139,9 +140,8 @@ func (a *Adapter) resolveServerEndpoint() serverEndpoint {
 		return ep
 	}
 
-	// iptables only handles IPv4. Filter out IPv6 addresses; they would
-	// cause iptables to fail with "host/network not found".
-	// ip6tables rules for IPv6 are not yet implemented.
+	// Separate IPv4 and IPv6 addresses — each is applied to the corresponding
+	// iptables / ip6tables chain respectively.
 	var ipv4s, ipv6s []string
 	for _, addr := range addrs {
 		ip := net.ParseIP(addr)
@@ -154,19 +154,14 @@ func (a *Adapter) resolveServerEndpoint() serverEndpoint {
 			ipv6s = append(ipv6s, addr)
 		}
 	}
-	if len(ipv6s) > 0 {
-		log.Debug().
-			Strs("ipv6", ipv6s).
-			Str("host", host).
-			Msg("skipping IPv6 server addresses for iptables rules (ip6tables not yet implemented)")
-	}
 	if len(ipv4s) == 0 && len(ipv6s) > 0 {
 		log.Warn().
 			Str("host", host).
 			Strs("ipv6_only", ipv6s).
-			Msg("wirety server hostname resolved to IPv6 addresses only — no iptables ACCEPT rule added; unauthenticated peers will not be able to reach the server")
+			Msg("wirety server hostname resolved to IPv6 addresses only — no iptables ACCEPT rule added; unauthenticated peers may not reach the server via IPv4")
 	}
 	ep.ips = ipv4s
+	ep.ipsv6 = ipv6s
 	return ep
 }
 
@@ -235,6 +230,44 @@ func (a *Adapter) fallbackNATInterfaces() []string {
 	return found
 }
 
+// detectNATInterfacesIPv6 auto-detects egress interfaces that have an IPv6
+// address (for ip6tables MASQUERADE rules).  Uses `ip -6 route show` to find
+// interfaces with a default IPv6 route, then filters those that actually carry
+// a global-scope IPv6 address (not just link-local).
+func (a *Adapter) detectNATInterfacesIPv6() []string {
+	cmd := exec.Command("ip", "-6", "route", "show") // #nosec G204
+	output, err := cmd.Output()
+	if err != nil {
+		log.Debug().Err(err).Msg("failed to read IPv6 routing table — IPv6 MASQUERADE skipped")
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var ifaces []string
+
+	for _, line := range strings.Split(string(output), "\n") {
+		parts := strings.Fields(line)
+		for i, part := range parts {
+			if part == "dev" && i+1 < len(parts) {
+				iface := parts[i+1]
+				if iface == "lo" || iface == a.iface || seen[iface] {
+					continue
+				}
+				// Only include interfaces that have a global-scope IPv6 address
+				// (link-local only interfaces don't need MASQUERADE).
+				addrOut, addrErr := exec.Command("ip", "addr", "show", iface).Output() // #nosec G204
+				if addrErr == nil && strings.Contains(string(addrOut), "inet6 ") &&
+					!strings.Contains(string(addrOut), "inet6 fe80") {
+					seen[iface] = true
+					ifaces = append(ifaces, iface)
+				}
+			}
+		}
+	}
+
+	return ifaces
+}
+
 // getNATInterfaces returns the NAT interfaces to use: the explicit override list
 // if configured, otherwise all auto-detected egress interfaces.
 func (a *Adapter) getNATInterfaces() []string {
@@ -270,15 +303,15 @@ func (a *Adapter) run(args ...string) error {
 	return nil
 }
 
-// runIPv6 runs an ip6tables command
-// func (a *Adapter) runIPv6(args ...string) error {
-// 	cmd := exec.Command("ip6tables", args...) // #nosec G204
-// 	out, err := cmd.CombinedOutput()
-// 	if err != nil {
-// 		return fmt.Errorf("ip6tables %v failed: %v output=%s", args, err, string(out))
-// 	}
-// 	return nil
-// }
+// runIPv6 runs an ip6tables command (mirrors run for IPv6).
+func (a *Adapter) runIPv6(args ...string) error {
+	cmd := exec.Command("ip6tables", args...) // #nosec G204
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ip6tables %v failed: %v output=%s", args, err, string(out))
+	}
+	return nil
+}
 
 // runIfNotExists runs an iptables command only if the exact rule doesn't already
 // exist. It uses `iptables -C` (the built-in check command) which returns exit
@@ -291,6 +324,15 @@ func (a *Adapter) runIfNotExists(args ...string) error {
 		return nil // exact rule already present
 	}
 	return a.run(args...)
+}
+
+// runIPv6IfNotExists is the ip6tables equivalent of runIfNotExists.
+func (a *Adapter) runIPv6IfNotExists(args ...string) error {
+	checkArgs := toCheckArgs(args)
+	if exec.Command("ip6tables", checkArgs...).Run() == nil { // #nosec G204
+		return nil // exact rule already present
+	}
+	return a.runIPv6(args...)
 }
 
 // toCheckArgs converts -A/-I arguments to their -C (check) equivalent.
@@ -381,6 +423,23 @@ func (a *Adapter) applyIPTablesRule(chain, rule string) error {
 	return nil
 }
 
+// splitByFamily partitions a slice of IP addresses into IPv4 and IPv6 slices.
+// Addresses that don't parse are silently dropped.
+func splitByFamily(ips []string) (ipv4s, ipv6s []string) {
+	for _, s := range ips {
+		ip := net.ParseIP(s)
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
+			ipv4s = append(ipv4s, s)
+		} else {
+			ipv6s = append(ipv6s, s)
+		}
+	}
+	return
+}
+
 // Sync applies forwarding/NAT plus policy-based iptables rules.
 // This method is called periodically when policy updates are received.
 // To avoid dropping active connections, we check if rules exist before adding them.
@@ -398,9 +457,8 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 		log.Warn().Err(err).Msg("failed enabling ipv6 forwarding")
 	}
 
-	// TODO: Apply IPv6 firewall rules (ip6tables) based on policies
-	// For now, IPv6 traffic is allowed but not filtered by policies
-	// This should be implemented as part of full dual-stack support
+	// Separate IPv4 and IPv6 whitelisted addresses.
+	whitelistIPv4, whitelistIPv6 := splitByFamily(whitelistedIPs)
 
 	// ── Two-chain design ────────────────────────────────────────────────────
 	//
@@ -479,7 +537,7 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	}
 
 	// Authenticated peers jump to the policy chain; all others fall through.
-	for _, ip := range whitelistedIPs {
+	for _, ip := range whitelistIPv4 {
 		if err := a.run("-A", chain, "-i", a.iface, "-s", ip, "-j", policyChain); err != nil {
 			log.Warn().Err(err).Str("ip", ip).Msg("failed to add whitelist jump rule")
 		}
@@ -565,14 +623,132 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	// Example: ens2 for internet, ens6 for a private VLAN — both need MASQUERADE.
 	natIfaces := a.getNATInterfaces()
 	if len(natIfaces) == 0 {
-		log.Info().Msg("no NAT interfaces configured — peers will not have routed access")
+		log.Info().Msg("no NAT interfaces configured — peers will not have routed IPv4 access")
 	}
 	for _, natIface := range natIfaces {
 		if err := a.runIfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
-			log.Warn().Err(err).Str("interface", natIface).Msg("failed to add MASQUERADE rule")
+			log.Warn().Err(err).Str("interface", natIface).Msg("failed to add IPv4 MASQUERADE rule")
 		} else {
-			log.Debug().Str("interface", natIface).Msg("MASQUERADE rule configured")
+			log.Debug().Str("interface", natIface).Msg("IPv4 MASQUERADE rule configured")
 		}
 	}
+
+	// ── ip6tables: dual-stack FORWARD + NAT ──────────────────────────────────
+	//
+	// Mirror the iptables two-chain design for IPv6.  The semantics are identical:
+	//   WIRETY6_JUMP  — authentication gate
+	//   WIRETY6_POLICY — per-destination rules for authenticated peers
+	//
+	// Private IPv6 ranges:
+	//   fc00::/7  — ULA (Unique Local Addresses, RFC 4193) — analogous to RFC 1918
+	//   fe80::/10 — link-local — not routable, but blocked for completeness
+	a.syncIPv6(p, whitelistIPv6, endpoint)
+
 	return nil
+}
+
+// syncIPv6 applies ip6tables rules mirroring the iptables WIRETY_JUMP / WIRETY_POLICY
+// two-chain design for IPv6 traffic on the WireGuard interface.
+func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint serverEndpoint) {
+	chain6 := "WIRETY6_JUMP"
+	policy6 := "WIRETY6_POLICY"
+
+	_ = a.runIPv6("-N", chain6)
+	_ = a.runIPv6("-F", chain6)
+	_ = a.runIPv6("-N", policy6)
+	_ = a.runIPv6("-F", policy6)
+
+	// Rule 0: ESTABLISHED/RELATED → ACCEPT
+	_ = a.runIPv6("-A", chain6, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
+
+	// Rule 1: Allow peers to reach the Wirety server via its IPv6 addresses.
+	for _, ip := range endpoint.ipsv6 {
+		base := []string{"-A", chain6, "-i", a.iface, "-d", ip, "-p", "tcp", "--dport", endpoint.port}
+		rule := append(append([]string{}, base...), "-j", "ACCEPT")
+		if err := a.runIPv6(rule...); err != nil {
+			log.Warn().Err(err).Str("ip", ip).Str("port", endpoint.port).Msg("failed to add IPv6 Wirety server ACCEPT rule")
+		}
+	}
+
+	// Rule 2: Authenticated peer IPv6 addresses jump to the policy chain.
+	for _, ip := range whitelistIPv6 {
+		if err := a.runIPv6("-A", chain6, "-i", a.iface, "-s", ip, "-j", policy6); err != nil {
+			log.Warn().Err(err).Str("ip", ip).Msg("failed to add IPv6 whitelist jump rule")
+		}
+	}
+
+	// Rule 3: Block HTTPS to ULA and link-local ranges (private IPv6 resources).
+	// These are the IPv6 equivalents of RFC 1918 — unauthenticated peers must not
+	// reach private IPv6 services before completing captive portal authentication.
+	for _, privateNet6 := range []string{"fc00::/7", "fe80::/10"} {
+		_ = a.runIPv6("-A", chain6, "-i", a.iface, "-d", privateNet6, "-p", "tcp", "--dport", "443", "-j", "REJECT", "--reject-with", "tcp-reset")
+	}
+
+	// Rule 4: Allow HTTPS to external (non-ULA) IPv6 addresses so that
+	// unauthenticated peers can reach OIDC providers (e.g. accounts.google.com)
+	// to complete captive portal authentication.
+	_ = a.runIPv6("-A", chain6, "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "ACCEPT")
+
+	// Rule 5: Drop all remaining IPv6 traffic from unauthenticated peers.
+	_ = a.runIPv6("-A", chain6, "-i", a.iface, "-j", "DROP")
+
+	// Policy chain: per-destination rules (or catch-all ACCEPT for backward compat).
+	if len(p.IPTablesRules) > 0 {
+		for i, rule := range p.IPTablesRules {
+			// Policy rules are iptables-format; apply the same rules to ip6tables.
+			// Rules with IPv4-specific CIDRs will be rejected by ip6tables and
+			// the error is silently ignored — only IPv6-compatible rules take effect.
+			tokens := strings.Fields(rule)
+			args := make([]string, 0, len(tokens))
+			startIdx := 0
+			if len(tokens) > 0 && tokens[0] == "iptables" {
+				startIdx = 1
+			}
+			foundChain := false
+			for i, t := range tokens[startIdx:] {
+				if t == "-A" || t == "-I" {
+					args = append(args, "-A")
+					if startIdx+i+1 < len(tokens) {
+						foundChain = true
+					}
+					args = append(args, policy6)
+				} else {
+					args = append(args, t)
+				}
+			}
+			if !foundChain {
+				args = append([]string{"-A", policy6}, args...)
+			}
+			_ = a.runIPv6(args...) // best-effort; IPv4-specific rules silently fail
+			if err := a.runIPv6(args...); err != nil {
+				log.Debug().Err(err).Int("rule_index", i).Str("rule", rule).Msg("ip6tables policy rule skipped (may be IPv4-specific)")
+			}
+		}
+	} else {
+		_ = a.runIPv6("-A", policy6, "-j", "ACCEPT")
+	}
+
+	// Attach the IPv6 chain to FORWARD (idempotent).
+	_ = a.runIPv6IfNotExists("-I", "FORWARD", "1", "-j", chain6)
+
+	// Allow jump-peer services on the WireGuard interface INPUT chain (IPv6).
+	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
+	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "ACCEPT")
+	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "udp", "--dport", "53", "-j", "ACCEPT")
+	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "53", "-j", "ACCEPT")
+
+	// IPv6 MASQUERADE on egress interfaces with global IPv6 addresses.
+	natIfacesIPv6 := a.detectNATInterfacesIPv6()
+	for _, natIface := range natIfacesIPv6 {
+		if err := a.runIPv6IfNotExists("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
+			log.Warn().Err(err).Str("interface", natIface).Msg("failed to add IPv6 MASQUERADE rule")
+		} else {
+			log.Debug().Str("interface", natIface).Msg("IPv6 MASQUERADE rule configured")
+		}
+	}
+
+	log.Debug().
+		Int("whitelist_ipv6", len(whitelistIPv6)).
+		Int("server_ipv6", len(endpoint.ipsv6)).
+		Msg("ip6tables rules applied")
 }

@@ -11,7 +11,8 @@ type Peer struct {
 	Name                 string    `json:"name"`
 	PublicKey            string    `json:"public_key"`
 	PrivateKey           string    `json:"-"`                                // Never expose private key in API responses (only used for config generation)
-	Address              string    `json:"address"`                          // IP address in the network CIDR
+	Address              string    `json:"address"`                          // IPv4 address in the network CIDR
+	AddressV6            string    `json:"address_v6,omitempty"`             // IPv6 address in the network CIDRv6 (optional)
 	Endpoint             string    `json:"endpoint,omitempty"`               // External endpoint (IP:port)
 	ListenPort           int       `json:"listen_port,omitempty"`            // WireGuard listen port (mainly for jump peers)
 	AdditionalAllowedIPs []string  `json:"additional_allowed_ips,omitempty"` // Additional IPs this peer can route to
