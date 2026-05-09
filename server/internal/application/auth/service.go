@@ -120,6 +120,18 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*auth.
 		AuthorizedParty:   getStringClaim(claims, "azp"),
 	}
 
+	// Override email from custom claim if configured.
+	if s.config.EmailClaim != "" {
+		if custom := getStringClaim(claims, s.config.EmailClaim); custom != "" {
+			oidcClaims.Email = custom
+		}
+	}
+
+	// Extract group memberships if a groups claim is configured.
+	if s.config.GroupsClaim != "" {
+		oidcClaims.Groups = ExtractGroupsClaim(map[string]interface{}(claims), s.config.GroupsClaim)
+	}
+
 	// Verify issuer
 	if oidcClaims.Issuer != s.config.IssuerURL {
 		return nil, fmt.Errorf("invalid issuer: expected %s, got %s", s.config.IssuerURL, oidcClaims.Issuer)
@@ -148,20 +160,42 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*auth.
 	return oidcClaims, nil
 }
 
-// GetOrCreateUser gets an existing user or creates a new one based on OIDC claims
+// GetOrCreateUser gets an existing user or creates a new one based on OIDC claims.
+// When group-based access control is configured (AUTH_ADMIN_GROUP / AUTH_USER_GROUP),
+// the user's role is always derived from live group claims — no manual role promotion
+// happens and the first-user-is-admin shortcut is skipped.
 func (s *Service) GetOrCreateUser(ctx context.Context, claims *auth.OIDCClaims) (*auth.User, error) {
+	adminGroups := ParseGroups(s.config.AdminGroup)
+	userGroups := ParseGroups(s.config.UserGroup)
+	groupsConfigured := len(adminGroups) > 0 || len(userGroups) > 0
+
+	// When group-based access control is active, gate access before anything else.
+	var groupRole auth.Role
+	if groupsConfigured {
+		role, ok := DetermineRoleFromGroups(claims.Groups, adminGroups, userGroups)
+		if !ok {
+			return nil, ErrNotInAuthorizedGroup
+		}
+		groupRole = role
+	}
+
 	// Try to get existing user
 	user, err := s.userRepo.GetUser(claims.Subject)
 	if err == nil {
-		// Update last login
+		// Always sync mutable identity fields from the live token.
+		user.Email = claims.Email
+		user.Name = claims.Name
 		user.LastLoginAt = time.Now()
+		user.UpdatedAt = time.Now()
+
+		// When groups are configured, role is always derived from current claims.
+		if groupsConfigured {
+			user.Role = groupRole
+		}
+
 		_ = s.userRepo.UpdateUser(user)
 		return user, nil
 	}
-
-	// Check if this is the first user
-	firstUser, err := s.userRepo.GetFirstUser()
-	isFirstUser := err != nil || firstUser == nil
 
 	// Create new user
 	user = &auth.User{
@@ -175,15 +209,23 @@ func (s *Service) GetOrCreateUser(ctx context.Context, claims *auth.OIDCClaims) 
 		LastLoginAt:        time.Now(),
 	}
 
-	// First user becomes administrator
-	if isFirstUser {
-		user.Role = auth.RoleAdministrator
+	if groupsConfigured {
+		// Role is fully governed by group membership — skip first-user-is-admin.
+		user.Role = groupRole
 	} else {
-		// Apply default permissions for new users
-		defaultPerms, err := s.userRepo.GetDefaultPermissions()
-		if err == nil && defaultPerms != nil {
-			user.Role = defaultPerms.DefaultRole
-			user.AuthorizedNetworks = defaultPerms.DefaultAuthorizedNetworks
+		// Check if this is the first user (no group config path only).
+		firstUser, err := s.userRepo.GetFirstUser()
+		isFirstUser := err != nil || firstUser == nil
+
+		if isFirstUser {
+			user.Role = auth.RoleAdministrator
+		} else {
+			// Apply default permissions for new users.
+			defaultPerms, err := s.userRepo.GetDefaultPermissions()
+			if err == nil && defaultPerms != nil {
+				user.Role = defaultPerms.DefaultRole
+				user.AuthorizedNetworks = defaultPerms.DefaultAuthorizedNetworks
+			}
 		}
 	}
 
@@ -309,7 +351,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	// returns only an opaque access_token which cannot be validated as a JWT,
 	// causing ValidateToken to fail, the session to be deleted, and the user to
 	// be forced to log in again — creating a new session on every expiry.
-	data.Set("scope", "openid profile email offline_access")
+	data.Set("scope", "openid profile email")
 
 	// Make request to token endpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, discovery.TokenEndpoint, strings.NewReader(data.Encode()))

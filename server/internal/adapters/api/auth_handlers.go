@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +15,9 @@ import (
 	"time"
 
 	"wirety/internal/audit"
+	appauth "wirety/internal/application/auth"
 	"wirety/internal/domain/auth"
+	"wirety/internal/infrastructure/github"
 	"wirety/internal/infrastructure/oidc"
 
 	"github.com/gin-gonic/gin"
@@ -49,26 +52,48 @@ func (f *flexInt) UnmarshalJSON(b []byte) error {
 
 // AuthConfigResponse contains public authentication configuration
 type AuthConfigResponse struct {
-	Enabled    bool   `json:"enabled"`
-	IssuerURL  string `json:"issuer_url"`
-	ClientID   string `json:"client_id"`
-	SimpleAuth bool   `json:"simple_auth"` // true when AUTH_ENABLED=false (admin/password login)
+	Enabled               bool   `json:"enabled"`
+	IssuerURL             string `json:"issuer_url"`
+	ClientID              string `json:"client_id"`
+	SimpleAuth            bool   `json:"simple_auth"`             // true when AUTH_ENABLED=false (admin/password login)
+	AuthorizationEndpoint string `json:"authorization_endpoint"` // populated from OIDC discovery (or hardcoded for GitHub)
+	EndSessionEndpoint    string `json:"end_session_endpoint"`    // populated from OIDC discovery; empty if provider does not support RP-initiated logout
+	Scope                 string `json:"scope"`                  // OAuth scopes the frontend must request; provider-specific
 }
 
 // GetAuthConfig godoc
 // @Summary      Get authentication configuration
-// @Description  Get public authentication configuration (no auth required)
+// @Description  Get public authentication configuration (no auth required). When OIDC is enabled, authorization_endpoint and end_session_endpoint are resolved server-side to avoid CORS issues with the IdP discovery document.
 // @Tags         auth
 // @Produce      json
 // @Success      200 {object} AuthConfigResponse
 // @Router       /auth/config [get]
 func (h *Handler) GetAuthConfig(c *gin.Context) {
-	c.JSON(http.StatusOK, AuthConfigResponse{
+	resp := AuthConfigResponse{
 		Enabled:    h.authConfig.Enabled,
 		IssuerURL:  h.authConfig.IssuerURL,
 		ClientID:   h.authConfig.ClientID,
 		SimpleAuth: !h.authConfig.Enabled,
-	})
+		Scope:      "openid profile email",
+	}
+
+	if h.authConfig.Enabled && h.authConfig.IssuerURL != "" {
+		if github.IsGitHub(h.authConfig.IssuerURL) {
+			resp.AuthorizationEndpoint = github.AuthorizationEndpoint
+			scope := github.Scope
+			if h.authConfig.AdminGroup != "" || h.authConfig.UserGroup != "" {
+				scope += " " + github.ScopeOrg
+			}
+			resp.Scope = scope
+		} else if discovery, err := oidc.Discover(c.Request.Context(), h.authConfig.IssuerURL); err == nil {
+			resp.AuthorizationEndpoint = discovery.AuthorizationEndpoint
+			resp.EndSessionEndpoint = discovery.EndSessionEndpoint
+		} else {
+			log.Warn().Err(err).Msg("GetAuthConfig: could not fetch OIDC discovery document")
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // TokenRequest contains the authorization code exchange request
@@ -106,6 +131,12 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
+	// GitHub OAuth: bypass the standard OIDC flow (no JWT, no discovery document).
+	if github.IsGitHub(h.authConfig.IssuerURL) {
+		h.exchangeGitHubToken(c, req)
+		return
+	}
+
 	// Discover OIDC endpoints via shared adapter
 	discovery, err := oidc.Discover(c.Request.Context(), h.authConfig.IssuerURL)
 	if err != nil {
@@ -113,7 +144,7 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
-	// Prepare token exchange request with offline_access scope to get refresh token
+	// Prepare token exchange request
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", req.Code)
@@ -155,8 +186,10 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	}
 
 	if oidcTokenResp.RefreshToken == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "No refresh token received. Ensure offline_access scope is requested."})
-		return
+		// Some providers (e.g. Slack) do not issue refresh tokens.
+		// Wirety will keep the session alive until the access token expires,
+		// at which point the user will be prompted to log in again.
+		log.Debug().Msg("ExchangeToken: no refresh token received; session will not auto-renew")
 	}
 
 	// Prefer id_token for validation: it is always a standard JWT per the OIDC spec.
@@ -229,6 +262,16 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	// Get or create user
 	user, err := h.authService.GetOrCreateUser(c.Request.Context(), claims)
 	if err != nil {
+		if errors.Is(err, appauth.ErrNotInAuthorizedGroup) {
+			audit.Server(claims.Subject, claims.Email, c.ClientIP()).
+				Str("action", "auth.rejected").
+				Str("reason", "not_in_authorized_group").
+				Strs("groups", claims.Groups).
+				Str("issuer", claims.Issuer).
+				Msg("audit")
+			c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get user: %v", err)})
 		return
 	}
@@ -367,6 +410,100 @@ func (h *Handler) SimpleLogin(c *gin.Context) {
 		Str("action", "auth.login").
 		Str("username", req.Username).
 		Msg("audit")
+
+	h.setSessionCookie(c, session.SessionHash, 30*24*3600)
+	c.JSON(http.StatusOK, TokenResponse{
+		SessionHash: session.SessionHash,
+		ExpiresIn:   30 * 24 * 3600,
+	})
+}
+
+// exchangeGitHubToken handles the /auth/token exchange for GitHub OAuth.
+// It replaces the standard OIDC flow because GitHub does not issue JWT ID tokens.
+func (h *Handler) exchangeGitHubToken(c *gin.Context, req TokenRequest) {
+	// 1. Exchange authorization code for a GitHub access token.
+	accessToken, err := github.ExchangeCode(c.Request.Context(), h.authConfig.ClientID, h.authConfig.ClientSecret, req.Code, req.RedirectURI)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("GitHub token exchange failed: %v", err)})
+		return
+	}
+
+	// 2. Fetch user profile.
+	ghUser, err := github.FetchUser(c.Request.Context(), accessToken)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch GitHub user: %v", err)})
+		return
+	}
+
+	// 3. Resolve email — GitHub users may hide their email; fall back to /user/emails.
+	email := ghUser.Email
+	if email == "" {
+		log.Debug().Int("github_id", ghUser.ID).Msg("email missing from GitHub user profile, fetching /user/emails")
+		email, err = github.FetchPrimaryEmail(c.Request.Context(), accessToken)
+		if err != nil {
+			log.Warn().Err(err).Msg("failed to fetch GitHub user emails")
+		}
+	}
+	if email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Your GitHub account does not have a verified email address. Please add and verify an email in your GitHub settings."})
+		return
+	}
+
+	// 4. Resolve display name — fall back to login handle if name is not set.
+	name := ghUser.Name
+	if name == "" {
+		name = ghUser.Login
+	}
+
+	// 5. Resolve group memberships (only when group access control is configured).
+	//    Requires the read:org scope which is added to the OAuth consent screen when
+	//    AUTH_ADMIN_GROUP or AUTH_USER_GROUP are set.
+	var ghGroups []string
+	if h.authConfig.AdminGroup != "" || h.authConfig.UserGroup != "" {
+		groups, groupErr := github.FetchUserGroups(c.Request.Context(), accessToken)
+		if groupErr != nil {
+			log.Warn().Err(groupErr).Msg("exchangeGitHubToken: failed to fetch GitHub user groups")
+		} else {
+			ghGroups = groups
+		}
+	}
+
+	// 6. Build OIDCClaims so we can reuse the existing GetOrCreateUser logic.
+	claims := &auth.OIDCClaims{
+		Subject:       fmt.Sprintf("github:%d", ghUser.ID),
+		Email:         email,
+		EmailVerified: true,
+		Name:          name,
+		Issuer:        github.IssuerURL,
+		Groups:        ghGroups,
+	}
+
+	// 7. Get or create the Wirety user.
+	user, err := h.authService.GetOrCreateUser(c.Request.Context(), claims)
+	if err != nil {
+		if errors.Is(err, appauth.ErrNotInAuthorizedGroup) {
+			audit.Server(claims.Subject, claims.Email, c.ClientIP()).
+				Str("action", "auth.rejected").
+				Str("reason", "not_in_authorized_group").
+				Strs("groups", claims.Groups).
+				Str("issuer", claims.Issuer).
+				Msg("audit")
+			c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get user: %v", err)})
+		return
+	}
+
+	// 8. Create server-side session.
+	// Store the GitHub token with a prefix so the middleware can skip JWT validation.
+	// expiresIn=0 → AccessTokenExpiresAt is set to 100 years from now (GitHub tokens
+	// do not expire unless explicitly revoked).
+	session, err := h.createSession(user.ID, github.TokenPrefix+accessToken, "", 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create session: %v", err)})
+		return
+	}
 
 	h.setSessionCookie(c, session.SessionHash, 30*24*3600)
 	c.JSON(http.StatusOK, TokenResponse{

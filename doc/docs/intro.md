@@ -35,7 +35,7 @@ helm install wirety oci://rg.fr-par.scw.cloud/wirety/chart/wirety \
   --set ingress.hosts[0].paths[0].path=/ \
   --set ingress.hosts[0].paths[0].pathType=Prefix
 ```
-For detailed deployment options, see the [Deployment Guide](./deployment).
+For detailed deployment options, see the [Deployment Guide](guides/deployment).
 
 ## Create a Jump Peer
 1. Log into Wirety Frontend.

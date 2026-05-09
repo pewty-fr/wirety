@@ -60,7 +60,7 @@ type Repository interface {
 	ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error
 
 	// Captive portal whitelist operations
-	AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error
+	AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error
 	RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error
 	RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error
 	GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error)

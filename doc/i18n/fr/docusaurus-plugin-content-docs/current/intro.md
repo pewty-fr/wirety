@@ -33,7 +33,7 @@ helm install wirety oci://rg.fr-par.scw.cloud/wirety/chart/wirety \
   --set ingress.host=wirety.example.com
 ```
 
-Pour des options de déploiement détaillées, consultez le [Guide de déploiement](./deployment).
+Pour des options de déploiement détaillées, consultez le [Guide de déploiement](/guides/deployment.md).
 
 ## Accès au Dashboard
 

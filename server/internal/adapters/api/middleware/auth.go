@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"wirety/internal/application/auth"
 	"wirety/internal/config"
 	domainAuth "wirety/internal/domain/auth"
+	"wirety/internal/infrastructure/github"
 
 	"github.com/gin-gonic/gin"
 )
@@ -196,8 +198,15 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 	// endpoint.  After acquiring the lock the session is re-read from the DB so
 	// that the waiting goroutines transparently pick up the fresh tokens written
 	// by the winner and skip the refresh altogether.
-	alreadyRefreshed := false
+	didRefresh := false
 	if session.IsAccessTokenExpired() {
+		// Providers without refresh tokens (e.g. Slack) cannot renew the session —
+		// expire it immediately so the user is prompted to log in again.
+		if session.RefreshToken == "" {
+			_ = userRepo.DeleteSession(sessionHash)
+			return nil, fmt.Errorf("session expired")
+		}
+
 		mu := getSessionRefreshLock(sessionHash)
 		mu.Lock()
 		// Re-read: the goroutine that won the lock may have already refreshed.
@@ -226,20 +235,38 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 				// the next request will re-read the updated tokens and succeed.
 				return nil, fmt.Errorf("failed to refresh token: %w", err)
 			}
-			alreadyRefreshed = true
+			didRefresh = true
 		}
 		mu.Unlock()
 	}
 
-	// Validate the access token
-	_, err = authService.ValidateToken(c.Request.Context(), session.AccessToken)
+	// GitHub sessions store an opaque access token — skip JWT validation entirely.
+	// Session validity (30-day RefreshTokenExpiresAt) is the only expiry mechanism.
+	if strings.HasPrefix(session.AccessToken, github.TokenPrefix) {
+		user, err := userRepo.GetUser(session.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("user not found: %w", err)
+		}
+		session.LastUsedAt = time.Now()
+		_ = userRepo.UpdateSession(session)
+		return user, nil
+	}
+
+	// Validate the access token; capture claims for role-sync on refresh.
+	claims, err := authService.ValidateToken(c.Request.Context(), session.AccessToken)
 	if err != nil {
-		if alreadyRefreshed {
+		if didRefresh {
 			// We just refreshed but the new token is already invalid — something is
 			// fundamentally wrong (e.g. clock skew, revoked key). Don't burn another
 			// refresh token; just fail.
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("token invalid after refresh: %w", err)
+		}
+
+		// No refresh token available — expire the session immediately.
+		if session.RefreshToken == "" {
+			_ = userRepo.DeleteSession(sessionHash)
+			return nil, fmt.Errorf("session expired")
 		}
 
 		// Token invalid but we haven't refreshed yet — try one refresh under lock.
@@ -251,21 +278,38 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("invalid token and refresh failed: %w", refreshErr)
 		}
+		didRefresh = true
 
-		// Validate the freshly obtained token
-		if _, err = authService.ValidateToken(c.Request.Context(), session.AccessToken); err != nil {
+		// Validate the freshly obtained token.
+		claims, err = authService.ValidateToken(c.Request.Context(), session.AccessToken)
+		if err != nil {
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("token validation failed after refresh: %w", err)
 		}
 	}
 
-	// Get user
+	// Get user from DB.
 	user, err := userRepo.GetUser(session.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("user not found: %w", err)
 	}
 
-	// Update last used timestamp
+	// When the access token was refreshed this request, re-derive the user's
+	// role from the live claims.  This keeps group-based roles in sync at the
+	// same cadence as token expiry (typically hourly).
+	if didRefresh && claims != nil {
+		if synced, syncErr := authService.GetOrCreateUser(c.Request.Context(), claims); syncErr == nil {
+			user = synced
+		} else if errors.Is(syncErr, auth.ErrNotInAuthorizedGroup) {
+			// User was removed from the required group since their last login —
+			// revoke the session immediately.
+			_ = userRepo.DeleteSession(sessionHash)
+			return nil, fmt.Errorf("not authorized")
+		}
+		// Other sync errors: proceed with the DB user (non-fatal).
+	}
+
+	// Update last used timestamp.
 	session.LastUsedAt = time.Now()
 	_ = userRepo.UpdateSession(session)
 

@@ -59,6 +59,11 @@ func main() {
 	// Configure zerolog level and format.
 	configureLogger(cfg.LogLevel, cfg.LogFormat)
 
+	// Validate auth configuration — fail fast on invalid combinations.
+	if err := cfg.Auth.Validate(); err != nil {
+		log.Fatal().Err(err).Msg("invalid auth configuration")
+	}
+
 	// Initialize audit logger
 	audit.Init(cfg.AuditLog)
 

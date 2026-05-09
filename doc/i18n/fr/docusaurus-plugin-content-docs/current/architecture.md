@@ -444,8 +444,8 @@ Les éléments suivants étaient précédemment listés comme travaux futurs et 
 
 ## Documentation liée
 
-- [Guide de déploiement](./deployment)
-- [Configuration du serveur](./server)
-- [Configuration de l'agent](./agent)
-- [Gestion des réseaux](./network)
-- [Sécurité et incidents](./incidents)
+- [Guide de déploiement](/guides/deployment.md)
+- [Configuration du serveur](/server.md)
+- [Configuration de l'agent](/agent.md)
+- [Gestion des réseaux](/network.md)
+- [Sécurité et incidents](/incidents.md)

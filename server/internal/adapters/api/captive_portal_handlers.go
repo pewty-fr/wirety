@@ -7,7 +7,8 @@ import (
 )
 
 type createCaptiveTokenRequest struct {
-	PeerIP string `json:"peer_ip" binding:"required"`
+	PeerIP         string `json:"peer_ip" binding:"required"`
+	PeerEndpointIP string `json:"peer_endpoint_ip"` // public IP at connect time (optional)
 }
 
 // CreateCaptivePortalToken creates a captive portal token for a connecting peer.
@@ -45,7 +46,7 @@ func (h *Handler) CreateCaptivePortalToken(c *gin.Context) {
 		return
 	}
 
-	cpt, err := h.service.CreateCaptivePortalToken(c.Request.Context(), networkID, peer.ID, req.PeerIP)
+	cpt, err := h.service.CreateCaptivePortalToken(c.Request.Context(), networkID, peer.ID, req.PeerIP, req.PeerEndpointIP)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create token"})
 		return

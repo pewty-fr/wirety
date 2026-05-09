@@ -1,7 +1,7 @@
 ---
 id: deployment
 title: Guide de Déploiement
-sidebar_position: 8
+sidebar_position: 6
 ---
 
 Ce guide couvre le déploiement de Wirety dans des environnements de production.
@@ -418,7 +418,9 @@ write_files:
         delaycompress
         missingok
         notifempty
+        copytruncate        # ← copy then truncate in place, no fd invalidation
         create 0640 root root
+        sharedscripts
       }
 
   # fail2ban : protéger SSH
@@ -695,6 +697,6 @@ ip route | grep wg0
 
 ## Étapes suivantes
 
-- [Configuration OIDC](./guides/oidc)
-- [Gestion des incidents](./incidents)
-- [Configuration réseau](./network)
+- [Configuration OIDC](/guides/oidc.md)
+- [Gestion des incidents](/incidents.md)
+- [Configuration réseau](/network.md)

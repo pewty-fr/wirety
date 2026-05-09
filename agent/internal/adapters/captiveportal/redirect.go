@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -98,6 +99,19 @@ type Server struct {
 	// could be stale from a previous connection (e.g. DB cleared without a push).
 	policyReceived bool
 	policyMu       sync.RWMutex
+	// lookupPeerIP resolves an internal VPN hostname to its real WireGuard IP.
+	// When set, authenticated peers are proxied directly to the real backend
+	// instead of being served the meta-refresh "Connecting…" page, which avoids
+	// the infinite-loop caused by browsers (especially Firefox) ignoring TTL=1
+	// and caching DNS for up to 60 seconds.
+	lookupPeerIP func(host string) string
+	// lookupEndpointIP resolves a peer's WireGuard private IP to its current
+	// public endpoint IP (port stripped).  When set, the token request sent to
+	// the server includes the peer's public IP so the server can store it in
+	// the whitelist entry.  The jump peer later verifies that a peer's current
+	// public IP still matches the one recorded at authentication time, so a
+	// stolen WireGuard config from a different network triggers re-authentication.
+	lookupEndpointIP func(wgIP string) string
 }
 
 // NewServer creates a captive portal HTTP server.
@@ -122,6 +136,22 @@ func NewServer(serverURL, authToken, portalURL, networkID, peerID string, httpCl
 // success responses so the OS dismisses the captive portal notification after login.
 func (s *Server) SetAuthChecker(fn func(peerIP string) bool) {
 	s.isAuthenticated = fn
+}
+
+// SetPeerIPLookup sets a function that resolves an internal VPN hostname to its
+// real WireGuard IP. When set, authenticated peers whose browser DNS cache still
+// points to the jump peer are transparently proxied to the real backend instead
+// of being shown the "Connecting…" meta-refresh page.
+func (s *Server) SetPeerIPLookup(fn func(host string) string) {
+	s.lookupPeerIP = fn
+}
+
+// SetEndpointIPLookup sets a function that returns the current public endpoint
+// IP (port stripped) for a given WireGuard private IP.  When set, the captive
+// portal token request includes the peer's public IP so the server can bind the
+// whitelist entry to a specific originating network.
+func (s *Server) SetEndpointIPLookup(fn func(wgIP string) string) {
+	s.lookupEndpointIP = fn
 }
 
 // NotifyPolicyReceived marks the server as having received at least one policy
@@ -251,26 +281,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Msg("captive portal: authenticated peer probe — returning success")
 			return
 		}
-		// The peer is authenticated but their browser still has a stale DNS entry
-		// pointing to our IP (TTL=1 s). Serve an HTML page that meta-refreshes after
-		// 1 s so that by the time the browser retries, the DNS TTL has expired and it
-		// resolves directly to the real service's IP.
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
+		// The peer is authenticated but the browser's DNS cache may still point to
+		// this jump peer (browsers like Firefox ignore TTL=1 and cache for up to 60 s).
+		//
+		// Strategy: if we know the real backend IP, proxy the request there directly
+		// so the user gets their content immediately.  The browser will eventually
+		// resolve DNS to the real IP and bypass us entirely.
+		//
+		// Fallback: if no lookup is configured or the hostname is unknown, serve the
+		// old meta-refresh page and hope the DNS cache expires before the next hit.
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
 		}
-		target := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.RequestURI)
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><head>`+
-			`<meta http-equiv="refresh" content="1; url=%s">`+
-			`<title>Connecting…</title></head>`+
-			`<body style="font-family:sans-serif;text-align:center;padding-top:4em">`+
-			`<p>Authenticated. Connecting to your destination…</p>`+
-			`<p><a href="%s">Click here if not redirected automatically.</a></p>`+
-			`</body></html>`, target, target)
-		log.Debug().Str("peer_ip", peerIP).Str("target", target).
-			Msg("captive portal: authenticated peer — serving DNS-flush refresh page")
+		if s.lookupPeerIP != nil {
+			if realIP := s.lookupPeerIP(host); realIP != "" {
+				log.Debug().Str("peer_ip", peerIP).Str("host", r.Host).Str("real_ip", realIP).
+					Msg("captive portal: authenticated peer — proxying to real backend")
+				s.proxyToBackend(w, r, realIP)
+				return
+			}
+		}
+		// Fallback: serve meta-refresh (DNS lookup unavailable or host not found).
+		log.Debug().Str("peer_ip", peerIP).Str("host", r.Host).
+			Msg("captive portal: authenticated peer — serving DNS-flush refresh page (no real IP known)")
+		serveConnectingPage(w, r)
 		return
 	}
 
@@ -301,6 +336,119 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// has authenticated and DNS has returned to the real service IP.
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, redirectTarget, http.StatusFound)
+}
+
+// hop-by-hop headers that must not be forwarded through a proxy.
+var hopByHopHeaders = map[string]struct{}{
+	"connection": {}, "keep-alive": {}, "proxy-authenticate": {},
+	"proxy-authorization": {}, "te": {}, "trailers": {},
+	"transfer-encoding": {}, "upgrade": {},
+}
+
+// proxyToBackend forwards the request transparently to realIP, following any
+// same-host redirects (e.g. HTTP→HTTPS) internally so the browser never sees
+// an intermediate redirect that would loop back through the captive portal.
+//
+// Problem without this: the real backend often redirects HTTP→HTTPS.
+// httputil.ReverseProxy forwards that 301 to the browser. The browser follows
+// it back to the jump peer (DNS still cached), gets another 301, detects a loop.
+//
+// Solution: use a custom http.Client whose CheckRedirect rewrites same-host
+// redirect URLs to use realIP directly.  The client follows the full redirect
+// chain and returns the final content to the browser in one shot.
+func (s *Server) proxyToBackend(w http.ResponseWriter, r *http.Request, realIP string) {
+	originalHost := r.Host
+	originalHostname := originalHost
+	if h, _, err := net.SplitHostPort(originalHost); err == nil {
+		originalHostname = h
+	}
+
+	// Allow HTTPS connections to the real backend even when its TLS cert is
+	// issued for the VPN hostname rather than the raw WireGuard IP.
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 — internal VPN
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return http.ErrUseLastResponse
+			}
+			// Rewrite same-host redirects (e.g. http://vpn-host/ → https://vpn-host/)
+			// to always target realIP so they never loop back through the captive portal.
+			if req.URL.Hostname() == originalHostname {
+				port := req.URL.Port()
+				if port != "" {
+					req.URL.Host = net.JoinHostPort(realIP, port)
+				} else {
+					req.URL.Host = realIP
+				}
+				req.Host = originalHost // preserve vhost routing on the real backend
+			}
+			return nil
+		},
+	}
+
+	// Send the initial request to the real backend over HTTP (or HTTPS when the
+	// incoming request was already HTTPS).
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	targetURL := fmt.Sprintf("%s://%s%s", scheme, realIP, r.RequestURI)
+
+	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
+	if err != nil {
+		log.Debug().Err(err).Msg("captive portal: could not build proxy request, falling back to meta-refresh")
+		serveConnectingPage(w, r)
+		return
+	}
+	proxyReq.Host = originalHost
+	for k, vv := range r.Header {
+		if _, skip := hopByHopHeaders[strings.ToLower(k)]; !skip {
+			proxyReq.Header[k] = vv
+		}
+	}
+
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		log.Debug().Err(err).Str("real_ip", realIP).
+			Msg("captive portal: proxy to real backend failed, falling back to meta-refresh")
+		serveConnectingPage(w, r)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Forward the final response (after all redirects have been followed).
+	for k, vv := range resp.Header {
+		if _, skip := hopByHopHeaders[strings.ToLower(k)]; !skip {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// serveConnectingPage renders a meta-refresh fallback for authenticated peers
+// when the real backend IP is not known or the proxy attempt failed.
+func serveConnectingPage(w http.ResponseWriter, r *http.Request) {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	target := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.RequestURI)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><head>`+
+		`<meta http-equiv="refresh" content="2; url=%s">`+
+		`<title>Connecting…</title></head>`+
+		`<body style="font-family:sans-serif;text-align:center;padding-top:4em">`+
+		`<p>Authenticated. Connecting to your destination…</p>`+
+		`<p><a href="%s">Click here if not redirected automatically.</a></p>`+
+		`</body></html>`, target, target)
 }
 
 // serveProbeSuccess writes the OS-specific "connected" response for known
@@ -361,11 +509,16 @@ func serveProbeSuccess(w http.ResponseWriter, r *http.Request) bool {
 }
 
 type createTokenRequest struct {
-	PeerIP string `json:"peer_ip"`
+	PeerIP         string `json:"peer_ip"`
+	PeerEndpointIP string `json:"peer_endpoint_ip,omitempty"` // public IP at connect time
 }
 
 func (s *Server) createToken(peerIP string) (string, error) {
-	body, _ := json.Marshal(createTokenRequest{PeerIP: peerIP})
+	var endpointIP string
+	if s.lookupEndpointIP != nil {
+		endpointIP = s.lookupEndpointIP(peerIP)
+	}
+	body, _ := json.Marshal(createTokenRequest{PeerIP: peerIP, PeerEndpointIP: endpointIP})
 	req, err := http.NewRequest(http.MethodPost, s.serverURL+"/api/v1/captive-portal/token", bytes.NewReader(body)) // #nosec G107
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)

@@ -108,6 +108,32 @@ func GetWireGuardHandshakes(iface string) map[string]time.Time {
 	return result
 }
 
+// GetWireGuardAllowedIPs returns a map of peer public keys to their allowed-IP
+// CIDR lists, as reported by "wg show <iface> allowed-ips".
+// Example output line: "<pubkey>\t10.0.0.2/32 0.0.0.0/0"
+func GetWireGuardAllowedIPs(iface string) map[string][]string {
+	cmd := exec.Command("wg", "show", iface, "allowed-ips") // #nosec G204
+	output, err := cmd.Output()
+	if err != nil {
+		return make(map[string][]string)
+	}
+
+	result := make(map[string][]string)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		pubkey := parts[0]
+		result[pubkey] = parts[1:]
+	}
+	return result
+}
+
 // getWireGuardEndpoints returns a map of peer public keys to their endpoints
 func getWireGuardEndpoints(iface string) map[string]string {
 	// Get peer endpoints using wg show

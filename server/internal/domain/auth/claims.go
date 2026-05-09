@@ -14,4 +14,5 @@ type OIDCClaims struct {
 	ExpiresAt         int64    `json:"exp"`                // Expiration time
 	IssuedAt          int64    `json:"iat"`                // Issued at time
 	AuthorizedParty   string   `json:"azp"`                // Authorized party
+	Groups            []string `json:"groups,omitempty"`   // Group memberships (from AUTH_GROUPS_CLAIM or GitHub API)
 }

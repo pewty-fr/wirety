@@ -405,7 +405,7 @@ func (a *networkGetterAdapter) ListSecurityIncidentsByNetwork(ctx context.Contex
 func (a *networkGetterAdapter) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
 	return nil
 }
-func (a *networkGetterAdapter) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+func (a *networkGetterAdapter) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
 	return nil
 }
 func (a *networkGetterAdapter) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {

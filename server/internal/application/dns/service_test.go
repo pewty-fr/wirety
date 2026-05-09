@@ -40,7 +40,7 @@ func (m *mockPeerRepository) ListPeers(ctx context.Context, networkID string) ([
 }
 
 // Additional methods to satisfy network.Repository interface
-func (m *mockPeerRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+func (m *mockPeerRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
 	return nil
 }
 func (m *mockPeerRepository) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {

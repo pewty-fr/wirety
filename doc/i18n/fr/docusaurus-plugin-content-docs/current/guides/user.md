@@ -1,4 +1,8 @@
-# Guide utilisateur
+---
+id: user
+title: Guide utilisateur
+sidebar_position: 7
+---
 
 Ce guide fournit des instructions étape par étape pour les tâches courantes dans le système de gestion de réseaux WireGuard.
 
@@ -910,10 +914,9 @@ done
 
 ## Ressources supplémentaires
 
-- [Référence API](./api-reference) — Documentation complète de l'API
-- [Guide de migration](./migration-guide) — Migrer depuis le système hérité
-- Architecture — Vue d'ensemble de l'architecture système
-- Dépannage — Guide de dépannage détaillé
+- [Référence API](/api-reference.md) — Documentation complète de l'API
+- [Architecture](/architecture.md) — Vue d'ensemble de l'architecture système
+- [Dépannage](/troubleshooting.md) — Guide de dépannage détaillé
 
 ---
 

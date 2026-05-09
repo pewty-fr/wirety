@@ -1,4 +1,8 @@
-# Guide de gestion des groupes
+---
+id: groups-management
+title: Guide de gestion des groupes
+sidebar_position: 5
+---
 
 Ce guide fournit des informations détaillées sur la gestion des groupes dans le système de gestion de réseaux WireGuard.
 

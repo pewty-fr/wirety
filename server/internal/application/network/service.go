@@ -1803,7 +1803,10 @@ func (s *Service) createIncidentIfNew(ctx context.Context, networkID string, pee
 
 // CreateCaptivePortalToken creates a short-lived token for the captive portal flow.
 // Called by the jump peer agent when a new peer connects and needs authentication.
-func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpPeerID, peerIP string) (*network.CaptivePortalToken, error) {
+// peerEndpointIP is the peer's current public endpoint IP (port stripped); it is
+// stored in the token so that AddCaptivePortalWhitelist can bind the whitelist
+// entry to the peer's originating network.  May be empty for legacy agents.
+func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) (*network.CaptivePortalToken, error) {
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
@@ -1811,12 +1814,13 @@ func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpP
 
 	now := time.Now()
 	token := &network.CaptivePortalToken{
-		Token:      "cpt_" + base64.RawURLEncoding.EncodeToString(tokenBytes),
-		NetworkID:  networkID,
-		JumpPeerID: jumpPeerID,
-		PeerIP:     peerIP,
-		CreatedAt:  now,
-		ExpiresAt:  now.Add(10 * time.Minute),
+		Token:          "cpt_" + base64.RawURLEncoding.EncodeToString(tokenBytes),
+		NetworkID:      networkID,
+		JumpPeerID:     jumpPeerID,
+		PeerIP:         peerIP,
+		PeerEndpointIP: peerEndpointIP,
+		CreatedAt:      now,
+		ExpiresAt:      now.Add(10 * time.Minute),
 	}
 
 	if err := s.repo.CreateCaptivePortalToken(ctx, token); err != nil {
@@ -1886,7 +1890,7 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	// Whitelist the peer — also triggers WebSocket notification to jump peer.
 	// AddCaptivePortalWhitelist is idempotent (ON CONFLICT DO NOTHING), so repeated
 	// calls for the same peer are safe.
-	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, cpt.PeerIP); err != nil {
+	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, cpt.PeerIP, cpt.PeerEndpointIP); err != nil {
 		return nil, fmt.Errorf("failed to whitelist peer: %w", err)
 	}
 
@@ -1901,9 +1905,13 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	return cpt, nil
 }
 
-// AddCaptivePortalWhitelist adds a peer IP to the captive portal whitelist
-func (s *Service) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
-	if err := s.repo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP); err != nil {
+// AddCaptivePortalWhitelist adds a peer IP to the captive portal whitelist.
+// peerEndpointIP is the peer's public endpoint IP recorded at authentication
+// time; the jump peer uses it to verify that the peer is still connecting from
+// the same network.  Pass an empty string to store a legacy (endpoint-unchecked)
+// entry.
+func (s *Service) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
+	if err := s.repo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP, peerEndpointIP); err != nil {
 		return err
 	}
 
@@ -1942,17 +1950,22 @@ func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, netw
 		return fmt.Errorf("failed to get whitelist: %w", err)
 	}
 
-	// Remove peers that are no longer active
-	for _, ip := range whitelist {
-		if !activePeerIPs[ip] {
+	// Remove peers that are no longer active.
+	// Whitelist entries may be "wgIP@endpointIP" — extract the wgIP part.
+	for _, entry := range whitelist {
+		wgIP := entry
+		if idx := strings.IndexByte(entry, '@'); idx != -1 {
+			wgIP = entry[:idx]
+		}
+		if !activePeerIPs[wgIP] {
 			log.Info().
 				Str("network_id", networkID).
 				Str("jump_peer_id", jumpPeerID).
-				Str("peer_ip", ip).
+				Str("peer_ip", wgIP).
 				Msg("removing disconnected peer from whitelist")
 
-			if err := s.repo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeerID, ip); err != nil {
-				log.Error().Err(err).Str("peer_ip", ip).Msg("failed to remove peer from whitelist")
+			if err := s.repo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeerID, wgIP); err != nil {
+				log.Error().Err(err).Str("peer_ip", wgIP).Msg("failed to remove peer from whitelist")
 			}
 		}
 	}
@@ -1980,10 +1993,16 @@ func (s *Service) RemoveFromWhitelistOnEndpointChange(ctx context.Context, netwo
 			continue
 		}
 
-		// Check if this IP is in the whitelist
+		// Check if this WireGuard IP is in the whitelist.
+		// Whitelist entries may be in "wgIP@endpointIP" format — extract the
+		// wgIP part before comparing.
 		found := false
-		for _, ip := range whitelist {
-			if ip == peerIP {
+		for _, entry := range whitelist {
+			wgIP := entry
+			if idx := strings.IndexByte(entry, '@'); idx != -1 {
+				wgIP = entry[:idx]
+			}
+			if wgIP == peerIP {
 				found = true
 				break
 			}
