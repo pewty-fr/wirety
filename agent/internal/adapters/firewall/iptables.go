@@ -138,7 +138,35 @@ func (a *Adapter) resolveServerEndpoint() serverEndpoint {
 		log.Warn().Err(err).Str("host", host).Msg("failed to resolve wirety server hostname")
 		return ep
 	}
-	ep.ips = addrs
+
+	// iptables only handles IPv4. Filter out IPv6 addresses; they would
+	// cause iptables to fail with "host/network not found".
+	// ip6tables rules for IPv6 are not yet implemented.
+	var ipv4s, ipv6s []string
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
+			ipv4s = append(ipv4s, addr)
+		} else {
+			ipv6s = append(ipv6s, addr)
+		}
+	}
+	if len(ipv6s) > 0 {
+		log.Debug().
+			Strs("ipv6", ipv6s).
+			Str("host", host).
+			Msg("skipping IPv6 server addresses for iptables rules (ip6tables not yet implemented)")
+	}
+	if len(ipv4s) == 0 && len(ipv6s) > 0 {
+		log.Warn().
+			Str("host", host).
+			Strs("ipv6_only", ipv6s).
+			Msg("wirety server hostname resolved to IPv6 addresses only — no iptables ACCEPT rule added; unauthenticated peers will not be able to reach the server")
+	}
+	ep.ips = ipv4s
 	return ep
 }
 
