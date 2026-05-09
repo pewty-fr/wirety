@@ -25,6 +25,10 @@ Le serveur Wirety fournit des API REST et WebSocket, orchestre les peers, les in
 | `AUTH_JWKS_CACHE_TTL` | Durée du cache JWKS en secondes | `3600` |
 | `AUTH_PASSWORD` | Mot de passe administrateur pour le mode auth simple | généré automatiquement (journalisé au démarrage) |
 | `COOKIE_SECURE` | Active l'attribut `Secure` sur le cookie de session — désactiver uniquement en HTTP local (développement) | `true` |
+| `AUTH_EMAIL_CLAIM` | Revendication JWT à utiliser comme adresse e-mail de l'utilisateur (utile quand le fournisseur utilise un nom de revendication non standard) | `email` |
+| `AUTH_GROUPS_CLAIM` | Revendication JWT portant les appartenances de groupe de l'utilisateur (ex. `groups`, `roles`). Obligatoire pour activer le contrôle d'accès basé sur les groupes avec les fournisseurs OIDC. | - |
+| `AUTH_ADMIN_GROUP` | Liste de groupes séparés par des virgules dont les membres reçoivent le rôle `administrator`. Prend le dessus sur `AUTH_USER_GROUP`. Pour GitHub, utilisez les noms d'organisation (`mon-org`) ou les slugs d'équipe (`mon-org/mon-equipe`). | - |
+| `AUTH_USER_GROUP` | Liste de groupes séparés par des virgules requis pour la connexion d'un utilisateur ordinaire. Les utilisateurs n'appartenant à aucun de ces groupes sont rejetés. Doit être défini conjointement avec `AUTH_ADMIN_GROUP`. Pour GitHub, utilisez le même format `org` ou `org/equipe`. | - |
 
 ### Base de données
 | Variable | Description | Défaut |

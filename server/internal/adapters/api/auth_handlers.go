@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"wirety/internal/audit"
+	appauth "wirety/internal/application/auth"
 	"wirety/internal/domain/auth"
 	"wirety/internal/infrastructure/github"
 	"wirety/internal/infrastructure/oidc"
@@ -78,7 +80,11 @@ func (h *Handler) GetAuthConfig(c *gin.Context) {
 	if h.authConfig.Enabled && h.authConfig.IssuerURL != "" {
 		if github.IsGitHub(h.authConfig.IssuerURL) {
 			resp.AuthorizationEndpoint = github.AuthorizationEndpoint
-			resp.Scope = github.Scope
+			scope := github.Scope
+			if h.authConfig.AdminGroup != "" || h.authConfig.UserGroup != "" {
+				scope += " " + github.ScopeOrg
+			}
+			resp.Scope = scope
 		} else if discovery, err := oidc.Discover(c.Request.Context(), h.authConfig.IssuerURL); err == nil {
 			resp.AuthorizationEndpoint = discovery.AuthorizationEndpoint
 			resp.EndSessionEndpoint = discovery.EndSessionEndpoint
@@ -256,6 +262,16 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	// Get or create user
 	user, err := h.authService.GetOrCreateUser(c.Request.Context(), claims)
 	if err != nil {
+		if errors.Is(err, appauth.ErrNotInAuthorizedGroup) {
+			audit.Server(claims.Subject, claims.Email, c.ClientIP()).
+				Str("action", "auth.rejected").
+				Str("reason", "not_in_authorized_group").
+				Strs("groups", claims.Groups).
+				Str("issuer", claims.Issuer).
+				Msg("audit")
+			c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get user: %v", err)})
 		return
 	}
@@ -439,23 +455,47 @@ func (h *Handler) exchangeGitHubToken(c *gin.Context, req TokenRequest) {
 		name = ghUser.Login
 	}
 
-	// 5. Build OIDCClaims so we can reuse the existing GetOrCreateUser logic.
+	// 5. Resolve group memberships (only when group access control is configured).
+	//    Requires the read:org scope which is added to the OAuth consent screen when
+	//    AUTH_ADMIN_GROUP or AUTH_USER_GROUP are set.
+	var ghGroups []string
+	if h.authConfig.AdminGroup != "" || h.authConfig.UserGroup != "" {
+		groups, groupErr := github.FetchUserGroups(c.Request.Context(), accessToken)
+		if groupErr != nil {
+			log.Warn().Err(groupErr).Msg("exchangeGitHubToken: failed to fetch GitHub user groups")
+		} else {
+			ghGroups = groups
+		}
+	}
+
+	// 6. Build OIDCClaims so we can reuse the existing GetOrCreateUser logic.
 	claims := &auth.OIDCClaims{
 		Subject:       fmt.Sprintf("github:%d", ghUser.ID),
 		Email:         email,
 		EmailVerified: true,
 		Name:          name,
 		Issuer:        github.IssuerURL,
+		Groups:        ghGroups,
 	}
 
-	// 6. Get or create the Wirety user.
+	// 7. Get or create the Wirety user.
 	user, err := h.authService.GetOrCreateUser(c.Request.Context(), claims)
 	if err != nil {
+		if errors.Is(err, appauth.ErrNotInAuthorizedGroup) {
+			audit.Server(claims.Subject, claims.Email, c.ClientIP()).
+				Str("action", "auth.rejected").
+				Str("reason", "not_in_authorized_group").
+				Strs("groups", claims.Groups).
+				Str("issuer", claims.Issuer).
+				Msg("audit")
+			c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get user: %v", err)})
 		return
 	}
 
-	// 7. Create server-side session.
+	// 8. Create server-side session.
 	// Store the GitHub token with a prefix so the middleware can skip JWT validation.
 	// expiresIn=0 → AccessTokenExpiresAt is set to 100 years from now (GitHub tokens
 	// do not expire unless explicitly revoked).

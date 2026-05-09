@@ -27,6 +27,20 @@ type AuthConfig struct {
 	JWKSCacheTTL  int    `json:"jwks_cache_ttl"` // JWKS cache duration in seconds (default: 3600)
 	AdminPassword string `json:"-"`              // Admin password for simple auth mode (AUTH_ENABLED=false)
 	CookieSecure  bool   `json:"cookie_secure"`  // Set Secure flag on session cookie (default: true)
+
+	// Group-based access control (all optional)
+	EmailClaim  string `json:"email_claim"`  // AUTH_EMAIL_CLAIM — JWT claim to use as email (default: "email")
+	GroupsClaim string `json:"groups_claim"` // AUTH_GROUPS_CLAIM — JWT claim that carries group memberships
+	AdminGroup  string `json:"admin_group"`  // AUTH_ADMIN_GROUP — comma-separated groups granting administrator role
+	UserGroup   string `json:"user_group"`   // AUTH_USER_GROUP — comma-separated groups required for regular user login
+}
+
+// Validate returns an error for invalid auth configuration combinations.
+func (a *AuthConfig) Validate() error {
+	if a.UserGroup != "" && a.AdminGroup == "" {
+		return fmt.Errorf("AUTH_USER_GROUP is set but AUTH_ADMIN_GROUP is not — without an admin group no administrator can ever be created; either set AUTH_ADMIN_GROUP or remove AUTH_USER_GROUP")
+	}
+	return nil
 }
 
 // LoadConfig loads configuration from environment variables
@@ -45,6 +59,10 @@ func LoadConfig() *Config {
 			JWKSCacheTTL:  getEnvAsInt("AUTH_JWKS_CACHE_TTL", 3600),
 			AdminPassword: getEnv("AUTH_PASSWORD", ""),
 			CookieSecure:  getEnv("COOKIE_SECURE", "true") != "false",
+			EmailClaim:    getEnv("AUTH_EMAIL_CLAIM", ""),
+			GroupsClaim:   getEnv("AUTH_GROUPS_CLAIM", ""),
+			AdminGroup:    getEnv("AUTH_ADMIN_GROUP", ""),
+			UserGroup:     getEnv("AUTH_USER_GROUP", ""),
 		},
 		Database: DBConfig{
 			Enabled:    getEnv("DB_ENABLED", "false") == "true",
