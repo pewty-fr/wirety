@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"wirety/internal/domain/auth"
@@ -45,6 +46,15 @@ type Service struct {
 	policyService       PolicyService
 	wsNotifier          WebSocketNotifier
 	wsConnectionChecker WebSocketConnectionChecker
+
+	// wgLastSeen tracks the last time a jump peer reported seeing each peer
+	// via an active WireGuard handshake.  Key: "networkID:peerID".
+	// This in-memory map is the data-plane connectivity signal (as opposed to
+	// the management-plane heartbeat stored in agent_sessions.last_seen).
+	// It is not persisted across restarts — a brief window of "unknown" status
+	// after restart is acceptable; the next jump-peer heartbeat restores it.
+	wgLastSeen   map[string]time.Time
+	wgLastSeenMu sync.RWMutex
 }
 
 // SetWebSocketNotifier sets the WebSocket notifier for the service
@@ -71,6 +81,7 @@ func NewService(networkRepo network.Repository, ipamRepo ipam.Repository, authRe
 		routeRepo:  routeRepo,
 		dnsRepo:    dnsRepo,
 		policyRepo: policyRepo,
+		wgLastSeen: make(map[string]time.Time),
 	}
 }
 
@@ -858,25 +869,43 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 	}
 
 	// Jump peers also report which other peers are currently connected via
-	// WireGuard.  We use those endpoint reports for two things:
-	//   1. Update last_seen on each reported peer's session — so the dashboard's
+	// WireGuard.  We use those endpoint reports for three things:
+	//   1. Update wgLastSeen for ALL reported peers — this is the data-plane
+	//      connectivity signal used by GetPeerConnectivityStatus to detect
+	//      stale WireGuard tunnels even for agent peers whose management
+	//      heartbeat is still fresh.
+	//   2. Update last_seen on each non-agent peer's session — so the dashboard's
 	//      "connected" status badge works for peers that don't run the agent.
-	//   2. Prune captive portal whitelist entries for non-agent peers that have
+	//   3. Prune captive portal whitelist entries for non-agent peers that have
 	//      disappeared, so disconnect → re-auth.
 	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
 	if err == nil && peer.IsJump {
 		peers, err := s.repo.ListPeers(ctx, networkID)
 		if err == nil {
 			activePeerIPs := make(map[string]bool)
+
+			// 1. Update wgLastSeen for all peers the jump peer can see via WireGuard.
+			s.wgLastSeenMu.Lock()
+			for _, p := range peers {
+				if p.ID == peerID {
+					continue // skip self
+				}
+				key := networkID + ":" + p.ID
+				if _, seen := heartbeat.PeerEndpoints[p.PublicKey]; seen {
+					s.wgLastSeen[key] = now
+				}
+			}
+			s.wgLastSeenMu.Unlock()
+
+			// 2. Update session last_seen for non-agent peers and build active-IP set.
 			for _, p := range peers {
 				endpoint, seen := heartbeat.PeerEndpoints[p.PublicKey]
 				if !seen {
 					continue
 				}
-				// Update each reported peer's session to mark them seen now.
-				// Skip the heartbeat sender itself (already updated above) and
-				// skip agent peers — they send their own heartbeat directly,
-				// and overwriting their session here would lose hostname/uptime.
+				// Agent peers send their own heartbeat directly; updating their session
+				// here would overwrite hostname/uptime with empty values.  The wgLastSeen
+				// map above already captures their WireGuard connectivity.
 				if p.ID == peerID || p.UseAgent {
 					if !p.UseAgent {
 						activePeerIPs[p.Address] = true
@@ -917,8 +946,19 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 const PeerConnectivityThreshold = 3 * time.Minute
 
 // GetPeerConnectivityStatus reports whether a peer is currently considered
-// connected, based on its WebSocket presence (for agent peers) and the
-// freshness of its last heartbeat.
+// connected, based on WireGuard data-plane visibility (from jump-peer heartbeats)
+// and management-plane heartbeat freshness.
+//
+// Connectivity logic (in priority order):
+//  1. WireGuard last-seen (wgLastSeen): a jump peer reported this peer active via
+//     WireGuard within PeerConnectivityThreshold.  This is the ground truth for
+//     data-plane reachability and applies to both agent and non-agent peers.
+//  2. Management heartbeat (session.LastSeen): agent peer sent a direct heartbeat
+//     within PeerConnectivityThreshold.  Used as a fallback for jump peers (which
+//     don't appear in each other's WireGuard peer list) and for the brief window
+//     before the first jump-peer heartbeat after a restart.
+//  3. WebSocket presence: only used as a last resort when no session exists yet
+//     (agent just connected but hasn't sent its first heartbeat).
 func (s *Service) GetPeerConnectivityStatus(ctx context.Context, networkID, peerID string) (*network.PeerConnectivityStatus, error) {
 	now := time.Now()
 	status := &network.PeerConnectivityStatus{
@@ -926,18 +966,24 @@ func (s *Service) GetPeerConnectivityStatus(ctx context.Context, networkID, peer
 		LastChecked: now,
 	}
 
-	// Live WebSocket presence is the strongest signal that a peer's agent is up.
-	if s.wsConnectionChecker != nil {
-		status.HasActiveAgent = s.wsConnectionChecker.IsConnected(networkID, peerID)
+	// 1. WireGuard data-plane visibility (jump-peer reported).
+	s.wgLastSeenMu.RLock()
+	wgSeen, hasWGSeen := s.wgLastSeen[networkID+":"+peerID]
+	s.wgLastSeenMu.RUnlock()
+	if hasWGSeen && now.Sub(wgSeen) <= PeerConnectivityThreshold {
+		status.HasActiveAgent = true
 	}
 
-	// Even without an active WS, a recent heartbeat counts as "connected".
+	// 2. Management heartbeat freshness (covers jump peers and the initial window).
 	session, err := s.repo.GetSession(ctx, networkID, peerID)
 	if err == nil && session != nil {
 		status.CurrentSession = session
 		if !status.HasActiveAgent && now.Sub(session.LastSeen) <= PeerConnectivityThreshold {
 			status.HasActiveAgent = true
 		}
+	} else if !status.HasActiveAgent && s.wsConnectionChecker != nil {
+		// 3. Fallback: WebSocket presence (no session yet — peer just connected).
+		status.HasActiveAgent = s.wsConnectionChecker.IsConnected(networkID, peerID)
 	}
 
 	return status, nil

@@ -40,6 +40,7 @@ type PeerCreateRequest struct {
 	ListenPort           int      `json:"listen_port,omitempty"`
 	IsJump               bool     `json:"is_jump"`
 	UseAgent             bool     `json:"use_agent"`
+	OwnerID              string   `json:"owner_id,omitempty"` // Admin can assign any owner; non-admins are forced to their own ID in the handler
 	AdditionalAllowedIPs []string `json:"additional_allowed_ips,omitempty"`
 }
 

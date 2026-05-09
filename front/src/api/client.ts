@@ -5,6 +5,14 @@ import type { Network, Peer, IPAMAllocation, User, PaginatedResponse, PeerConnec
 class ApiClient {
   private client: AxiosInstance;
 
+  // Singleton promise for the session-verify call.
+  // When multiple concurrent requests all receive a 401 at the same time (e.g.
+  // after an OIDC token refresh), they must NOT each independently fire a
+  // /users/me verify request — that creates a "thundering herd" that floods the
+  // server.  Instead they all await the same promise; whichever goroutine settles
+  // first determines whether everyone retries or redirects to login.
+  private sessionVerifyPromise: Promise<boolean> | null = null;
+
   constructor() {
     const apiBaseUrl = '/api/v1';
     this.client = axios.create({
@@ -36,9 +44,17 @@ class ApiClient {
           }
 
           try {
-            // Use native fetch to bypass this Axios interceptor
-            const verifyResp = await fetch('/api/v1/users/me', { credentials: 'include' });
-            if (verifyResp.ok) {
+            // Deduplicate concurrent session-verify calls: if one is already in
+            // flight, all concurrent 401s share that single promise rather than
+            // each firing their own /users/me request (thundering herd).
+            if (!this.sessionVerifyPromise) {
+              this.sessionVerifyPromise = fetch('/api/v1/users/me', { credentials: 'include' })
+                .then(r => r.ok)
+                .catch(() => false)
+                .finally(() => { this.sessionVerifyPromise = null; });
+            }
+            const sessionOk = await this.sessionVerifyPromise;
+            if (sessionOk) {
               // Session is valid (server refreshed the token) — retry original request once
               error.config._retry = true;
               return this.client.request(error.config);
@@ -157,6 +173,7 @@ class ApiClient {
     listen_port?: number;
     is_jump: boolean;
     use_agent: boolean;
+    owner_id?: string;
     additional_allowed_ips?: string[];
   }): Promise<Peer> {
     const response = await this.client.post(`/networks/${networkId}/peers`, data);
@@ -167,6 +184,7 @@ class ApiClient {
     name?: string;
     endpoint?: string;
     listen_port?: number;
+    owner_id?: string;
     additional_allowed_ips?: string[];
   }): Promise<Peer> {
     const response = await this.client.put(`/networks/${networkId}/peers/${peerId}`, data);

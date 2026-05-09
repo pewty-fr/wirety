@@ -15,6 +15,7 @@ import (
 	"wirety/internal/infrastructure/github"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 )
 
 // sessionRefreshMu prevents multiple concurrent requests from all trying to
@@ -165,13 +166,21 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 	// Get session from database
 	session, err := userRepo.GetSession(sessionHash)
 	if err != nil {
+		log.Debug().Str("session_hash_prefix", sessionHash[:8]).Msg("session not found in database")
 		return nil, fmt.Errorf("invalid session")
 	}
 
 	// Check if session is valid
 	if !session.IsValid() {
+		log.Debug().Str("user_id", session.UserID).Time("refresh_token_expires_at", session.RefreshTokenExpiresAt).Msg("session refresh token expired")
 		_ = userRepo.DeleteSession(sessionHash)
 		return nil, fmt.Errorf("session expired")
+	}
+
+	// Determine token type prefix for diagnostic logging (never log the full token)
+	tokenPrefix := "unknown"
+	if len(session.AccessToken) >= 6 {
+		tokenPrefix = session.AccessToken[:6]
 	}
 
 	// applyRefreshedTokens updates the session fields from a successful refresh response.
@@ -182,12 +191,15 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		session.AccessToken = newAccessToken
 		if exp, ok := authService.ParseTokenExpiry(newAccessToken); ok {
 			session.AccessTokenExpiresAt = exp
+			log.Debug().Str("user_id", session.UserID).Time("new_access_token_expires_at", exp).Str("source", "jwt_exp").Msg("token refreshed: set expiry from JWT exp claim")
 		} else {
 			session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+			log.Debug().Str("user_id", session.UserID).Int("expires_in", expiresIn).Time("new_access_token_expires_at", session.AccessTokenExpiresAt).Str("source", "expires_in").Msg("token refreshed: set expiry from expires_in (no JWT exp claim)")
 		}
 		// Only update refresh token when the provider returned a new one (rotating tokens).
 		if newRefreshToken != "" {
 			session.RefreshToken = newRefreshToken
+			log.Debug().Str("user_id", session.UserID).Msg("token refreshed: received new rotating refresh token")
 		}
 	}
 
@@ -196,8 +208,10 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 	// providers such as Azure Entra ID — discarding it would burn the token and cause
 	// the next refresh to fail with invalid_grant).
 	refreshOnce := func() error {
+		log.Debug().Str("user_id", session.UserID).Msg("attempting token refresh via OIDC provider")
 		newAccessToken, newRefreshToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
 		if err != nil {
+			log.Warn().Str("user_id", session.UserID).Err(err).Msg("token refresh failed")
 			return err
 		}
 		applyRefreshedTokens(newAccessToken, newRefreshToken, expiresIn)
@@ -212,11 +226,18 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 	// by the winner and skip the refresh altogether.
 	didRefresh := false
 	if session.IsAccessTokenExpired() {
+		log.Debug().
+			Str("user_id", session.UserID).
+			Str("token_prefix", tokenPrefix).
+			Time("access_token_expires_at", session.AccessTokenExpiresAt).
+			Msg("access token is expired, attempting refresh")
+
 		// No refresh token: cannot renew, expire the session immediately.
 		// Note: Slack issues refresh tokens (xoxe-1-...) when token rotation is
 		// enabled in the Slack app settings. With rotation enabled this branch is
 		// never hit for Slack sessions.
 		if session.RefreshToken == "" {
+			log.Warn().Str("user_id", session.UserID).Msg("access token expired and no refresh token available — session deleted")
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("session expired")
 		}
@@ -228,8 +249,10 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 			session = fresh
 			// Re-bind refreshOnce to the updated session so it uses the new refresh token.
 			refreshOnce = func() error {
+				log.Debug().Str("user_id", session.UserID).Msg("attempting token refresh via OIDC provider (post-lock re-read)")
 				newAccessToken, newRefreshToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
 				if err != nil {
+					log.Warn().Str("user_id", session.UserID).Err(err).Msg("token refresh failed (post-lock re-read)")
 					return err
 				}
 				applyRefreshedTokens(newAccessToken, newRefreshToken, expiresIn)
@@ -243,9 +266,13 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 				// (another goroutine already consumed the rotating refresh token
 				// and this call got invalid_grant).  The session is still valid;
 				// the next request will re-read the updated tokens and succeed.
+				log.Warn().Str("user_id", session.UserID).Err(err).Msg("token refresh failed under lock; session preserved for next request to retry")
 				return nil, fmt.Errorf("failed to refresh token: %w", err)
 			}
 			didRefresh = true
+			log.Debug().Str("user_id", session.UserID).Time("new_expires_at", session.AccessTokenExpiresAt).Msg("token refresh succeeded")
+		} else {
+			log.Debug().Str("user_id", session.UserID).Msg("token already refreshed by another goroutine (skipping)")
 		}
 		mu.Unlock()
 	}
@@ -265,19 +292,25 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 	// Validate the access token; capture claims for role-sync on refresh.
 	claims, err := authService.ValidateToken(c.Request.Context(), session.AccessToken)
 	if err != nil {
+		log.Debug().Str("user_id", session.UserID).Str("token_prefix", tokenPrefix).Bool("did_refresh", didRefresh).Err(err).Msg("JWT validation failed")
+
 		if didRefresh {
 			// We just refreshed but the new token is already invalid — something is
 			// fundamentally wrong (e.g. clock skew, revoked key). Don't burn another
 			// refresh token; just fail.
+			log.Error().Str("user_id", session.UserID).Err(err).Msg("JWT invalid immediately after refresh — session deleted (clock skew?)")
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("token invalid after refresh: %w", err)
 		}
 
 		// No refresh token available — expire the session immediately.
 		if session.RefreshToken == "" {
+			log.Warn().Str("user_id", session.UserID).Msg("JWT invalid and no refresh token — session deleted")
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("session expired")
 		}
+
+		log.Debug().Str("user_id", session.UserID).Msg("JWT invalid, attempting refresh under lock")
 
 		// Token invalid but we haven't refreshed yet — try one refresh under lock.
 		// Re-read the session first: a concurrent request may have already refreshed
@@ -290,8 +323,10 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 			session = fresh
 			// Re-bind applyRefreshedTokens and refreshOnce to the updated session.
 			refreshOnce = func() error {
+				log.Debug().Str("user_id", session.UserID).Msg("attempting token refresh via OIDC provider (JWT-invalid path, post-lock re-read)")
 				newAccessToken, newRefreshToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
 				if err != nil {
+					log.Warn().Str("user_id", session.UserID).Err(err).Msg("token refresh failed (JWT-invalid path)")
 					return err
 				}
 				applyRefreshedTokens(newAccessToken, newRefreshToken, expiresIn)
@@ -301,10 +336,14 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		// If another goroutine already refreshed, the token may be valid now — skip.
 		var refreshErr error
 		if _, validErr := authService.ValidateToken(c.Request.Context(), session.AccessToken); validErr != nil {
+			log.Debug().Str("user_id", session.UserID).Msg("JWT still invalid after lock re-read; running refresh")
 			refreshErr = refreshOnce()
+		} else {
+			log.Debug().Str("user_id", session.UserID).Msg("JWT valid after lock re-read (another goroutine refreshed first)")
 		}
 		mu.Unlock()
 		if refreshErr != nil {
+			log.Error().Str("user_id", session.UserID).Err(refreshErr).Msg("token refresh failed in JWT-invalid path — session deleted")
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("invalid token and refresh failed: %w", refreshErr)
 		}
@@ -313,9 +352,11 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		// Validate the freshly obtained token.
 		claims, err = authService.ValidateToken(c.Request.Context(), session.AccessToken)
 		if err != nil {
+			log.Error().Str("user_id", session.UserID).Err(err).Msg("JWT validation failed after refresh — session deleted")
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("token validation failed after refresh: %w", err)
 		}
+		log.Debug().Str("user_id", session.UserID).Msg("JWT validation succeeded after refresh")
 	}
 
 	// Get user from DB.

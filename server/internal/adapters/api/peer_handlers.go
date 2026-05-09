@@ -43,9 +43,13 @@ func (h *Handler) CreatePeer(c *gin.Context) {
 		return
 	}
 
-	ownerID := ""
+	var ownerID string
 	if user != nil && !user.IsAdministrator() {
+		// Non-admins always own their own peers; they cannot set arbitrary owners.
 		ownerID = user.ID
+	} else {
+		// Admins may assign any owner (or none) via owner_id in the request body.
+		ownerID = req.OwnerID
 	}
 
 	peer, err := h.service.AddPeer(c.Request.Context(), networkID, &req, ownerID)

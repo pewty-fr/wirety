@@ -61,27 +61,21 @@ export default function RegularPeerModal({ isOpen, onClose, onSuccess, networkId
 
     try {
       if (isEditMode && peer) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const updateData: any = {
+        await api.updatePeer(networkId, peer.id, {
           name: formData.name,
-        };
-        // Only include owner_id if admin and it changed
-        if (isAdmin && formData.owner_id !== peer.owner_id) {
-          updateData.owner_id = formData.owner_id;
-        }
-        await api.updatePeer(networkId, peer.id, updateData);
+          // Only send owner_id if admin and it changed
+          ...(isAdmin && formData.owner_id !== peer.owner_id
+            ? { owner_id: formData.owner_id || undefined }
+            : {}),
+        });
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const createData: any = {
+        const peer : Peer = await api.createPeer(selectedNetworkId, {
           name: formData.name,
           is_jump: false,
           use_agent: formData.use_agent,
-        };
-        // Include owner_id in the creation payload when set
-        if (formData.owner_id) {
-          createData.owner_id = formData.owner_id;
-        }
-        const peer : Peer = await api.createPeer(selectedNetworkId, createData);
+          // Only include owner_id when explicitly set; omit to create ownerless peer
+          ...(formData.owner_id ? { owner_id: formData.owner_id } : {}),
+        });
 
         const groups : Group[] = await api.getGroups(selectedNetworkId);
 

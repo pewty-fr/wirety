@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faServer, faLaptop, faRocket, faCopy, faCheckCircle, faTimesCircle, faRoute, faNetworkWired } from '@fortawesome/free-solid-svg-icons';
 import type { PeerReachability } from '../types';
@@ -68,9 +68,15 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
   // The live `currentPeer` comes from the server endpoint which does not include
   // network_id (it is only a URL parameter). Preserve network_id and network_name
   // from the original `peer` prop so that config download / delete operations work.
-  const displayPeer = currentPeer
-    ? { ...currentPeer, network_id: peer?.network_id, network_name: peer?.network_name }
-    : peer;
+  // useMemo prevents a new object reference on every render (which would otherwise
+  // trigger the loadPeerDetails useEffect infinitely every time the modal re-renders).
+  const displayPeer = useMemo(
+    () => currentPeer
+      ? { ...currentPeer, network_id: peer?.network_id, network_name: peer?.network_name }
+      : peer,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentPeer, peer?.network_id, peer?.network_name]
+  );
 
   // Load groups, policies, and routes for this peer
   useEffect(() => {
@@ -172,7 +178,8 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     };
 
     void loadPeerDetails();
-  }, [isOpen, peer?.network_id, displayPeer]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, peer?.network_id, displayPeer?.id, displayPeer?.group_ids?.join(',')]);
 
   // Load reachability data when the reachability tab is opened
   useEffect(() => {
