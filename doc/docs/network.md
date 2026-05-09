@@ -9,7 +9,7 @@ A Wirety Network encapsulates a WireGuard mesh identified by a CIDR, domain, and
 ## Components
 - CIDR: Address space allocated via IPAM. Each peer gets a unique address.
 - Gateway / Jump Peers: Provide central routing + optional NAT for full encapsulation.
-- ACL: Holds blocked peer IDs due to incidents; affects generated configs.
+- Captive portal whitelist: Ties each authenticated peer to a specific public endpoint (`ip:port`); enforced both by the captive portal HTTP server and by iptables on the jump peer.
 
 ## CIDR Management
 Changing a network CIDR is disallowed if any static regular peer exists. Rationale: static peers require manual reconfiguration and could lose connectivity silently.
@@ -29,4 +29,4 @@ When a regular peer sets `full_encapsulation = true`, `0.0.0.0/0` is routed thro
 Configured as CIDR list on peer. Validated format (e.g. `10.10.0.0/16`). Added to AllowedIPs for that peer in WireGuard config generation.
 
 ## Notifications
-WebSocket notifier pushes update events so agents can refetch config after ACL changes, peer additions, or incident resolutions.
+WebSocket notifier pushes update events so agents can refetch config after peer additions, captive portal whitelist updates, or policy changes.

@@ -36,5 +36,5 @@ Three logical peer types exist:
 ## Tokens & Security
 Tokens allow agent enrollment; they should be treated as secrets. Token revocation is accomplished by deleting the peer from the server, which immediately invalidates the token and prevents further agent enrollment or configuration updates.
 
-## ACL Interaction
-Blocking a peer (incident) prevents its configuration from being distributed or updated, effectively quarantining it.
+## Network access
+See [Captive Portal](./captive-portal) — every connection is re-authenticated and bound to the peer's full public endpoint, so a stolen WireGuard config used from a different network fails the check immediately.

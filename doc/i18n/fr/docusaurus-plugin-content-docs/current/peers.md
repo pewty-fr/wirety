@@ -31,5 +31,5 @@ Heartbeats contiennent endpoints et statut; conflits → incident.
 - Utiliser dynamiques pour serveurs volatils (cloud auto-scale).
 - Statiques pour endpoints utilisateur.
 
-## Incidents
-Voir [Incidents](./incidents.md) pour blocage via ACL.
+## Authentification réseau
+Voir [Portail captif](./captive-portal.md) pour comprendre comment chaque connexion est authentifiée et liée à un endpoint public strict.

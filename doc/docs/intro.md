@@ -4,15 +4,15 @@ title: Get Started
 sidebar_position: 1
 ---
 
-Welcome to Wirety: a secure, dynamic WireGuard mesh with agent-based automation, ACL-driven incident response, and flexible peer types.
+Welcome to Wirety: a secure, dynamic WireGuard mesh with agent-based automation, captive-portal-gated network access, and flexible peer types.
 
 ## Overview
-Wirety orchestrates a WireGuard overlay by distinguishing Jump Peers (traffic hubs) and Regular Peers which can be either Dynamic (agent-enrolled) or Static (manual config). Security incidents are handled via ACL blocking instead of connection deletion for safer, auditable containment.
+Wirety orchestrates a WireGuard overlay by distinguishing Jump Peers (traffic hubs) and Regular Peers which can be either Dynamic (agent-enrolled) or Static (manual config). Network access is gated by a captive portal that re-authenticates each peer on every endpoint change — a stolen WireGuard config used from a different network fails the check immediately.
 
 ## Architecture Highlights
 - Jump peers route and optionally NAT traffic for regular peers.
 - Dynamic peers enroll using an agent + token; static peers receive a generated WireGuard config.
-- ACL holds `BlockedPeers` for incident containment; resolving removes the peer from ACL.
+- Captive portal binds each whitelist entry to the peer's full public endpoint (`ip:port`) — any change forces re-authentication.
 - Private keys never leave the server API responses (`json:"-"`).
 
 ## Prerequisites
@@ -72,5 +72,5 @@ The agent establishes a heartbeat (hostname, uptime, endpoint) and retrieves upd
 
 ## Next Steps
 - Explore Network constraints (CIDR changes blocked when static peers exist).
-- Review Incident handling and resolution flows.
+- Configure the [Captive Portal](./captive-portal) to re-authenticate users on each connection.
 - Integrate OIDC for centralized auth (see Guides / OIDC).

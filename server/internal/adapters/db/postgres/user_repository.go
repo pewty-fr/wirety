@@ -19,9 +19,6 @@ type UserRepository struct {
 // NewUserRepository constructs a UserRepository
 func NewUserRepository(db *sql.DB) *UserRepository { return &UserRepository{db: db} }
 
-// userColumns is the canonical column list used by every SELECT, in a fixed order.
-const userColumns = "id,email,name,role,authorized_networks,password_hash,created_at,updated_at,last_login_at"
-
 // scanUser scans a user row into an auth.User
 func scanUser(rows scanner) (*auth.User, error) {
 	var u auth.User
