@@ -17,7 +17,7 @@ type Repository struct {
 	sessions         map[string]map[string]*network.AgentSession   // networkID -> sessionID -> AgentSession
 	endpointChanges  map[string][]*network.EndpointChange          // networkID -> []EndpointChange
 	incidents        map[string]*network.SecurityIncident          // incidentID -> SecurityIncident
-	captiveWhitelist map[string]map[string]bool                    // "networkID:jumpPeerID" -> peerIP -> true
+	captiveWhitelist map[string]map[string]string                  // "networkID:jumpPeerID" -> peerIP -> endpointIP (may be "")
 	captiveTokens    map[string]*network.CaptivePortalToken        // token -> CaptivePortalToken
 	securityConfigs  map[string]*network.SecurityConfig            // networkID -> SecurityConfig
 }
@@ -505,18 +505,18 @@ func (r *Repository) ResolveSecurityIncident(ctx context.Context, incidentID, re
 
 // Captive portal whitelist operations
 
-func (r *Repository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+func (r *Repository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	key := networkID + ":" + jumpPeerID
 	if r.captiveWhitelist == nil {
-		r.captiveWhitelist = make(map[string]map[string]bool)
+		r.captiveWhitelist = make(map[string]map[string]string)
 	}
 	if r.captiveWhitelist[key] == nil {
-		r.captiveWhitelist[key] = make(map[string]bool)
+		r.captiveWhitelist[key] = make(map[string]string)
 	}
-	r.captiveWhitelist[key][peerIP] = true
+	r.captiveWhitelist[key][peerIP] = peerEndpointIP
 	return nil
 }
 
@@ -536,13 +536,17 @@ func (r *Repository) GetCaptivePortalWhitelist(ctx context.Context, networkID, j
 	defer r.mu.RUnlock()
 
 	key := networkID + ":" + jumpPeerID
-	var ips []string
+	var entries []string
 	if r.captiveWhitelist != nil && r.captiveWhitelist[key] != nil {
-		for ip := range r.captiveWhitelist[key] {
-			ips = append(ips, ip)
+		for wgIP, endpointIP := range r.captiveWhitelist[key] {
+			if endpointIP != "" {
+				entries = append(entries, wgIP+"@"+endpointIP)
+			} else {
+				entries = append(entries, wgIP)
+			}
 		}
 	}
-	return ips, nil
+	return entries, nil
 }
 
 func (r *Repository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error {

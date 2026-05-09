@@ -476,7 +476,7 @@ func (m *mockFullRepository) ListSecurityIncidentsByNetwork(ctx context.Context,
 func (m *mockFullRepository) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
 	return nil
 }
-func (m *mockFullRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+func (m *mockFullRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
 	return nil
 }
 func (m *mockFullRepository) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {

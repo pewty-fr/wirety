@@ -418,7 +418,9 @@ write_files:
         delaycompress
         missingok
         notifempty
+        copytruncate        # ← copy then truncate in place, no fd invalidation
         create 0640 root root
+        sharedscripts
       }
 
   # fail2ban: protect SSH

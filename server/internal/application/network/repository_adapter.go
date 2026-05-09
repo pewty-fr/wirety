@@ -150,8 +150,8 @@ func (c *CombinedRepository) ReleaseIP(ctx context.Context, cidr string, ip stri
 var _ FullRepository = (*CombinedRepository)(nil)
 
 // Captive portal whitelist operations
-func (c *CombinedRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
-	return c.netRepo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP)
+func (c *CombinedRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
+	return c.netRepo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP, peerEndpointIP)
 }
 
 func (c *CombinedRepository) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {

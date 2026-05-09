@@ -263,6 +263,14 @@ func (s *Server) forwardToUpstream(w dns.ResponseWriter, r *dns.Msg) {
 		Msg("all upstream DNS servers failed")
 }
 
+// LookupPeerIP returns the WireGuard IP for the given hostname (FQDN), or an
+// empty string if not found. Exported so the captive portal server can proxy
+// authenticated-peer requests directly to the real backend while the browser's
+// DNS cache is stale (Firefox ignores TTL=1 and caches for up to 60 s).
+func (s *Server) LookupPeerIP(name string) string {
+	return s.lookupPeerIP(name)
+}
+
 func (s *Server) lookupPeerIP(name string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

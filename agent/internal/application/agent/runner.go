@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -69,11 +70,19 @@ type Runner struct {
 	captiveStarted   bool
 	httpClient       *http.Client // shared client (may override Host header)
 	vpnDomain        string       // VPN DNS domain (e.g. "wg.example.com"); used for TLS SAN
-	// whitelist holds the current set of authenticated peer IPs, kept in sync
-	// with every firewall policy update so the captive portal server can return
-	// OS probe success responses for already-authenticated peers.
-	whitelist   map[string]struct{}
+	// whitelist maps authenticated peer WireGuard IPs to the public endpoint IP
+	// that was recorded at authentication time (empty string = no endpoint check,
+	// used for legacy entries or when the jump peer could not resolve the endpoint).
+	// Kept in sync with every firewall policy update so the captive portal server
+	// can return OS probe success responses for already-authenticated peers.
+	whitelist   map[string]string
 	whitelistMu sync.RWMutex
+	// wgIPToEndpoint maps each peer's WireGuard private IP to its current public
+	// endpoint IP (port stripped). Refreshed every 300 ms by the heartbeat
+	// goroutine so that isAuthenticated can compare stored vs. live endpoint
+	// without spawning a wg command on every HTTP request.
+	wgIPToEndpoint   map[string]string
+	wgIPToEndpointMu sync.RWMutex
 	// captivePortalSrv is the running captive portal HTTP server (jump peer only).
 	// Set once by startCaptivePortalServer; protected by captivePortalSrvMu.
 	captivePortalSrv   *captiveportal.Server
@@ -95,7 +104,8 @@ func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort
 		peerID:            peerID,
 		networkID:         networkID,
 		peerNames:         make(map[string]string),
-		whitelist:         make(map[string]struct{}),
+		whitelist:         make(map[string]string),
+		wgIPToEndpoint:    make(map[string]string),
 		backoffBase:       time.Second,
 		backoffMax:        30 * time.Second,
 		heartbeatInterval: 30 * time.Second,
@@ -108,21 +118,92 @@ func (r *Runner) SetWGIP(ip string) {
 	r.wgIP = ip
 }
 
-// isAuthenticated reports whether the given peer IP is in the current whitelist.
+// isAuthenticated reports whether the given peer WireGuard IP has completed
+// captive portal authentication AND is connecting from the same public endpoint
+// IP that was recorded at authentication time.
+//
+// If no endpoint IP was stored (empty string — legacy entry or SSO disabled),
+// only the whitelist membership is checked for backward compatibility.
 func (r *Runner) isAuthenticated(peerIP string) bool {
 	r.whitelistMu.RLock()
-	defer r.whitelistMu.RUnlock()
-	_, ok := r.whitelist[peerIP]
-	return ok
+	expectedEndpoint, ok := r.whitelist[peerIP]
+	r.whitelistMu.RUnlock()
+	if !ok {
+		return false
+	}
+	if expectedEndpoint == "" {
+		// No endpoint constraint stored — legacy / non-SSO entry.
+		return true
+	}
+	// Verify the peer's current public endpoint matches the one stored at
+	// authentication time.  A mismatch means the WireGuard config is being
+	// used from a different network — require re-authentication.
+	currentEndpoint := r.getCurrentEndpointForWgIP(peerIP)
+	return currentEndpoint != "" && currentEndpoint == expectedEndpoint
 }
 
-// updateWhitelist replaces the in-memory whitelist with the given IP slice.
+// getCurrentEndpointForWgIP returns the most-recently-observed public endpoint
+// IP (port stripped) for the given WireGuard private IP, or "" if unknown.
+func (r *Runner) getCurrentEndpointForWgIP(wgIP string) string {
+	r.wgIPToEndpointMu.RLock()
+	defer r.wgIPToEndpointMu.RUnlock()
+	return r.wgIPToEndpoint[wgIP]
+}
+
+// updateWGIPEndpointMap rebuilds the wgIP → public endpoint IP lookup table
+// from the current WireGuard state.  Called every 300 ms by the heartbeat
+// goroutine so isAuthenticated can do a cheap map lookup without shelling out.
+func (r *Runner) updateWGIPEndpointMap() {
+	iface := r.getInterface()
+	allowedIPs := GetWireGuardAllowedIPs(iface) // pubkey → []CIDR
+	endpoints := getWireGuardEndpoints(iface)    // pubkey → "ip:port"
+
+	m := make(map[string]string, len(allowedIPs))
+	for pubkey, cidrs := range allowedIPs {
+		ep, ok := endpoints[pubkey]
+		if !ok {
+			continue
+		}
+		// Strip the port — we compare IPs only to be robust against NAT port
+		// changes that do not indicate a network change.
+		epIP, _, err := net.SplitHostPort(ep)
+		if err != nil {
+			epIP = ep // bare IP with no port (unusual but tolerate)
+		}
+		if epIP == "" || epIP == "(none)" {
+			continue
+		}
+		for _, cidr := range cidrs {
+			// Only map host routes (/32 for IPv4, /128 for IPv6) to avoid
+			// mapping summary routes (e.g. 0.0.0.0/0) to an endpoint.
+			if !strings.HasSuffix(cidr, "/32") && !strings.HasSuffix(cidr, "/128") {
+				continue
+			}
+			ip := cidr[:strings.IndexByte(cidr, '/')]
+			if ip != "" {
+				m[ip] = epIP
+			}
+		}
+	}
+
+	r.wgIPToEndpointMu.Lock()
+	r.wgIPToEndpoint = m
+	r.wgIPToEndpointMu.Unlock()
+}
+
+// updateWhitelist replaces the in-memory whitelist with the given entries.
+// Each entry is either "wgIP@endpointIP" (endpoint-checked) or plain "wgIP"
+// (legacy / no endpoint check).
 func (r *Runner) updateWhitelist(ips []string) {
 	r.whitelistMu.Lock()
 	defer r.whitelistMu.Unlock()
-	r.whitelist = make(map[string]struct{}, len(ips))
-	for _, ip := range ips {
-		r.whitelist[ip] = struct{}{}
+	r.whitelist = make(map[string]string, len(ips))
+	for _, entry := range ips {
+		if idx := strings.IndexByte(entry, '@'); idx != -1 {
+			r.whitelist[entry[:idx]] = entry[idx+1:]
+		} else {
+			r.whitelist[entry] = "" // no endpoint constraint
+		}
 	}
 }
 
@@ -225,6 +306,10 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					if err != nil {
 						continue
 					}
+
+					// Keep the wgIP → public endpoint IP cache fresh so that
+					// isAuthenticated can verify endpoints without shelling out.
+					r.updateWGIPEndpointMap()
 
 					// Compare with last known endpoints
 					lastPeerEndpointsMu.RLock()
@@ -734,6 +819,26 @@ func (r *Runner) startCaptivePortalServer() {
 			dns.SetAuthChecker(r.isAuthenticated)
 			dns.SetRedirectExclusions(r.captivePortalExcludedHosts())
 		}
+
+		// Wire up peer-IP lookup so the captive portal can proxy authenticated
+		// peers directly to the real backend while the browser's DNS cache is
+		// stale (Firefox ignores TTL=1 and keeps entries for up to 60 s, causing
+		// an infinite "Connecting…" loop without this proxy).
+		type dnsPeerLookup interface {
+			LookupPeerIP(host string) string
+		}
+		if lookup, ok := r.dnsServer.(dnsPeerLookup); ok {
+			srv.SetPeerIPLookup(func(host string) string {
+				return lookup.LookupPeerIP(host)
+			})
+		}
+
+		// Wire up endpoint-IP lookup so the captive portal server can include
+		// the peer's current public IP in the token request.  The server stores
+		// this alongside the WireGuard IP; the jump peer later checks that a
+		// peer trying to reach the network is still connecting from the same
+		// public IP, preventing a stolen config from bypassing the portal.
+		srv.SetEndpointIPLookup(r.getCurrentEndpointForWgIP)
 	}
 
 	// Start the HTTPS server in a background goroutine. It uses a self-signed cert

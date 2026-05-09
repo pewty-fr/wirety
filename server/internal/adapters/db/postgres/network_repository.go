@@ -589,15 +589,15 @@ const CaptivePortalWhitelistTTL = 24 * time.Hour
 
 // Captive portal whitelist operations
 
-func (r *NetworkRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
+func (r *NetworkRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
 	now := time.Now()
 	expiresAt := now.Add(CaptivePortalWhitelistTTL)
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, peer_endpoint_ip, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (network_id, jump_peer_id, peer_ip)
-		DO UPDATE SET expires_at = EXCLUDED.expires_at
-	`, networkID, jumpPeerID, peerIP, now, expiresAt)
+		DO UPDATE SET expires_at = EXCLUDED.expires_at, peer_endpoint_ip = EXCLUDED.peer_endpoint_ip
+	`, networkID, jumpPeerID, peerIP, peerEndpointIP, now, expiresAt)
 	return err
 }
 
@@ -621,7 +621,7 @@ func (r *NetworkRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Con
 
 func (r *NetworkRepository) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT peer_ip FROM captive_portal_whitelist
+		SELECT peer_ip, COALESCE(peer_endpoint_ip, '') FROM captive_portal_whitelist
 		WHERE network_id=$1 AND jump_peer_id=$2
 		  AND (expires_at IS NULL OR expires_at > NOW())
 		ORDER BY created_at ASC
@@ -633,15 +633,19 @@ func (r *NetworkRepository) GetCaptivePortalWhitelist(ctx context.Context, netwo
 		_ = rows.Close()
 	}()
 
-	var ips []string
+	var entries []string
 	for rows.Next() {
-		var ip string
-		if err := rows.Scan(&ip); err != nil {
+		var wgIP, endpointIP string
+		if err := rows.Scan(&wgIP, &endpointIP); err != nil {
 			return nil, err
 		}
-		ips = append(ips, ip)
+		if endpointIP != "" {
+			entries = append(entries, wgIP+"@"+endpointIP)
+		} else {
+			entries = append(entries, wgIP)
+		}
 	}
-	return ips, rows.Err()
+	return entries, rows.Err()
 }
 
 func (r *NetworkRepository) ClearCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) error {
@@ -664,24 +668,28 @@ func (r *NetworkRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Con
 
 func (r *NetworkRepository) CreateCaptivePortalToken(ctx context.Context, token *network.CaptivePortalToken) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO captive_portal_tokens (token, network_id, jump_peer_id, peer_ip, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, token.Token, token.NetworkID, token.JumpPeerID, token.PeerIP, token.CreatedAt, token.ExpiresAt)
+		INSERT INTO captive_portal_tokens (token, network_id, jump_peer_id, peer_ip, peer_endpoint_ip, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, token.Token, token.NetworkID, token.JumpPeerID, token.PeerIP, token.PeerEndpointIP, token.CreatedAt, token.ExpiresAt)
 	return err
 }
 
 func (r *NetworkRepository) GetCaptivePortalToken(ctx context.Context, tokenStr string) (*network.CaptivePortalToken, error) {
 	var token network.CaptivePortalToken
+	var endpointIP sql.NullString
 	err := r.db.QueryRowContext(ctx, `
-		SELECT token, network_id, jump_peer_id, peer_ip, created_at, expires_at
+		SELECT token, network_id, jump_peer_id, peer_ip, peer_endpoint_ip, created_at, expires_at
 		FROM captive_portal_tokens
 		WHERE token=$1
-	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.PeerIP, &token.CreatedAt, &token.ExpiresAt)
+	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.PeerIP, &endpointIP, &token.CreatedAt, &token.ExpiresAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("token not found")
 		}
 		return nil, fmt.Errorf("get captive portal token: %w", err)
+	}
+	if endpointIP.Valid {
+		token.PeerEndpointIP = endpointIP.String
 	}
 	return &token, nil
 }
