@@ -8,24 +8,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetPeerSessionStatus godoc
-// @Summary      Get peer session status
-// @Description  Get the security status of a peer's active sessions
+// GetPeerConnectivityStatus godoc
+// @Summary      Get peer connectivity status
+// @Description  Get the live connectivity status of a peer (whether it has an active agent and the last heartbeat).
 // @Tags         peers
 // @Produce      json
 // @Param        networkId path string true "Network ID"
 // @Param        peerId    path string true "Peer ID"
-// @Success      200 {object} domain.PeerSessionStatus
+// @Success      200 {object} domain.PeerConnectivityStatus
 // @Failure      404 {object} map[string]string
 // @Failure      500 {object} map[string]string
 // @Router       /networks/{networkId}/peers/{peerId}/session [get]
 // @Security     BearerAuth
-func (h *Handler) GetPeerSessionStatus(c *gin.Context) {
+func (h *Handler) GetPeerConnectivityStatus(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
 
-	var status *domain.PeerSessionStatus
-	status, err := h.service.GetPeerSessionStatus(c.Request.Context(), networkID, peerID)
+	status, err := h.service.GetPeerConnectivityStatus(c.Request.Context(), networkID, peerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

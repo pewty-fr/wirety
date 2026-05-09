@@ -31,27 +31,13 @@ export interface Peer {
   updated_at: string;
   network_id?: string;
   network_name?: string;
-  session?: PeerSession;
-  session_status?: PeerSessionStatus;
-  // Legacy fields (deprecated, may still be returned by API during migration)
-  is_isolated?: boolean;
-  full_encapsulation?: boolean;
+  session_status?: PeerConnectivityStatus;
 }
 
-export interface PeerSession {
-  peer_id: string;
-  reported_endpoint?: string;
-  last_seen?: string;
-  connected: boolean;
-}
-
-export interface PeerSessionStatus {
+export interface PeerConnectivityStatus {
   peer_id: string;
   has_active_agent: boolean;
   current_session?: AgentSession;
-  conflicting_sessions?: AgentSession[];
-  recent_endpoint_changes?: EndpointChange[];
-  suspicious_activity: boolean;
   last_checked: string;
 }
 
@@ -67,14 +53,6 @@ export interface AgentSession {
   session_id: string;
 }
 
-export interface EndpointChange {
-  peer_id: string;
-  old_endpoint: string;
-  new_endpoint: string;
-  changed_at: string;
-  source: string;
-}
-
 export interface IPAMAllocation {
   network_id: string;
   network_name: string;
@@ -85,43 +63,6 @@ export interface IPAMAllocation {
   allocated: boolean;
 }
 
-export interface SecurityIncident {
-  id: string;
-  peer_id: string;
-  peer_name: string;
-  network_id: string;
-  network_name: string;
-  incident_type: 'shared_config' | 'session_conflict' | 'suspicious_activity';
-  detected_at: string;
-  public_key: string;
-  endpoints: string[];
-  details: string;
-  resolved: boolean;
-  resolved_at?: string;
-  resolved_by?: string;
-}
-
-export interface SecurityConfig {
-  id: string;
-  network_id: string;
-  enabled: boolean;
-  session_conflict_threshold_minutes: number;
-  endpoint_change_threshold_minutes: number;
-  max_endpoint_changes_per_day: number;
-  port_change_threshold_minutes: number;
-  max_port_changes_per_window: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SecurityConfigUpdateRequest {
-  enabled?: boolean;
-  session_conflict_threshold_minutes?: number;
-  endpoint_change_threshold_minutes?: number;
-  max_endpoint_changes_per_day?: number;
-  port_change_threshold_minutes?: number;
-  max_port_changes_per_window?: number;
-}
 
 export interface User {
   id: string;

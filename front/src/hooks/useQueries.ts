@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '../api/client';
-import type { Network, ACL, SecurityIncident } from '../types';
+import type { Network, ACL } from '../types';
 
 // Query Keys
 export const queryKeys = {
@@ -12,7 +12,6 @@ export const queryKeys = {
   networkPeers: (networkId: string) => ['networkPeers', networkId] as const,
   acl: (networkId: string) => ['acl', networkId] as const,
   acls: (networkIds: string[]) => ['acls', networkIds] as const,
-  incidents: (resolved?: boolean) => ['incidents', resolved] as const,
 };
 
 // Networks Query
@@ -63,11 +62,11 @@ export function usePeer(networkId: string, peerId: string, poll: boolean = true)
   });
 }
 
-// Peer Session Query
+// Peer Connectivity Query — last_seen + has_active_agent
 export function usePeerSession(networkId: string, peerId: string, enabled: boolean = true) {
   return useQuery({
     queryKey: queryKeys.peerSession(networkId, peerId),
-    queryFn: () => api.getPeerSessionStatus(networkId, peerId),
+    queryFn: () => api.getPeerConnectivityStatus(networkId, peerId),
     enabled: enabled && !!networkId && !!peerId,
     staleTime: 5000, // 5 seconds for session data
   });
@@ -117,22 +116,3 @@ export function useACLs(networks: Network[]) {
   });
 }
 
-// Security Incidents Query
-export function useSecurityIncidents(resolved?: boolean, pageSize: number = 200) {
-  return useQuery({
-    queryKey: queryKeys.incidents(resolved),
-    queryFn: async () => {
-      const response = await api.getSecurityIncidents(1, pageSize, resolved);
-      const incidentPeers = new Set<string>();
-      response.data.forEach((inc: SecurityIncident) => {
-        if (!inc.resolved && inc.peer_id) {
-          incidentPeers.add(inc.peer_id);
-        }
-      });
-      return {
-        incidents: response.data,
-        incidentPeerIds: incidentPeers,
-      };
-    },
-  });
-}

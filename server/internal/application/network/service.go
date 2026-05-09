@@ -253,6 +253,16 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 		return nil, fmt.Errorf("invalid peer name: %w", err)
 	}
 
+	// Ownership rule (v2):
+	//   - Agent-managed peers (jump peers, server agents on dedicated hosts) MAY
+	//     be ownerless — they are infrastructure, not user devices, and they
+	//     don't go through the captive portal.
+	//   - Every other peer (a user device) MUST have an owner so that the
+	//     captive portal can match the authenticated user against the peer.
+	if !req.IsJump && !req.UseAgent && ownerID == "" {
+		return nil, fmt.Errorf("a non-agent peer must have an owner — assign owner_id, or set use_agent=true if this peer runs the wirety agent on a dedicated host")
+	}
+
 	net, err := s.repo.GetNetwork(ctx, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
@@ -414,6 +424,11 @@ func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req 
 	peer.UpdatedAt = time.Now()
 	// Preserve token (do not allow overwrite via update)
 
+	// Re-check the ownership rule: a non-agent peer must keep an owner.
+	if !peer.IsJump && !peer.UseAgent && peer.OwnerID == "" {
+		return nil, fmt.Errorf("a non-agent peer must have an owner; cannot leave owner_id empty")
+	}
+
 	if err := s.repo.UpdatePeer(ctx, networkID, peer); err != nil {
 		return nil, fmt.Errorf("failed to update peer: %w", err)
 	}
@@ -485,12 +500,6 @@ func (s *Service) GeneratePeerConfig(ctx context.Context, networkID, peerID stri
 	}
 
 	allowedPeers := net.GetAllowedPeersFor(peerID)
-
-	// Filter out quarantined peers from allowed peers (for jump servers)
-	// This ensures quarantined peers are completely disconnected from the network
-	if peer.IsJump {
-		allowedPeers = s.filterQuarantinedPeers(ctx, networkID, allowedPeers)
-	}
 
 	// Build a map of preshared keys for allowed peers
 	presharedKeys := make(map[string]string)
@@ -590,12 +599,6 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 		return "", nil, nil, fmt.Errorf("peer not found")
 	}
 	allowedPeers := net.GetAllowedPeersFor(peerID)
-
-	// Filter out quarantined peers from allowed peers (for jump servers)
-	// This ensures quarantined peers are completely disconnected from the network
-	if peer.IsJump {
-		allowedPeers = s.filterQuarantinedPeers(ctx, networkID, allowedPeers)
-	}
 
 	presharedKeys := make(map[string]string)
 	for _, allowedPeer := range allowedPeers {
@@ -773,492 +776,121 @@ func (s *Service) DeleteNetwork(ctx context.Context, networkID string) error {
 	return nil
 }
 
-// blockPeerInACL is deprecated - ACL system has been removed
-// Security incidents should now be handled through policy-based access control
-func (s *Service) blockPeerInACL(ctx context.Context, networkID, peerID string, reason string) error {
-	peer, _ := s.repo.GetPeer(ctx, networkID, peerID)
-	peerName := peerID
-	if peer != nil {
-		peerName = peer.Name
-	}
-
-	log.Warn().
-		Str("peer_id", peerID).
-		Str("peer_name", peerName).
-		Str("reason", reason).
-		Msg("SECURITY: Peer security incident detected - implementing policy-based blocking")
-
-	// Implement policy-based blocking using groups and policies
-	if s.groupRepo == nil || s.policyService == nil {
-		log.Error().Msg("cannot block peer: group repository or policy service not available")
-		return fmt.Errorf("policy-based blocking not available")
-	}
-
-	// 1. Ensure quarantine group exists
-	quarantineGroupID, err := s.ensureQuarantineGroup(ctx, networkID)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to ensure quarantine group")
-		return fmt.Errorf("failed to create quarantine group: %w", err)
-	}
-
-	// 2. Add peer to quarantine group
-	err = s.groupRepo.AddPeerToGroup(ctx, networkID, quarantineGroupID, peerID)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to add peer to quarantine group")
-		return fmt.Errorf("failed to quarantine peer: %w", err)
-	}
-
-	log.Info().
-		Str("peer_id", peerID).
-		Str("peer_name", peerName).
-		Str("group_id", quarantineGroupID).
-		Str("reason", reason).
-		Msg("SECURITY: Peer quarantined successfully")
-
-	// 3. Revoke captive portal whitelist so quarantined peer loses iptables ACCEPT immediately
-	if peer != nil && peer.Address != "" {
-		// Strip CIDR suffix if present (e.g. "10.0.0.2/22" → "10.0.0.2")
-		peerIP := peer.Address
-		if idx := strings.Index(peerIP, "/"); idx != -1 {
-			peerIP = peerIP[:idx]
-		}
-		if err := s.repo.RemoveCaptivePortalWhitelistByPeerIP(ctx, networkID, peerIP); err != nil {
-			log.Warn().Err(err).Str("peer_ip", peerIP).Msg("SECURITY: failed to revoke captive portal whitelist for quarantined peer")
-		} else {
-			log.Info().Str("peer_ip", peerIP).Msg("SECURITY: captive portal whitelist revoked for quarantined peer")
-		}
-	}
-
-	// 4. Notify all peers to regenerate configs
-	if s.wsNotifier != nil {
-		s.wsNotifier.NotifyNetworkPeers(networkID)
-	}
-
-	return nil
-}
-
-// ensureQuarantineGroup ensures a quarantine group with deny-all policy exists
-func (s *Service) ensureQuarantineGroup(ctx context.Context, networkID string) (string, error) {
-	// Check if quarantine group already exists
-	groups, err := s.groupRepo.ListGroups(ctx, networkID)
-	if err != nil {
-		return "", fmt.Errorf("failed to list groups: %w", err)
-	}
-
-	for _, group := range groups {
-		if group.Name == "quarantine" {
-			return group.ID, nil
-		}
-	}
-
-	// Resolve or create the deny-all policy for the quarantine group.
-	// We check for an existing policy first so that ensureQuarantineGroup is fully
-	// idempotent: a previous partial failure (policy created, group creation failed)
-	// would otherwise cause a unique-constraint error on the second attempt.
-	var denyAllPolicyID string
-	if s.policyRepo != nil {
-		existingPolicies, listErr := s.policyRepo.ListPolicies(ctx, networkID)
-		if listErr == nil {
-			for _, p := range existingPolicies {
-				if p.Name == "quarantine-deny-all" {
-					denyAllPolicyID = p.ID
-					break
-				}
-			}
-		}
-
-		if denyAllPolicyID == "" {
-			// Policy does not exist yet — create it.
-			denyAllPolicyID = uuid.New().String()
-			denyAllPolicy := &network.Policy{
-				ID:          denyAllPolicyID,
-				NetworkID:   networkID,
-				Name:        "quarantine-deny-all",
-				Description: "automatically created policy to deny all traffic for quarantined peers",
-				Rules: []network.PolicyRule{
-					{
-						ID:          uuid.New().String(),
-						Direction:   "output",
-						Action:      "deny",
-						Target:      "0.0.0.0/0",
-						TargetType:  "cidr",
-						Description: "deny all outbound traffic",
-					},
-					{
-						ID:          uuid.New().String(),
-						Direction:   "input",
-						Action:      "deny",
-						Target:      "0.0.0.0/0",
-						TargetType:  "cidr",
-						Description: "deny all inbound traffic",
-					},
-				},
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
-			}
-			if err = s.policyRepo.CreatePolicy(ctx, networkID, denyAllPolicy); err != nil {
-				return "", fmt.Errorf("failed to create quarantine deny-all policy: %w", err)
-			}
-		}
-	} else {
-		log.Warn().Msg("Policy repository not available - quarantine group created without deny-all policy")
-	}
-
-	// Create quarantine group with priority 0 (highest priority)
-	var policyIDs []string
-	if denyAllPolicyID != "" {
-		policyIDs = []string{denyAllPolicyID} // Attach the deny-all policy if created
-	}
-
-	quarantineGroup := &network.Group{
-		ID:          uuid.New().String(),
-		NetworkID:   networkID,
-		Name:        "quarantine",
-		Description: "automatically created group for blocking compromised peers",
-		Priority:    0, // Highest priority - quarantine policies apply first
-		PeerIDs:     []string{},
-		PolicyIDs:   policyIDs,
-		RouteIDs:    []string{},
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	err = s.groupRepo.CreateGroup(ctx, networkID, quarantineGroup)
-	if err != nil {
-		return "", fmt.Errorf("failed to create quarantine group: %w", err)
-	}
-
-	// Log that quarantine group was created
-	if denyAllPolicyID != "" {
-		log.Warn().
-			Str("network_id", networkID).
-			Str("group_id", quarantineGroup.ID).
-			Str("policy_id", denyAllPolicyID).
-			Msg("SECURITY: Quarantine group created with deny-all policy to block quarantined peers")
-	} else {
-		log.Warn().
-			Str("network_id", networkID).
-			Str("group_id", quarantineGroup.ID).
-			Msg("SECURITY: Quarantine group created - admin should manually attach deny-all policy to block quarantined peers")
-	}
-
-	return quarantineGroup.ID, nil
-}
-
-// ProcessAgentHeartbeat processes a heartbeat message from an agent
+// ProcessAgentHeartbeat updates the agent session's last_seen timestamp and, if
+// the heartbeat is from a jump peer, prunes captive portal whitelist entries for
+// peers no longer reporting an endpoint.
+//
+// Security-incident detection (session conflict, shared config, port change,
+// suspicious activity) was removed in v2 — the captive portal now performs an
+// endpoint check on every authenticated connection, which provides a stronger
+// guarantee than after-the-fact heartbeat analysis.
 func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID string, heartbeat *network.AgentHeartbeat) error {
-	// Generate or retrieve session ID (based on hostname + peer ID for now)
-	// sessionID := fmt.Sprintf("%s-%s", peerID, heartbeat.Hostname)
-
-	// Check for existing sessions for this peer
-	existingSessions, err := s.repo.GetActiveSessionsForPeer(ctx, networkID, peerID)
-	if err != nil {
-		return fmt.Errorf("failed to get existing sessions: %w", err)
-	}
-
-	// Check for session conflicts (multiple agents with different hostnames)
 	now := time.Now()
-	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
-	activeSessionThreshold := now.Add(-securityConfig.SessionConflictThreshold)
 
-	var currentSession *network.AgentSession
-	for _, session := range existingSessions {
-		// Consider sessions active if seen within threshold
-		if session.LastSeen.After(activeSessionThreshold) {
-			if session.Hostname != heartbeat.Hostname && session.ReportedEndpoint != "" && session.SystemUptime != -1 && session.WireGuardUptime != -1 {
-				peer, err := s.repo.GetPeer(ctx, networkID, peerID)
-				if err == nil {
-					net, err := s.repo.GetNetwork(ctx, networkID)
-					if err == nil {
-						// Check if there's already an open incident of this type for this peer
-						resolved := false
-						incidents, err := s.repo.ListSecurityIncidentsByNetwork(ctx, networkID, &resolved)
-						if err == nil {
-							exists := false
-							for _, incident := range incidents {
-								if incident.IncidentType == network.IncidentTypeSessionConflict && incident.PeerID == peerID {
-									// nothing to do, incident already exists
-									exists = true
-									break
-								}
-							}
-							if exists {
-								continue
-							}
+	// Preserve FirstSeen / SessionID across heartbeats so the session is treated
+	// as continuous.  GetSession returns the most recent session for the peer.
+	existing, _ := s.repo.GetSession(ctx, networkID, peerID)
 
-							// Only create security incident if security detection is enabled
-							if securityConfig.Enabled {
-								incident := &network.SecurityIncident{
-									ID:           fmt.Sprintf("incident-conflict-%s-%d", peerID, now.Unix()),
-									PeerID:       peerID,
-									PeerName:     peer.Name,
-									NetworkID:    networkID,
-									NetworkName:  net.Name,
-									IncidentType: network.IncidentTypeSessionConflict,
-									DetectedAt:   now,
-									PublicKey:    peer.PublicKey,
-									Endpoints:    []string{session.ReportedEndpoint},
-									Details:      fmt.Sprintf("Session conflict: peer %s has multiple active agents (hostnames: %s, %s)", peer.Name, session.Hostname, heartbeat.Hostname),
-									Resolved:     false,
-								}
-								if err := s.repo.CreateSecurityIncident(ctx, incident); err != nil {
-									log.Error().Err(err).Str("peer_id", peerID).Msg("failed to create security incident for session conflict")
-								}
-
-								// Block the peer in ACL to prevent all communication
-								if err := s.blockPeerInACL(ctx, networkID, peerID, "session conflict detection"); err != nil {
-									log.Error().Err(err).Str("peer_id", peerID).Msg("failed to block peer in ACL after session conflict")
-								}
-							}
-						}
-					}
-				}
-			} else {
-				currentSession = session
-			}
-		}
-	} // Create or update the session
 	session := &network.AgentSession{
 		PeerID:          peerID,
 		Hostname:        heartbeat.Hostname,
 		SystemUptime:    heartbeat.SystemUptime,
 		WireGuardUptime: heartbeat.WireGuardUptime,
 		LastSeen:        now,
-		SessionID:       uuid.NewString(),
 	}
-
-	// Get all session from peersendpoints
-	peerEndpoints := map[string]string{}
-	peers, err := s.repo.ListPeers(ctx, networkID)
-	if err != nil {
-		return fmt.Errorf("failed to list peers: %w", err)
-	}
-
-	for _, peer := range peers {
-		if endpoint, ok := heartbeat.PeerEndpoints[peer.PublicKey]; ok {
-			peerEndpoints[peer.ID] = endpoint
-		}
-	}
-
-	if currentSession == nil {
-		session.FirstSeen = now
+	if existing != nil {
+		session.FirstSeen = existing.FirstSeen
+		session.SessionID = existing.SessionID
+		session.ReportedEndpoint = existing.ReportedEndpoint
 	} else {
-		session.FirstSeen = currentSession.FirstSeen
-		session.ReportedEndpoint = currentSession.ReportedEndpoint
-		session.SessionID = currentSession.SessionID
+		session.FirstSeen = now
+		session.SessionID = uuid.NewString()
 	}
 
-	for id, endpoint := range peerEndpoints {
-		existingSess, err := s.repo.GetActiveSessionsForPeer(ctx, networkID, id)
-		if err != nil {
-			return fmt.Errorf("failed to get existing sessions: %w", err)
-		}
-		now := time.Now()
-		activeSessionThreshold := now.Add(-securityConfig.SessionConflictThreshold)
-
-		var currentSess *network.AgentSession
-		if len(existingSess) > 0 {
-			for _, sess := range existingSess {
-				// For non agent session
-				if sess.Hostname == "" && sess.SystemUptime == -1 && sess.WireGuardUptime == -1 {
-					currentSess = sess
-					currentSess.LastSeen = now
-					_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
-					break
-				}
-				// Consider sessions active if seen within threshold
-				if sess.LastSeen.After(activeSessionThreshold) {
-					currentSess = sess
-					break
-				}
-			}
-		} else {
-			currentSess = &network.AgentSession{
-				PeerID:          id,
-				Hostname:        "",
-				SystemUptime:    -1,
-				WireGuardUptime: -1,
-				LastSeen:        now,
-				SessionID:       uuid.NewString(),
-			}
-		}
-		if currentSess == nil {
-			continue
-		}
-		if currentSess.ReportedEndpoint == "" {
-			currentSess.ReportedEndpoint = endpoint
-			_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
-			change := &network.EndpointChange{
-				PeerID:      currentSess.PeerID,
-				OldEndpoint: "",
-				NewEndpoint: endpoint,
-				ChangedAt:   now,
-				Source:      peerID,
-			}
-			if err := s.repo.RecordEndpointChange(ctx, networkID, change); err != nil {
-				// Log but don't fail on endpoint change recording error
-				log.Warn().Err(err).Msg("failed to record endpoint change")
-			}
-			continue
-		}
-		if currentSess.ReportedEndpoint == endpoint {
-			continue
-		}
-		changes, err := s.repo.GetEndpointChanges(ctx, networkID, currentSess.PeerID, now.Add(-24*time.Hour))
-
-		// Check if this source has seen a different endpoint for this peer
-		shouldRecordChange := false
-		lastEndpointFromThisSource := ""
-
-		if err == nil && len(changes) > 0 {
-			// Look for the most recent change from the same source
-			for _, change := range changes {
-				if change.Source == peerID {
-					lastEndpointFromThisSource = change.NewEndpoint
-					break // Found the most recent change from this source
-				}
-			}
-		}
-
-		// Only record change if:
-		// 1. This source has never seen this peer before (lastEndpointFromThisSource == ""), OR
-		// 2. This source has seen this peer but with a different endpoint
-		if lastEndpointFromThisSource == "" || lastEndpointFromThisSource != endpoint {
-			shouldRecordChange = true
-		}
-
-		if shouldRecordChange {
-			change := &network.EndpointChange{
-				PeerID:      currentSess.PeerID,
-				OldEndpoint: lastEndpointFromThisSource,
-				NewEndpoint: endpoint,
-				ChangedAt:   now,
-				Source:      peerID,
-			}
-			if err := s.repo.RecordEndpointChange(ctx, networkID, change); err != nil {
-				// Log but don't fail on endpoint change recording error
-				log.Warn().Err(err).Msg("failed to record endpoint change")
-			}
-
-			// Only remove from whitelist if this represents an actual endpoint change (not first time seeing)
-			if lastEndpointFromThisSource != "" {
-				// Remove peer from whitelist due to endpoint change
-				peer, err := s.repo.GetPeer(ctx, networkID, currentSess.PeerID)
-				if err == nil && !peer.UseAgent {
-					// This is a non-agent peer with endpoint change - remove from whitelist
-					if err := s.RemoveFromWhitelistOnEndpointChange(ctx, networkID, peer.Address); err != nil {
-						log.Error().Err(err).Str("peer_ip", peer.Address).Msg("failed to remove peer from whitelist on endpoint change")
-					}
-				}
-			}
-		}
-
-		// Always update the session's last seen time, but don't update ReportedEndpoint
-		// since multiple sources might see different endpoints for the same peer
-		currentSess.LastSeen = now
-		_ = s.repo.CreateOrUpdateSession(ctx, networkID, currentSess)
+	if err := s.repo.CreateOrUpdateSession(ctx, networkID, session); err != nil {
+		return fmt.Errorf("failed to update session: %w", err)
 	}
 
-	// If this is a jump peer, cleanup whitelist for disconnected peers
+	// Jump peers also report which other peers are currently connected via
+	// WireGuard.  We use those endpoint reports for two things:
+	//   1. Update last_seen on each reported peer's session — so the dashboard's
+	//      "connected" status badge works for peers that don't run the agent.
+	//   2. Prune captive portal whitelist entries for non-agent peers that have
+	//      disappeared, so disconnect → re-auth.
 	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
 	if err == nil && peer.IsJump {
-		// Build map of active peer IPs from the heartbeat
-		activePeerIPs := make(map[string]bool)
-		for _, p := range peers {
-			if !p.UseAgent {
-				// Check if this peer has an active endpoint reported
-				if _, hasEndpoint := heartbeat.PeerEndpoints[p.PublicKey]; hasEndpoint {
-					activePeerIPs[p.Address] = true
+		peers, err := s.repo.ListPeers(ctx, networkID)
+		if err == nil {
+			activePeerIPs := make(map[string]bool)
+			for _, p := range peers {
+				endpoint, seen := heartbeat.PeerEndpoints[p.PublicKey]
+				if !seen {
+					continue
 				}
+				// Update each reported peer's session to mark them seen now.
+				// Skip the heartbeat sender itself (already updated above) and
+				// skip agent peers — they send their own heartbeat directly,
+				// and overwriting their session here would lose hostname/uptime.
+				if p.ID == peerID || p.UseAgent {
+					if !p.UseAgent {
+						activePeerIPs[p.Address] = true
+					}
+					continue
+				}
+				existingP, _ := s.repo.GetSession(ctx, networkID, p.ID)
+				ps := &network.AgentSession{
+					PeerID:           p.ID,
+					ReportedEndpoint: endpoint,
+					LastSeen:         now,
+				}
+				if existingP != nil {
+					ps.Hostname = existingP.Hostname
+					ps.SystemUptime = existingP.SystemUptime
+					ps.WireGuardUptime = existingP.WireGuardUptime
+					ps.FirstSeen = existingP.FirstSeen
+					ps.SessionID = existingP.SessionID
+				} else {
+					ps.FirstSeen = now
+					ps.SessionID = uuid.NewString()
+				}
+				_ = s.repo.CreateOrUpdateSession(ctx, networkID, ps)
+				activePeerIPs[p.Address] = true
+			}
+			if err := s.CleanupWhitelistForDisconnectedPeers(ctx, networkID, peerID, activePeerIPs); err != nil {
+				log.Error().Err(err).Msg("failed to cleanup whitelist for disconnected peers")
 			}
 		}
-
-		// Cleanup whitelist for disconnected peers
-		if err := s.CleanupWhitelistForDisconnectedPeers(ctx, networkID, peerID, activePeerIPs); err != nil {
-			log.Error().Err(err).Msg("failed to cleanup whitelist for disconnected peers")
-		}
 	}
 
-	err = s.detectAndHandleSharedConfigs(ctx, networkID)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to detect and handle shared configs")
-	}
-	err = s.detectAndHandlePortChanges(ctx, networkID)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to detect and handle port changes")
-	}
-	err = s.detectAndHandleSuspicousActivity(ctx, networkID)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to detect and handle suspicious activity")
-	}
-
-	return s.repo.CreateOrUpdateSession(ctx, networkID, session)
+	return nil
 }
 
-// GetPeerSessionStatus returns the security status of a peer's sessions
-func (s *Service) GetPeerSessionStatus(ctx context.Context, networkID, peerID string) (*network.PeerSessionStatus, error) {
-	sessions, err := s.repo.GetActiveSessionsForPeer(ctx, networkID, peerID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sessions: %w", err)
-	}
+// PeerConnectivityThreshold is the inactivity window beyond which a peer is
+// considered disconnected.  Heartbeats fire every 30 s, so 3 min ≈ 6 missed
+// heartbeats — close to WireGuard's own 180 s activity threshold.
+const PeerConnectivityThreshold = 3 * time.Minute
 
+// GetPeerConnectivityStatus reports whether a peer is currently considered
+// connected, based on its WebSocket presence (for agent peers) and the
+// freshness of its last heartbeat.
+func (s *Service) GetPeerConnectivityStatus(ctx context.Context, networkID, peerID string) (*network.PeerConnectivityStatus, error) {
 	now := time.Now()
-	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
-	activeThreshold := now.Add(-securityConfig.SessionConflictThreshold)
-
-	status := &network.PeerSessionStatus{
-		PeerID:                peerID,
-		HasActiveAgent:        false,
-		ConflictingSessions:   []network.AgentSession{},
-		RecentEndpointChanges: []network.EndpointChange{},
-		SuspiciousActivity:    false,
-		LastChecked:           now,
+	status := &network.PeerConnectivityStatus{
+		PeerID:      peerID,
+		LastChecked: now,
 	}
 
-	// Check if peer has an active WebSocket connection to the server
+	// Live WebSocket presence is the strongest signal that a peer's agent is up.
 	if s.wsConnectionChecker != nil {
 		status.HasActiveAgent = s.wsConnectionChecker.IsConnected(networkID, peerID)
 	}
 
-	// Find active sessions (for security incident detection)
-	var activeSessions []*network.AgentSession
-	for _, session := range sessions {
-		if session.LastSeen.After(activeThreshold) {
-			activeSessions = append(activeSessions, session)
-		}
-	}
-
-	if len(activeSessions) > 0 {
-		status.CurrentSession = activeSessions[0]
-	}
-
-	// Check for conflicts (multiple active sessions with different hostnames)
-	if len(activeSessions) > 1 {
-		for _, session := range activeSessions {
-			status.ConflictingSessions = append(status.ConflictingSessions, *session)
-		}
-	}
-
-	// Get recent endpoint changes (last 24 hours)
-	since := now.Add(-24 * time.Hour)
-	changes, err := s.repo.GetEndpointChanges(ctx, networkID, peerID, since)
-	if err == nil && changes != nil {
-		for _, change := range changes {
-			status.RecentEndpointChanges = append(status.RecentEndpointChanges, *change)
-		}
-
-		// Check for suspicious activity (too many endpoint changes)
-		if len(changes) >= securityConfig.MaxEndpointChangesPerDay {
-			status.SuspiciousActivity = true
-		}
-
-		// Check for rapid endpoint changes
-		for i := 1; i < len(changes); i++ {
-			timeDiff := changes[i].ChangedAt.Sub(changes[i-1].ChangedAt)
-			if timeDiff < securityConfig.EndpointChangeThreshold {
-				status.SuspiciousActivity = true
-				break
-			}
+	// Even without an active WS, a recent heartbeat counts as "connected".
+	session, err := s.repo.GetSession(ctx, networkID, peerID)
+	if err == nil && session != nil {
+		status.CurrentSession = session
+		if !status.HasActiveAgent && now.Sub(session.LastSeen) <= PeerConnectivityThreshold {
+			status.HasActiveAgent = true
 		}
 	}
 
@@ -1270,543 +902,14 @@ func (s *Service) ListSessions(ctx context.Context, networkID string) ([]*networ
 	return s.repo.ListSessions(ctx, networkID)
 }
 
-// Security incident operations
-
-// ListSecurityIncidents lists all security incidents
-func (s *Service) ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*network.SecurityIncident, error) {
-	return s.repo.ListSecurityIncidents(ctx, resolved)
-}
-
-// ListSecurityIncidentsByNetwork lists security incidents for a specific network
-func (s *Service) ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*network.SecurityIncident, error) {
-	return s.repo.ListSecurityIncidentsByNetwork(ctx, networkID, resolved)
-}
-
-// GetSecurityIncident retrieves a security incident by ID
-func (s *Service) GetSecurityIncident(ctx context.Context, incidentID string) (*network.SecurityIncident, error) {
-	return s.repo.GetSecurityIncident(ctx, incidentID)
-}
-
-// ResolveSecurityIncident marks a security incident as resolved
-func (s *Service) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
-	// First get the incident to find the peer ID
-	incident, err := s.repo.GetSecurityIncident(ctx, incidentID)
-	if err != nil {
-		return fmt.Errorf("failed to get incident: %w", err)
-	}
-
-	// Resolve the incident
-	if err := s.repo.ResolveSecurityIncident(ctx, incidentID, resolvedBy); err != nil {
-		return err
-	}
-
-	log.Info().
-		Str("incident_id", incidentID).
-		Str("peer_id", incident.PeerID).
-		Str("peer_name", incident.PeerName).
-		Str("resolved_by", resolvedBy).
-		Msg("SECURITY: Security incident resolved")
-
-	// Clean up endpoint changes for the peer
-	if incident.PeerID != "" && incident.NetworkID != "" {
-		// Delete all endpoint changes for this peer
-		if err := s.repo.DeleteEndpointChanges(ctx, incident.NetworkID, incident.PeerID); err != nil {
-			log.Warn().
-				Err(err).
-				Str("peer_id", incident.PeerID).
-				Str("network_id", incident.NetworkID).
-				Msg("failed to delete endpoint changes")
-		} else {
-			log.Info().
-				Str("peer_id", incident.PeerID).
-				Str("network_id", incident.NetworkID).
-				Msg("deleted endpoint changes for resolved incident")
-		}
-
-		// Reset the reported endpoint in agent sessions
-		sessions, err := s.repo.GetActiveSessionsForPeer(ctx, incident.NetworkID, incident.PeerID)
-		if err == nil {
-			for _, session := range sessions {
-				// Reset the reported endpoint to empty
-				session.ReportedEndpoint = ""
-				if err := s.repo.CreateOrUpdateSession(ctx, incident.NetworkID, session); err != nil {
-					log.Warn().
-						Err(err).
-						Str("peer_id", incident.PeerID).
-						Str("session_id", session.SessionID).
-						Msg("failed to reset reported endpoint for session")
-				} else {
-					log.Info().
-						Str("peer_id", incident.PeerID).
-						Str("session_id", session.SessionID).
-						Msg("reset reported endpoint for session")
-				}
-			}
-		}
-
-		if err := s.reconnectPeer(ctx, incident.NetworkID, incident.PeerID); err != nil {
-			return fmt.Errorf("can't remove peer from quarantine: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// ReconnectPeer removes a peer from the quarantine group to restore network access
-func (s *Service) reconnectPeer(ctx context.Context, networkID, peerID string) error {
-	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
-	if err != nil {
-		return fmt.Errorf("peer not found: %w", err)
-	}
-
-	log.Info().
-		Str("peer_id", peerID).
-		Str("peer_name", peer.Name).
-		Msg("SECURITY: Peer reconnect requested - removing from quarantine group")
-
-	// Check if group repository is available
-	if s.groupRepo == nil {
-		log.Error().Msg("cannot reconnect peer: group repository not available")
-		return fmt.Errorf("policy-based reconnection not available")
-	}
-
-	// Get the quarantine group
-	quarantineGroupID, err := s.getQuarantineGroupID(ctx, networkID)
-	if err != nil {
-		// If quarantine group doesn't exist, peer is not quarantined
-		log.Info().
-			Str("peer_id", peerID).
-			Msg("Quarantine group does not exist, peer is not quarantined")
-		return nil
-	}
-
-	// Remove peer from quarantine group (idempotent - no error if peer not in group)
-	err = s.groupRepo.RemovePeerFromGroup(ctx, networkID, quarantineGroupID, peerID)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to remove peer from quarantine group")
-		return fmt.Errorf("failed to reconnect peer: %w", err)
-	}
-
-	log.Info().
-		Str("peer_id", peerID).
-		Str("peer_name", peer.Name).
-		Str("group_id", quarantineGroupID).
-		Msg("SECURITY: Peer reconnected successfully")
-
-	// Notify all peers to regenerate configs
-	if s.wsNotifier != nil {
-		s.wsNotifier.NotifyNetworkPeers(networkID)
-	}
-
-	return nil
-}
-
-// getQuarantineGroupID retrieves the quarantine group ID for a network
-func (s *Service) getQuarantineGroupID(ctx context.Context, networkID string) (string, error) {
-	groups, err := s.groupRepo.ListGroups(ctx, networkID)
-	if err != nil {
-		return "", fmt.Errorf("failed to list groups: %w", err)
-	}
-
-	for _, group := range groups {
-		if group.Name == "quarantine" {
-			return group.ID, nil
-		}
-	}
-
-	return "", fmt.Errorf("quarantine group not found")
-}
-
-// trackPeerEndpointChanges tracks endpoint changes for peers based on their public keys
-// as observed by the jump server from WireGuard handshakes
-// func (s *Service) trackPeerEndpointChanges(ctx context.Context, networkID, jumpServerID string, peerEndpoints map[string]string) error {
-// 	// Get the network to access peer information
-// 	net, err := s.repo.GetNetwork(ctx, networkID)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to get network: %w", err)
-// 	}
-
-// 	now := time.Now()
-
-// 	// For each public key -> endpoint mapping seen by the jump server
-// 	for publicKey, newEndpoint := range peerEndpoints {
-// 		// Find which peer has this public key
-// 		var targetPeer *network.Peer
-// 		for _, peer := range net.Peers {
-// 			if peer.PublicKey == publicKey {
-// 				targetPeer = peer
-// 				break
-// 			}
-// 		}
-
-// 		if targetPeer == nil {
-// 			// Public key not found in network peers - might be the jump server's own peers
-// 			continue
-// 		}
-
-// 		// Don't track endpoint changes for the jump server itself
-// 		if targetPeer.ID == jumpServerID {
-// 			continue
-// 		}
-
-// 		// Get the last recorded endpoint for this peer
-// 		recentChanges, err := s.repo.GetEndpointChanges(ctx, networkID, targetPeer.ID, now.Add(-24*time.Hour))
-// 		if err != nil {
-// 			// Continue even if we can't get history
-// 			continue
-// 		}
-
-// 		var lastEndpoint string
-// 		if len(recentChanges) > 0 {
-// 			// Get the most recent endpoint
-// 			lastEndpoint = recentChanges[len(recentChanges)-1].NewEndpoint
-// 		}
-
-// 		// If endpoint changed, record it
-// 		if lastEndpoint != "" && lastEndpoint != newEndpoint {
-// 			change := &network.EndpointChange{
-// 				PeerID:      targetPeer.ID,
-// 				OldEndpoint: lastEndpoint,
-// 				NewEndpoint: newEndpoint,
-// 				ChangedAt:   now,
-// 				Source:      "wireguard", // From WireGuard handshakes, not agent-reported
-// 			}
-
-// 			if err := s.repo.RecordEndpointChange(ctx, networkID, change); err != nil {
-// 				fmt.Printf("failed to record endpoint change for peer %s: %v\n", targetPeer.ID, err)
-// 			} else {
-// 				fmt.Printf("Recorded endpoint change for peer %s (%s): %s -> %s\n",
-// 					targetPeer.Name, targetPeer.ID, lastEndpoint, newEndpoint)
-// 			}
-// 		} else if lastEndpoint == "" {
-// 			// First time seeing this peer's endpoint, record it as initial endpoint
-// 			change := &network.EndpointChange{
-// 				PeerID:      targetPeer.ID,
-// 				OldEndpoint: "",
-// 				NewEndpoint: newEndpoint,
-// 				ChangedAt:   now,
-// 				Source:      "wireguard",
-// 			}
-
-// 			if err := s.repo.RecordEndpointChange(ctx, networkID, change); err != nil {
-// 				fmt.Printf("failed to record initial endpoint for peer %s: %v\n", targetPeer.ID, err)
-// 			}
-// 		}
-// 	}
-
-// 	return nil
-// }
-
-// extractIP returns the IP part of a host:port endpoint string, stripping the port.
-// Handles IPv6 bracket notation ([::1]:port) and plain IPv4 (1.2.3.4:port).
-func extractIP(endpoint string) string {
-	if strings.HasPrefix(endpoint, "[") {
-		if idx := strings.LastIndex(endpoint, "]:"); idx != -1 {
-			return endpoint[1:idx] // strip brackets
-		}
-		return strings.Trim(endpoint, "[]")
-	}
-	if idx := strings.LastIndex(endpoint, ":"); idx != -1 {
-		return endpoint[:idx]
-	}
-	return endpoint
-}
-
-// detectAndHandleSharedConfigs detects if the same peer is seen at multiple
-// *different IP addresses* from the same source within a short time window.
-// This is a strong signal that the WireGuard private key is being used by
-// different people/machines.  Port-only changes (NAT rebinding) are handled
-// separately by detectAndHandlePortChanges.
-func (s *Service) detectAndHandleSharedConfigs(ctx context.Context, networkID string) error {
-	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
-	if !securityConfig.Enabled {
-		return nil
-	}
-
-	peers, err := s.repo.ListPeers(ctx, networkID)
-	if err != nil {
-		return fmt.Errorf("failed to list peers: %w", err)
-	}
-
-	now := time.Now()
-	checkWindow := now.Add(-securityConfig.EndpointChangeThreshold)
-
-	sharedConfigPeers := make(map[string]bool)
-
-	for _, peer := range peers {
-		changes, err := s.repo.GetEndpointChanges(ctx, networkID, peer.ID, checkWindow)
-		if err != nil || len(changes) < 2 {
-			continue
-		}
-
-		// Group changes by source (jump server that observed them)
-		changesBySource := make(map[string][]*network.EndpointChange)
-		for _, change := range changes {
-			changesBySource[change.Source] = append(changesBySource[change.Source], change)
-		}
-
-		for sourceID, sourceChanges := range changesBySource {
-			if len(sourceChanges) < 2 {
-				continue
-			}
-
-			// Collect unique IPs (not full endpoints) seen from this source
-			ipSet := make(map[string]bool)
-			var uniqueIPs []string
-			// Also collect all full endpoints for the incident details
-			epSet := make(map[string]bool)
-			var endpoints []string
-			for _, change := range sourceChanges {
-				if change.NewEndpoint == "" {
-					continue
-				}
-				if !epSet[change.NewEndpoint] {
-					epSet[change.NewEndpoint] = true
-					endpoints = append(endpoints, change.NewEndpoint)
-				}
-				ip := extractIP(change.NewEndpoint)
-				if !ipSet[ip] {
-					ipSet[ip] = true
-					uniqueIPs = append(uniqueIPs, ip)
-				}
-			}
-
-			// 2+ different IPs from the same source = shared config (strong signal)
-			if len(uniqueIPs) >= 2 {
-				log.Warn().
-					Str("peer_name", peer.Name).
-					Str("peer_id", peer.ID).
-					Str("source", sourceID).
-					Dur("window", securityConfig.EndpointChangeThreshold).
-					Strs("ips", uniqueIPs).
-					Strs("endpoints", endpoints).
-					Msg("Shared config detected: peer seen at multiple IPs from same source")
-
-				sharedConfigPeers[peer.ID] = true
-
-				if err := s.createIncidentIfNew(ctx, networkID, peer, network.IncidentTypeSharedConfig, endpoints,
-					fmt.Sprintf("Peer %s detected at %d different IPs from source %s within %v: %v",
-						peer.Name, len(uniqueIPs), sourceID, securityConfig.EndpointChangeThreshold, uniqueIPs),
-				); err != nil {
-					log.Error().Err(err).Str("peer_id", peer.ID).Msg("failed to create shared-config incident")
-				}
-				break // one source is enough to flag this peer
-			}
-		}
-	}
-
-	// Quarantine peers with shared configs
-	for affectedPeerID := range sharedConfigPeers {
-		if err := s.blockPeerInACL(ctx, networkID, affectedPeerID, "shared configuration detection"); err != nil {
-			log.Error().Err(err).Str("peer_id", affectedPeerID).Msg("failed to block peer in ACL")
-		}
-	}
-
-	return nil
-}
-
-// detectAndHandlePortChanges detects excessive port-only changes (same IP,
-// different port) which typically indicate NAT rebinding.  These are far less
-// severe than IP changes and do NOT quarantine the peer — they only create
-// an incident for visibility.
-func (s *Service) detectAndHandlePortChanges(ctx context.Context, networkID string) error {
-	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
-	if !securityConfig.Enabled {
-		return nil
-	}
-
-	peers, err := s.repo.ListPeers(ctx, networkID)
-	if err != nil {
-		return fmt.Errorf("failed to list peers: %w", err)
-	}
-
-	now := time.Now()
-	checkWindow := now.Add(-securityConfig.PortChangeThreshold)
-
-	for _, peer := range peers {
-		changes, err := s.repo.GetEndpointChanges(ctx, networkID, peer.ID, checkWindow)
-		if err != nil || len(changes) < 2 {
-			continue
-		}
-
-		changesBySource := make(map[string][]*network.EndpointChange)
-		for _, change := range changes {
-			changesBySource[change.Source] = append(changesBySource[change.Source], change)
-		}
-
-		for sourceID, sourceChanges := range changesBySource {
-			// Count port-only changes: same IP, different full endpoint
-			ipEndpoints := make(map[string]map[string]bool) // ip -> set of full endpoints
-			for _, change := range sourceChanges {
-				if change.NewEndpoint == "" {
-					continue
-				}
-				ip := extractIP(change.NewEndpoint)
-				if ipEndpoints[ip] == nil {
-					ipEndpoints[ip] = make(map[string]bool)
-				}
-				ipEndpoints[ip][change.NewEndpoint] = true
-			}
-
-			for ip, epSet := range ipEndpoints {
-				portChangeCount := len(epSet)
-				if portChangeCount > securityConfig.MaxPortChangesPerWindow {
-					var endpoints []string
-					for ep := range epSet {
-						endpoints = append(endpoints, ep)
-					}
-
-					log.Warn().
-						Str("peer_name", peer.Name).
-						Str("peer_id", peer.ID).
-						Str("source", sourceID).
-						Str("ip", ip).
-						Int("port_changes", portChangeCount).
-						Int("threshold", securityConfig.MaxPortChangesPerWindow).
-						Dur("window", securityConfig.PortChangeThreshold).
-						Msg("Excessive port changes detected (NAT rebinding)")
-
-					// Create incident but do NOT quarantine — port changes are usually benign
-					if err := s.createIncidentIfNew(ctx, networkID, peer, network.IncidentTypeSuspiciousActivity, endpoints,
-						fmt.Sprintf("Peer %s has %d port changes from IP %s (source %s) within %v (threshold: %d)",
-							peer.Name, portChangeCount, ip, sourceID, securityConfig.PortChangeThreshold, securityConfig.MaxPortChangesPerWindow),
-					); err != nil {
-						log.Error().Err(err).Str("peer_id", peer.ID).Msg("failed to create port-change incident")
-					}
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// detectAndHandleSuspicousActivity detects peers that have exceeded the maximum
-// number of distinct IP-level endpoint changes in a 24-hour window.  Unlike
-// detectAndHandleSharedConfigs (which looks for concurrent multi-IP presence),
-// this function looks for high churn over a longer period, which may indicate
-// a compromised or widely shared key.  Peers that exceed the threshold are
-// quarantined and an incident is created.
-func (s *Service) detectAndHandleSuspicousActivity(ctx context.Context, networkID string) error {
-	securityConfig := s.getSecurityConfigWithDefaults(ctx, networkID)
-	if !securityConfig.Enabled {
-		return nil
-	}
-
-	peers, err := s.repo.ListPeers(ctx, networkID)
-	if err != nil {
-		return fmt.Errorf("failed to list peers: %w", err)
-	}
-
-	now := time.Now()
-	checkWindow := now.Add(-time.Hour * 24)
-
-	suspiciousActivityPeers := make(map[string]bool)
-
-	for _, peer := range peers {
-		changes, err := s.repo.GetEndpointChanges(ctx, networkID, peer.ID, checkWindow)
-		if err != nil {
-			continue
-		}
-
-		changesBySource := make(map[string][]*network.EndpointChange)
-		for _, change := range changes {
-			changesBySource[change.Source] = append(changesBySource[change.Source], change)
-		}
-
-		for sourceID, sourceChanges := range changesBySource {
-			// Only count IP-level changes (not port-only) toward the daily limit
-			ipChanges := 0
-			var prevIP string
-			epSet := make(map[string]bool)
-			var endpoints []string
-			for _, change := range sourceChanges {
-				if change.NewEndpoint == "" {
-					continue
-				}
-				if !epSet[change.NewEndpoint] {
-					epSet[change.NewEndpoint] = true
-					endpoints = append(endpoints, change.NewEndpoint)
-				}
-				ip := extractIP(change.NewEndpoint)
-				if prevIP != "" && ip != prevIP {
-					ipChanges++
-				}
-				prevIP = ip
-			}
-
-			if ipChanges >= securityConfig.MaxEndpointChangesPerDay {
-				log.Warn().
-					Str("peer_name", peer.Name).
-					Str("peer_id", peer.ID).
-					Str("source", sourceID).
-					Int("ip_changes", ipChanges).
-					Int("threshold", securityConfig.MaxEndpointChangesPerDay).
-					Msg("Suspicious activity: excessive IP-level endpoint changes in 24h")
-
-				suspiciousActivityPeers[peer.ID] = true
-
-				if err := s.createIncidentIfNew(ctx, networkID, peer, network.IncidentTypeSuspiciousActivity, endpoints,
-					fmt.Sprintf("Peer %s has %d IP-level endpoint changes from source %s within 24h (threshold: %d)",
-						peer.Name, ipChanges, sourceID, securityConfig.MaxEndpointChangesPerDay),
-				); err != nil {
-					log.Error().Err(err).Str("peer_id", peer.ID).Msg("failed to create suspicious-activity incident")
-				}
-			}
-		}
-	}
-
-	// Quarantine peers with excessive IP changes
-	for affectedPeerID := range suspiciousActivityPeers {
-		if err := s.blockPeerInACL(ctx, networkID, affectedPeerID, "suspicious activity detection"); err != nil {
-			log.Error().Err(err).Str("peer_id", affectedPeerID).Msg("failed to block peer in ACL")
-		}
-	}
-
-	return nil
-}
-
-// createIncidentIfNew creates a security incident only if no open incident of the
-// same type already exists for the given peer.
-func (s *Service) createIncidentIfNew(ctx context.Context, networkID string, peer *network.Peer, incidentType string, endpoints []string, details string) error {
-	net, err := s.repo.GetNetwork(ctx, networkID)
-	if err != nil {
-		return fmt.Errorf("network not found: %w", err)
-	}
-
-	resolved := false
-	existingIncidents, err := s.repo.ListSecurityIncidentsByNetwork(ctx, networkID, &resolved)
-	if err == nil {
-		for _, existing := range existingIncidents {
-			if existing.IncidentType == incidentType && existing.PeerID == peer.ID {
-				return nil // already have an open incident
-			}
-		}
-	}
-
-	incident := &network.SecurityIncident{
-		ID:           fmt.Sprintf("incident-%s-%d", peer.ID, time.Now().Unix()),
-		PeerID:       peer.ID,
-		PeerName:     peer.Name,
-		NetworkID:    networkID,
-		NetworkName:  net.Name,
-		IncidentType: incidentType,
-		DetectedAt:   time.Now(),
-		PublicKey:     peer.PublicKey,
-		Endpoints:    endpoints,
-		Details:      details,
-		Resolved:     false,
-	}
-
-	return s.repo.CreateSecurityIncident(ctx, incident)
-}
-
 // CreateCaptivePortalToken creates a short-lived token for the captive portal flow.
 // Called by the jump peer agent when a new peer connects and needs authentication.
-// peerEndpointIP is the peer's current public endpoint IP (port stripped); it is
-// stored in the token so that AddCaptivePortalWhitelist can bind the whitelist
-// entry to the peer's originating network.  May be empty for legacy agents.
-func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) (*network.CaptivePortalToken, error) {
+// peerEndpoint is the peer's current full public endpoint ("ip:port", strict);
+// it is stored in the token so that AddCaptivePortalWhitelist can bind the
+// whitelist entry to a specific source IP+port — any change (different network,
+// NAT port rebinding, tunnel restart) forces re-authentication.  May be empty
+// for legacy agents.
+func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) (*network.CaptivePortalToken, error) {
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
@@ -1818,7 +921,7 @@ func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpP
 		NetworkID:      networkID,
 		JumpPeerID:     jumpPeerID,
 		PeerIP:         peerIP,
-		PeerEndpointIP: peerEndpointIP,
+		PeerEndpoint: peerEndpoint,
 		CreatedAt:      now,
 		ExpiresAt:      now.Add(10 * time.Minute),
 	}
@@ -1890,7 +993,7 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	// Whitelist the peer — also triggers WebSocket notification to jump peer.
 	// AddCaptivePortalWhitelist is idempotent (ON CONFLICT DO NOTHING), so repeated
 	// calls for the same peer are safe.
-	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, cpt.PeerIP, cpt.PeerEndpointIP); err != nil {
+	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, cpt.PeerIP, cpt.PeerEndpoint); err != nil {
 		return nil, fmt.Errorf("failed to whitelist peer: %w", err)
 	}
 
@@ -1906,12 +1009,12 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 }
 
 // AddCaptivePortalWhitelist adds a peer IP to the captive portal whitelist.
-// peerEndpointIP is the peer's public endpoint IP recorded at authentication
-// time; the jump peer uses it to verify that the peer is still connecting from
-// the same network.  Pass an empty string to store a legacy (endpoint-unchecked)
-// entry.
-func (s *Service) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
-	if err := s.repo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP, peerEndpointIP); err != nil {
+// peerEndpoint is the peer's full public endpoint ("ip:port", strict) recorded
+// at authentication time; the jump peer uses it to verify that the peer is
+// still connecting from the exact same source IP+port.  Pass an empty string
+// to store a legacy (endpoint-unchecked) entry.
+func (s *Service) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) error {
+	if err := s.repo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP, peerEndpoint); err != nil {
 		return err
 	}
 
@@ -1978,196 +1081,4 @@ func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, netw
 	return nil
 }
 
-// RemoveFromWhitelistOnEndpointChange removes a peer from whitelist when endpoint changes
-func (s *Service) RemoveFromWhitelistOnEndpointChange(ctx context.Context, networkID string, peerIP string) error {
-	// Get all jump peers in the network
-	net, err := s.repo.GetNetwork(ctx, networkID)
-	if err != nil {
-		return fmt.Errorf("failed to get network: %w", err)
-	}
 
-	// Remove from whitelist for all jump peers
-	for _, jumpPeer := range net.GetJumpServers() {
-		whitelist, err := s.repo.GetCaptivePortalWhitelist(ctx, networkID, jumpPeer.ID)
-		if err != nil {
-			continue
-		}
-
-		// Check if this WireGuard IP is in the whitelist.
-		// Whitelist entries may be in "wgIP@endpointIP" format — extract the
-		// wgIP part before comparing.
-		found := false
-		for _, entry := range whitelist {
-			wgIP := entry
-			if idx := strings.IndexByte(entry, '@'); idx != -1 {
-				wgIP = entry[:idx]
-			}
-			if wgIP == peerIP {
-				found = true
-				break
-			}
-		}
-
-		if found {
-			log.Info().
-				Str("network_id", networkID).
-				Str("jump_peer_id", jumpPeer.ID).
-				Str("peer_ip", peerIP).
-				Msg("removing peer from whitelist due to endpoint change")
-
-			if err := s.repo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeer.ID, peerIP); err != nil {
-				log.Error().Err(err).Str("peer_ip", peerIP).Msg("failed to remove peer from whitelist")
-			}
-		}
-	}
-
-	// Notify jump peers to update firewall rules
-	if s.wsNotifier != nil {
-		s.wsNotifier.NotifyNetworkPeers(networkID)
-	}
-
-	return nil
-}
-
-// filterQuarantinedPeers removes quarantined peers from the allowed peers list
-// This ensures quarantined peers are completely disconnected from jump server WireGuard configs
-func (s *Service) filterQuarantinedPeers(ctx context.Context, networkID string, allowedPeers []*network.Peer) []*network.Peer {
-	// If group repository is not available, return all peers (no filtering)
-	if s.groupRepo == nil {
-		return allowedPeers
-	}
-
-	// Get quarantine group ID
-	quarantineGroupID, err := s.getQuarantineGroupID(ctx, networkID)
-	if err != nil {
-		// If quarantine group doesn't exist, no peers are quarantined
-		return allowedPeers
-	}
-
-	// Get the quarantine group directly
-	quarantineGroup, err := s.groupRepo.GetGroup(ctx, networkID, quarantineGroupID)
-	if err != nil {
-		// If we can't get the quarantine group, return all peers (no filtering)
-		return allowedPeers
-	}
-
-	// Build a map of quarantined peer IDs for quick lookup
-	quarantinedPeerIDs := make(map[string]bool)
-	for _, peerID := range quarantineGroup.PeerIDs {
-		quarantinedPeerIDs[peerID] = true
-	}
-
-	// Filter out quarantined peers
-	var filteredPeers []*network.Peer
-	for _, peer := range allowedPeers {
-		if !quarantinedPeerIDs[peer.ID] {
-			filteredPeers = append(filteredPeers, peer)
-		} else {
-			log.Debug().
-				Str("network_id", networkID).
-				Str("peer_id", peer.ID).
-				Str("peer_name", peer.Name).
-				Msg("Excluding quarantined peer from jump server WireGuard config")
-		}
-	}
-
-	return filteredPeers
-}
-
-// Security config operations
-
-// GetSecurityConfig retrieves the security configuration for a network
-func (s *Service) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
-	// Verify network exists
-	_, err := s.repo.GetNetwork(ctx, networkID)
-	if err != nil {
-		return nil, fmt.Errorf("network not found: %w", err)
-	}
-
-	config, err := s.repo.GetSecurityConfig(ctx, networkID)
-	if err != nil {
-		// If no config exists, return default config
-		defaultConfig := network.DefaultSecurityConfig()
-		defaultConfig.NetworkID = networkID
-		return defaultConfig, nil
-	}
-
-	return config, nil
-}
-
-// UpdateSecurityConfig updates the security configuration for a network
-func (s *Service) UpdateSecurityConfig(ctx context.Context, networkID string, req *network.SecurityConfigUpdateRequest) (*network.SecurityConfig, error) {
-	// Validate request
-	if err := req.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid security config: %w", err)
-	}
-
-	// Verify network exists
-	_, err := s.repo.GetNetwork(ctx, networkID)
-	if err != nil {
-		return nil, fmt.Errorf("network not found: %w", err)
-	}
-
-	// Get existing config or create default
-	config, err := s.repo.GetSecurityConfig(ctx, networkID)
-	if err != nil {
-		// If no config exists, create one with default values
-		config = network.DefaultSecurityConfig()
-		config.NetworkID = networkID
-		if err := s.repo.CreateSecurityConfig(ctx, networkID, config); err != nil {
-			return nil, fmt.Errorf("failed to create default security config: %w", err)
-		}
-	}
-
-	// Update fields if provided
-	if req.Enabled != nil {
-		config.Enabled = *req.Enabled
-	}
-	if req.SessionConflictThreshold != nil {
-		config.SessionConflictThreshold = *req.SessionConflictThreshold
-	}
-	if req.EndpointChangeThreshold != nil {
-		config.EndpointChangeThreshold = *req.EndpointChangeThreshold
-	}
-	if req.MaxEndpointChangesPerDay != nil {
-		config.MaxEndpointChangesPerDay = *req.MaxEndpointChangesPerDay
-	}
-	if req.PortChangeThreshold != nil {
-		config.PortChangeThreshold = *req.PortChangeThreshold
-	}
-	if req.MaxPortChangesPerWindow != nil {
-		config.MaxPortChangesPerWindow = *req.MaxPortChangesPerWindow
-	}
-
-	// Validate the updated config
-	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid updated security config: %w", err)
-	}
-
-	if err := s.repo.UpdateSecurityConfig(ctx, networkID, config); err != nil {
-		return nil, fmt.Errorf("failed to update security config: %w", err)
-	}
-
-	log.Info().
-		Str("network_id", networkID).
-		Bool("enabled", config.Enabled).
-		Dur("session_conflict_threshold", config.SessionConflictThreshold).
-		Dur("endpoint_change_threshold", config.EndpointChangeThreshold).
-		Int("max_endpoint_changes_per_day", config.MaxEndpointChangesPerDay).
-		Dur("port_change_threshold", config.PortChangeThreshold).
-		Int("max_port_changes_per_window", config.MaxPortChangesPerWindow).
-		Msg("Security config updated")
-
-	return config, nil
-}
-
-// getSecurityConfigWithDefaults gets the security configuration for a network, returning defaults if not found
-func (s *Service) getSecurityConfigWithDefaults(ctx context.Context, networkID string) *network.SecurityConfig {
-	config, err := s.repo.GetSecurityConfig(ctx, networkID)
-	if err != nil {
-		// Return default config if not found or error
-		return network.DefaultSecurityConfig()
-	}
-
-	return config
-}

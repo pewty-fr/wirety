@@ -123,7 +123,7 @@ version: '3.8'
 
 services:
   server:
-    image: rg.fr-par.scw.cloud/wirety/server:latest
+    image: ghcr.io/pewty-fr/wirety/server:latest
     ports:
       - "8080:8080"
     environment:
@@ -136,7 +136,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: rg.fr-par.scw.cloud/wirety/frontend:latest
+    image: ghcr.io/pewty-fr/wirety/front:latest
     ports:
       - "80:80"
     environment:
@@ -629,7 +629,6 @@ wg show wg0
 Les métriques Prometheus seront exposées à `/metrics` :
 - Nombre de peers
 - Connexions actives
-- Nombre d'incidents
 - Utilisation IPAM
 
 ## Sauvegarde et récupération
@@ -661,7 +660,6 @@ curl -H "Authorization: Bearer $TOKEN" \
 4. **Gestion des secrets** : Utiliser les secrets Kubernetes ou Vault
 5. **Rotation des tokens** : Faire pivoter régulièrement les tokens d'inscription
 6. **Règles de pare-feu** : Restreindre les ports WireGuard exposés
-7. **Surveillance des incidents** : Configurer des alertes pour les incidents de sécurité
 
 ## Dépannage
 
@@ -698,5 +696,4 @@ ip route | grep wg0
 ## Étapes suivantes
 
 - [Configuration OIDC](/guides/oidc.md)
-- [Gestion des incidents](/incidents.md)
 - [Configuration réseau](/network.md)

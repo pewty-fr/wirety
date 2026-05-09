@@ -26,7 +26,7 @@ Wirety orchestre un réseau overlay WireGuard en distinguant les Peers Jump (hub
 ## Installation (Helm)
 ```bash
 # Installer Wirety en utilisant le registre OCI
-helm install wirety oci://rg.fr-par.scw.cloud/wirety/chart/wirety \
+helm install wirety oci://ghcr.io/pewty-fr/wirety/chart/wirety \
   --version <version> \
   --namespace wirety --create-namespace \
   --set ingress.enabled=true \
@@ -64,16 +64,9 @@ Après l'installation, accédez au dashboard web à `https://wirety.example.com`
 2. Copier la configuration générée (section WireGuard) dans `/etc/wireguard/wg0.conf`.
 3. Activer : `sudo wg-quick up wg0`.
 
-## Gestion des incidents
-
-Quand une activité suspecte est détectée (ex. conflit de session, pattern de saut), Wirety ajoute le peer à `BlockedPeers` dans l'ACL du réseau. Le peer est alors isolé mais reste visible pour investigation. Pour résoudre :
-1. Ouvrir **Security → Incidents**.
-2. Examiner les détails.
-3. Cliquer **Resolve** pour débloquer (applique mise à jour ACL).
-
 ## Étapes suivantes
 - Lire la page [Architecture](./architecture.md).
-- Explorer la gestion [ACL et sécurité](./incidents.md).
+- Configurer le [portail captif](./captive-portal.md) pour authentifier les utilisateurs à chaque connexion.
 - Intégrer l'[agent](./agent.md) sur plus de hosts.
 
 Bonne exploration de Wirety !

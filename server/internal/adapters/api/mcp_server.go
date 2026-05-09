@@ -498,47 +498,5 @@ func (h *Handler) buildMCPServer() *mcp.Server {
 		)
 	}
 
-	// ── Security incidents ────────────────────────────────────────────────────
-	mcp.AddTool(s,
-		&mcp.Tool{Name: "list_incidents", Description: "List all security incidents."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-			incidents, err := h.service.ListSecurityIncidents(ctx, nil)
-			if err != nil {
-				return mcpErr(err.Error()), nil, nil
-			}
-			return ok(incidents)
-		},
-	)
-
-	type IncidentParams struct {
-		IncidentID string `json:"incident_id"`
-	}
-
-	mcp.AddTool(s,
-		&mcp.Tool{Name: "get_incident", Description: "Get a security incident by ID."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, p IncidentParams) (*mcp.CallToolResult, any, error) {
-			incident, err := h.service.GetSecurityIncident(ctx, p.IncidentID)
-			if err != nil {
-				return mcpErr(err.Error()), nil, nil
-			}
-			return ok(incident)
-		},
-	)
-
-	mcp.AddTool(s,
-		&mcp.Tool{Name: "resolve_incident", Description: "Mark a security incident as resolved."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, p IncidentParams) (*mcp.CallToolResult, any, error) {
-			user := mcpUserFrom(ctx)
-			resolvedBy := "mcp"
-			if user != nil {
-				resolvedBy = user.Email
-			}
-			if err := h.service.ResolveSecurityIncident(ctx, p.IncidentID, resolvedBy); err != nil {
-				return mcpErr(err.Error()), nil, nil
-			}
-			return ok(map[string]string{"status": "resolved"})
-		},
-	)
-
 	return s
 }

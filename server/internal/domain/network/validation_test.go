@@ -2,7 +2,6 @@ package network
 
 import (
 	"testing"
-	"time"
 )
 
 func TestValidateIPAddress(t *testing.T) {
@@ -332,92 +331,6 @@ func TestDNSMappingUpdateRequest_Validate(t *testing.T) {
 	}
 }
 
-func TestSecurityConfig_Validate(t *testing.T) {
-	tests := []struct {
-		name        string
-		config      *SecurityConfig
-		expectError bool
-	}{
-		{
-			name: "valid config",
-			config: &SecurityConfig{
-				SessionConflictThreshold: 5 * time.Minute,
-				EndpointChangeThreshold:  5 * time.Minute,
-				MaxEndpointChangesPerDay: 10,
-				PortChangeThreshold:      5 * time.Minute,
-				MaxPortChangesPerWindow:  5,
-			},
-			expectError: false,
-		},
-		{
-			name: "session conflict threshold too low",
-			config: &SecurityConfig{
-				SessionConflictThreshold: 30 * time.Second,
-				EndpointChangeThreshold:  5 * time.Minute,
-				MaxEndpointChangesPerDay: 10,
-				PortChangeThreshold:      5 * time.Minute,
-				MaxPortChangesPerWindow:  5,
-			},
-			expectError: true,
-		},
-		{
-			name: "endpoint change threshold too low",
-			config: &SecurityConfig{
-				SessionConflictThreshold: 5 * time.Minute,
-				EndpointChangeThreshold:  30 * time.Second,
-				MaxEndpointChangesPerDay: 10,
-				PortChangeThreshold:      5 * time.Minute,
-				MaxPortChangesPerWindow:  5,
-			},
-			expectError: true,
-		},
-		{
-			name: "max endpoint changes too low",
-			config: &SecurityConfig{
-				SessionConflictThreshold: 5 * time.Minute,
-				EndpointChangeThreshold:  5 * time.Minute,
-				MaxEndpointChangesPerDay: 0,
-				PortChangeThreshold:      5 * time.Minute,
-				MaxPortChangesPerWindow:  5,
-			},
-			expectError: true,
-		},
-		{
-			name: "port change threshold too low",
-			config: &SecurityConfig{
-				SessionConflictThreshold: 5 * time.Minute,
-				EndpointChangeThreshold:  5 * time.Minute,
-				MaxEndpointChangesPerDay: 10,
-				PortChangeThreshold:      30 * time.Second,
-				MaxPortChangesPerWindow:  5,
-			},
-			expectError: true,
-		},
-		{
-			name: "max port changes too low",
-			config: &SecurityConfig{
-				SessionConflictThreshold: 5 * time.Minute,
-				EndpointChangeThreshold:  5 * time.Minute,
-				MaxEndpointChangesPerDay: 10,
-				PortChangeThreshold:      5 * time.Minute,
-				MaxPortChangesPerWindow:  0,
-			},
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if tt.expectError && err == nil {
-				t.Error("Expected error but got none")
-			}
-			if !tt.expectError && err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-		})
-	}
-}
 
 func TestPolicyRule_Validate(t *testing.T) {
 	tests := []struct {
@@ -676,70 +589,6 @@ func TestGroupCreateRequest_Validate(t *testing.T) {
 			request: &GroupCreateRequest{
 				Name:     "this-is-a-very-long-group-name-that-exceeds-the-maximum-allowed-length-for-group-names-in-the-system",
 				Priority: &validPriority,
-			},
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.request.Validate()
-			if tt.expectError && err == nil {
-				t.Error("Expected error but got none")
-			}
-			if !tt.expectError && err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-		})
-	}
-}
-func TestSecurityConfigUpdateRequest_Validate(t *testing.T) {
-	trueVal := true
-	validThreshold := 5 * time.Minute
-	validEndpointThreshold := 30 * time.Minute
-	validMaxChanges := 10
-	invalidThreshold := 30 * time.Second
-	invalidMaxChanges := 0
-
-	tests := []struct {
-		name        string
-		request     *SecurityConfigUpdateRequest
-		expectError bool
-	}{
-		{
-			name: "valid request - enabled only",
-			request: &SecurityConfigUpdateRequest{
-				Enabled: &trueVal,
-			},
-			expectError: false,
-		},
-		{
-			name: "valid request - thresholds",
-			request: &SecurityConfigUpdateRequest{
-				SessionConflictThreshold: &validThreshold,
-				EndpointChangeThreshold:  &validEndpointThreshold,
-				MaxEndpointChangesPerDay: &validMaxChanges,
-			},
-			expectError: false,
-		},
-		{
-			name: "session conflict threshold too low",
-			request: &SecurityConfigUpdateRequest{
-				SessionConflictThreshold: &invalidThreshold,
-			},
-			expectError: true,
-		},
-		{
-			name: "endpoint change threshold too low",
-			request: &SecurityConfigUpdateRequest{
-				EndpointChangeThreshold: &invalidThreshold,
-			},
-			expectError: true,
-		},
-		{
-			name: "max endpoint changes too low",
-			request: &SecurityConfigUpdateRequest{
-				MaxEndpointChangesPerDay: &invalidMaxChanges,
 			},
 			expectError: true,
 		},

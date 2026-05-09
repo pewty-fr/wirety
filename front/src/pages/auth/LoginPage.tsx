@@ -5,6 +5,9 @@ import { faShield, faEye, faEyeSlash, faTriangleExclamation } from '@fortawesome
 
 export default function LoginPage() {
   const { login, simpleLogin, authConfig, isLoading, oauthError, clearOauthError } = useAuth();
+  // Username defaults to "admin" — the bootstrap account configured via AUTH_PASSWORD.
+  // In simple-auth mode admins can also create regular users with email + password.
+  const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -23,9 +26,9 @@ export default function LoginPage() {
     e.preventDefault();
     setLoginError('');
     setIsSubmitting(true);
-    const ok = await simpleLogin(password);
+    const ok = await simpleLogin(username, password);
     if (!ok) {
-      setLoginError('Invalid password. Please try again.');
+      setLoginError('Invalid credentials. Please try again.');
       setPassword('');
     }
     setIsSubmitting(false);
@@ -99,13 +102,15 @@ export default function LoginPage() {
             <form onSubmit={handleSimpleLogin} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Username
+                  Username or email
                 </label>
                 <input
                   type="text"
-                  value="admin"
-                  readOnly
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="admin or your email"
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
               </div>
               <div>

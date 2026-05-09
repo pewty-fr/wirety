@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRoute, faPencil, faTrash, faGlobe, faUsers } from '@fortawesome/free-solid-svg-icons';
+import { faRoute, faPencil, faTrash, faUsers } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import SearchableSelect from '../../components/SearchableSelect';
 import api from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
-import type { Route, DNSMapping, Network, Peer } from '../../types';
+import type { Route, Network, Peer } from '../../types';
 
 export default function RoutesPage() {
   const { user } = useAuth();
@@ -281,11 +281,6 @@ function RouteModal({
   const [jumpPeers, setJumpPeers] = useState<Peer[]>([]);
   const [loading, setLoading] = useState(false);
   
-  // DNS mappings management
-  const [dnsMappings, setDnsMappings] = useState<DNSMapping[]>([]);
-  const [stagedDnsMappings, setStagedDnsMappings] = useState<Array<{ name: string; ip_address: string }>>([]);
-  const [isAddDNSModalOpen, setIsAddDNSModalOpen] = useState(false);
-  
   // Groups management
   const [attachedGroups, setAttachedGroups] = useState<{ id: string; name: string; network_name?: string; description?: string }[]>([]);
   const [availableGroups, setAvailableGroups] = useState<{ id: string; name: string; network_name?: string; description?: string }[]>([]);
@@ -313,7 +308,6 @@ function RouteModal({
       setJumpPeerId(route.jump_peer_id);
       setDomainSuffix(route.domain_suffix || 'internal');
       setSelectedNetworkId(networkId);
-      setStagedDnsMappings([]);
       setStagedGroupIds([]);
       // Reset edit modes
       setIsEditingName(false);
@@ -321,7 +315,6 @@ function RouteModal({
       setIsEditingDestinationCidr(false);
       setIsEditingJumpPeer(false);
       setIsEditingDomainSuffix(false);
-      loadDNSMappings();
       loadAttachments();
     } else {
       setName('');
@@ -330,8 +323,6 @@ function RouteModal({
       setJumpPeerId('');
       setDomainSuffix('internal');
       setSelectedNetworkId(networkId || '');
-      setDnsMappings([]);
-      setStagedDnsMappings([]);
       setAttachedGroups([]);
       setStagedGroupIds([]);
       // Reset edit modes
@@ -364,18 +355,6 @@ function RouteModal({
       setJumpPeers(peers.filter(p => p.is_jump));
     } catch (error) {
       console.error('Failed to load jump peers:', error);
-    }
-  };
-
-  const loadDNSMappings = async () => {
-    const networkIdToUse = route?.network_id || selectedNetworkId;
-    if (!route || !networkIdToUse) return;
-
-    try {
-      const data = await api.getDNSMappings(networkIdToUse, route.id);
-      setDnsMappings(data || []);
-    } catch (error) {
-      console.error('Failed to load DNS mappings:', error);
     }
   };
 
@@ -427,17 +406,11 @@ function RouteModal({
         domain_suffix: domainSuffix,
       });
       
-      // Add staged DNS mappings and attach to groups
+      // Attach to groups (DNS records are managed on the dedicated DNS Records page)
       const attachPromises = [];
-      
-      for (const dns of stagedDnsMappings) {
-        attachPromises.push(api.createDNSMapping(selectedNetworkId, newRoute.id, dns));
-      }
-      
       for (const groupId of stagedGroupIds) {
         attachPromises.push(api.attachRouteToGroup(selectedNetworkId, groupId, newRoute.id));
       }
-      
       if (attachPromises.length > 0) {
         await Promise.all(attachPromises);
       }
@@ -567,46 +540,6 @@ function RouteModal({
     }
   };
 
-  const handleAddDNS = async (dnsName: string, ipAddress: string) => {
-    const networkIdToUse = route?.network_id || selectedNetworkId;
-    if (route && networkIdToUse) {
-      // Edit mode: add immediately
-      try {
-        await api.createDNSMapping(networkIdToUse, route.id, { name: dnsName, ip_address: ipAddress });
-        await loadDNSMappings();
-        onSuccess();
-        setIsAddDNSModalOpen(false);
-      } catch (error) {
-        console.error('Failed to add DNS mapping:', error);
-        alert('Failed to add DNS mapping');
-      }
-    } else {
-      // Creation mode: stage for later
-      setStagedDnsMappings([...stagedDnsMappings, { name: dnsName, ip_address: ipAddress }]);
-      setIsAddDNSModalOpen(false);
-    }
-  };
-
-  const handleDeleteDNS = async (dnsId: string) => {
-    const networkIdToUse = route?.network_id || selectedNetworkId;
-    if (route && networkIdToUse) {
-      // Edit mode: delete immediately
-      try {
-        await api.deleteDNSMapping(networkIdToUse, route.id, dnsId);
-        await loadDNSMappings();
-        onSuccess();
-      } catch (error) {
-        console.error('Failed to delete DNS mapping:', error);
-        alert('Failed to delete DNS mapping');
-      }
-    }
-  };
-
-  const handleRemoveStagedDNS = (index: number) => {
-    // Creation mode: remove from staged list
-    setStagedDnsMappings(stagedDnsMappings.filter((_, i) => i !== index));
-  };
-
   const handleAttachToGroup = async (groupId: string) => {
     const group = availableGroups.find(g => g.id === groupId);
     if (!group) return;
@@ -665,13 +598,6 @@ function RouteModal({
 
   if (!isOpen) return null;
 
-  const allDnsMappings = route ? dnsMappings : stagedDnsMappings.map((dns, idx) => ({ 
-    id: `temp-${idx}`, 
-    ...dns,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  }));
-
   return (
     <>
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -721,18 +647,6 @@ function RouteModal({
             }`}
           >
             Details
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('dns')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'dns'
-                ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-            }`}
-          >
-            <FontAwesomeIcon icon={faGlobe} className="mr-1" />
-            DNS Mappings ({allDnsMappings.length})
           </button>
           <button
             type="button"
@@ -1041,68 +955,6 @@ function RouteModal({
           </div>
         )}
 
-        {/* DNS Tab */}
-        {activeTab === 'dns' && (
-          <div className="p-6">
-            <div className="space-y-3">
-              <div className="flex justify-between items-center mb-3">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Manage DNS mappings for this route
-                </p>
-                <button
-                  onClick={() => setIsAddDNSModalOpen(true)}
-                  className="px-3 py-1.5 text-sm bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-lg hover:scale-105"
-                >
-                  <FontAwesomeIcon icon={faGlobe} className="mr-2" />
-                  Add DNS Mapping
-                </button>
-              </div>
-              {allDnsMappings.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  No DNS mappings defined. Add mappings to resolve custom domains.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {allDnsMappings.map((dns, index) => (
-                    <div key={dns.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">
-                          {dns.name}.{name || route?.name || 'route'}.{domainSuffix || route?.domain_suffix || 'internal'}
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-1">
-                          → {dns.ip_address}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          if (confirm('Remove this DNS mapping?')) {
-                            if (route) {
-                              handleDeleteDNS(dns.id);
-                            } else {
-                              handleRemoveStagedDNS(index);
-                            }
-                          }
-                        }}
-                        className="p-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded ml-4"
-                      >
-                        <FontAwesomeIcon icon={faTrash} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Groups Tab */}
         {activeTab === 'groups' && (
           <div className="p-6">
@@ -1170,111 +1022,6 @@ function RouteModal({
       </div>
       </div>
     </div>
-
-    {/* AddDNSModal must be rendered outside the transformed/scrollable RouteModal
-        container — a CSS transform on an ancestor breaks fixed positioning, causing
-        the modal backdrop to be clipped and clicks to fall through. */}
-    <AddDNSModal
-      isOpen={isAddDNSModalOpen}
-      onClose={() => setIsAddDNSModalOpen(false)}
-      onAdd={handleAddDNS}
-      routeCidr={destinationCidr || route?.destination_cidr || ''}
-    />
     </>
-  );
-}
-
-// Add DNS Modal Component
-function AddDNSModal({
-  isOpen,
-  onClose,
-  onAdd,
-  routeCidr,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onAdd: (name: string, ipAddress: string) => void;
-  routeCidr: string;
-}) {
-  const [name, setName] = useState('');
-  const [ipAddress, setIpAddress] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onAdd(name, ipAddress);
-    setName('');
-    setIpAddress('');
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[60] overflow-y-auto">
-      {/* Backdrop with blur */}
-      <div 
-        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
-        onClick={onClose}
-      />
-      
-      {/* Modal */}
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div 
-          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all border-2 border-primary-300 dark:border-primary-700"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="p-6">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Add DNS Mapping</h2>
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Name *
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="server1"
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                IP Address *
-              </label>
-              <input
-                type="text"
-                value={ipAddress}
-                onChange={(e) => setIpAddress(e.target.value)}
-                placeholder="10.0.0.10"
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Must be within route CIDR: {routeCidr}
-              </p>
-            </div>
-          </div>
-          <div className="mt-6 flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105"
-            >
-              Add Mapping
-            </button>
-          </div>
-        </form>
-        </div>
-      </div>
-      </div>
-    </div>
   );
 }

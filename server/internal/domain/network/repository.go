@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"time"
 )
 
 // IPAMPrefix holds minimal information about an allocated prefix
@@ -47,20 +46,8 @@ type Repository interface {
 	DeleteSession(ctx context.Context, networkID, sessionID string) error
 	ListSessions(ctx context.Context, networkID string) ([]*AgentSession, error)
 
-	// Endpoint change tracking
-	RecordEndpointChange(ctx context.Context, networkID string, change *EndpointChange) error
-	GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*EndpointChange, error)
-	DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error
-
-	// Security incident operations
-	CreateSecurityIncident(ctx context.Context, incident *SecurityIncident) error
-	GetSecurityIncident(ctx context.Context, incidentID string) (*SecurityIncident, error)
-	ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*SecurityIncident, error)
-	ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*SecurityIncident, error)
-	ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error
-
 	// Captive portal whitelist operations
-	AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error
+	AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) error
 	RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error
 	RemoveCaptivePortalWhitelistByPeerIP(ctx context.Context, networkID, peerIP string) error
 	GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error)
@@ -72,10 +59,4 @@ type Repository interface {
 	GetCaptivePortalToken(ctx context.Context, token string) (*CaptivePortalToken, error)
 	DeleteCaptivePortalToken(ctx context.Context, token string) error
 	CleanupExpiredCaptivePortalTokens(ctx context.Context) error
-
-	// Security config operations
-	CreateSecurityConfig(ctx context.Context, networkID string, config *SecurityConfig) error
-	GetSecurityConfig(ctx context.Context, networkID string) (*SecurityConfig, error)
-	UpdateSecurityConfig(ctx context.Context, networkID string, config *SecurityConfig) error
-	DeleteSecurityConfig(ctx context.Context, networkID string) error
 }

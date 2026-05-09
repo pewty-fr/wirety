@@ -169,7 +169,7 @@ Le serveur et l'agent émettent également des **logs opérationnels** lisibles 
 ```yaml
 services:
   wirety-server:
-    image: rg.fr-par.scw.cloud/wirety/server:latest
+    image: ghcr.io/pewty-fr/wirety/server:latest
     environment:
       AUDIT_LOG: "true"
     logging:

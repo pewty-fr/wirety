@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Uses shared OIDC discovery adapter (internal/infrastructure/oidc)
@@ -363,15 +364,17 @@ func (h *Handler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
-// SimpleLoginRequest contains credentials for simple auth login
+// SimpleLoginRequest contains credentials for simple auth login.
+// Username may be either "admin" (env-configured shared password) or any
+// locally-created user's email (bcrypt-hashed password in users.password_hash).
 type SimpleLoginRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
 // SimpleLogin godoc
-// @Summary      Login with admin password
-// @Description  Authenticate using admin credentials when OIDC is disabled (AUTH_ENABLED=false)
+// @Summary      Login with username/email + password
+// @Description  Authenticate when OIDC is disabled (AUTH_ENABLED=false). Username may be "admin" (env password) or any locally-created user's email.
 // @Tags         auth
 // @Accept       json
 // @Produce      json
@@ -392,21 +395,48 @@ func (h *Handler) SimpleLogin(c *gin.Context) {
 		return
 	}
 
-	// Constant-time comparison to prevent timing attacks
-	usernameMatch := subtle.ConstantTimeCompare([]byte(req.Username), []byte("admin"))
-	passwordMatch := subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.authConfig.AdminPassword))
-	if usernameMatch != 1 || passwordMatch != 1 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
-		return
+	// Two-tier authentication:
+	//   1. The bootstrap "admin" user — env-configured shared password, identity
+	//      is the literal user ID "admin".  This user always exists.
+	//   2. Locally-created users — looked up by email, bcrypt-checked against
+	//      their stored password_hash.
+	var sessionUserID, sessionEmail string
+	if req.Username == "admin" {
+		if subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.authConfig.AdminPassword)) != 1 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+			return
+		}
+		sessionUserID = "admin"
+		sessionEmail = "admin@wirety.local"
+	} else {
+		user, err := h.userRepo.GetUserByEmail(req.Username)
+		if err != nil || user == nil || user.PasswordHash == "" {
+			// Hash a dummy value to keep timing roughly constant against valid users.
+			_ = bcrypt.CompareHashAndPassword(
+				[]byte("$2a$10$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTU"),
+				[]byte(req.Password),
+			)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+			return
+		}
+		sessionUserID = user.ID
+		sessionEmail = user.Email
+		// Update last_login_at — best-effort.
+		user.LastLoginAt = time.Now()
+		_ = h.userRepo.UpdateUser(user)
 	}
 
-	session, err := h.createSession("admin", "", "", 0)
+	session, err := h.createSession(sessionUserID, "", "", 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 		return
 	}
 
-	audit.Server("admin", "admin@wirety.local", c.ClientIP()).
+	audit.Server(sessionUserID, sessionEmail, c.ClientIP()).
 		Str("action", "auth.login").
 		Str("username", req.Username).
 		Msg("audit")

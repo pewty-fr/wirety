@@ -159,6 +159,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 			adminUsers.Use(requireAdmin)
 			{
 				adminUsers.GET("", h.ListUsers)
+				adminUsers.POST("", h.CreateUser)
 				adminUsers.GET("/defaults", h.GetDefaultPermissions)
 				adminUsers.PUT("/defaults", h.UpdateDefaultPermissions)
 				adminUsers.GET("/:userId", h.GetUser)
@@ -189,14 +190,11 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 					peers.PUT("/:peerId", h.UpdatePeer)
 					peers.DELETE("/:peerId", h.DeletePeer)
 					peers.GET("/:peerId/config", h.GetPeerConfig)
-					peers.GET("/:peerId/session", h.GetPeerSessionStatus)
+					peers.GET("/:peerId/session", h.GetPeerConnectivityStatus)
 					peers.GET("/:peerId/reachability", h.GetPeerReachability)
 				}
 
 				networkOps.GET("/sessions", h.ListNetworkSessions)
-				networkOps.GET("/security/incidents", h.ListNetworkSecurityIncidents)
-				networkOps.GET("/security/config", requireAdmin, h.GetNetworkSecurityConfig)
-				networkOps.PUT("/security/config", requireAdmin, h.UpdateNetworkSecurityConfig)
 
 				// ACL routes (admin only)
 				acl := networkOps.Group("/acl")
@@ -278,13 +276,6 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 			ipam.GET("/networks/:networkId", requireNetworkAccess, h.GetNetworkIPAM)
 		}
 
-		// Security routes
-		security := protected.Group("/security")
-		{
-			security.GET("/incidents", h.ListSecurityIncidents)
-			security.GET("/incidents/:incidentId", h.GetSecurityIncident)
-			security.POST("/incidents/:incidentId/resolve", h.ResolveSecurityIncident)
-		}
 	}
 
 	// MCP endpoint (SSE transport) — both GET (stream) and POST (messages) at same path

@@ -247,7 +247,7 @@ If a user's WireGuard config (private key) is stolen, the attacker connects with
 
 **Whitelist TTL (24 hours):** Whitelist entries expire after 24 hours. The attacker's access ends when the entry expires, even if the theft is undetected.
 
-**Automatic revocation on security incident:** Wirety's endpoint-change detection flags suspicious activity (e.g. the peer connecting from a new public IP). When an incident is raised and the peer is quarantined, the captive portal whitelist entry is revoked immediately across all jump peers. The iptables `ACCEPT` rule is removed on the next agent sync.
+**Strict endpoint binding:** Each whitelist entry is bound to the peer's full public endpoint (`ip:port`) at authentication time. The jump peer agent compares the live endpoint reported by `wg show endpoints` against the stored one on every captive portal request and on every 300 ms firewall re-sync. Any mismatch — different IP, different NAT-rebound port, or even a fresh tunnel handshake from the legitimate user — drops the iptables `ACCEPT` rule and forces re-authentication via the captive portal. A stolen config used from a different network therefore fails the check immediately, without waiting for the TTL.
 
 ### Shared WireGuard config (intentional)
 If a user shares their WireGuard config with another person, that person will connect with the same VPN IP but will not be able to pass the captive portal: authentication checks that the Wirety session belongs to the peer's owner. Attempting to authenticate as a different user — even an administrator — results in an ownership error.

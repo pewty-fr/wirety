@@ -10,6 +10,7 @@ import {
   faUsers,
   faUsersGear,
   faRoute,
+  faGlobe,
   faSun,
   faMoon,
   faDesktop,
@@ -46,12 +47,12 @@ const navigationSections: {
       { name: 'Groups', href: '/groups', icon: faUsersGear, adminOnly: true },
       { name: 'Policies', href: '/policies', icon: faShieldAlt, adminOnly: true },
       { name: 'Routes', href: '/routes', icon: faRoute, adminOnly: true },
+      { name: 'DNS Records', href: '/dns', icon: faGlobe, adminOnly: true },
     ]
   },
   {
     title: 'Administration',
     items: [
-      { name: 'Security', href: '/security', icon: faShieldAlt },
       { name: 'Users', href: '/users', icon: faUsers, adminOnly: true },
     ]
   },

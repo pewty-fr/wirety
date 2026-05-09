@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faNetworkWired, faDesktop, faChartBar, faShieldHalved, faCircleCheck } from '@fortawesome/free-solid-svg-icons';
+import { faNetworkWired, faDesktop, faChartBar } from '@fortawesome/free-solid-svg-icons';
 import api from '../../api/client';
-import type { Network, SecurityIncident } from '../../types';
+import type { Network } from '../../types';
 import { computeCapacityFromCIDR } from '../../utils/networkCapacity';
 
 interface DashboardStats {
@@ -15,7 +15,6 @@ interface DashboardStats {
     total: number;
     byType: {
       jump: number;
-      isolated: number;
       regular: number;
     };
     byAgent: {
@@ -28,10 +27,6 @@ interface DashboardStats {
     allocated: number;
     available: number;
     utilizationPercent: number;
-  };
-  security: {
-    total: number;
-    unresolvedIncidents: SecurityIncident[];
   };
   users: {
     total: number;
@@ -51,17 +46,14 @@ export default function DashboardPage() {
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      const [networksRes, peersRes, , securityRes, usersRes] = await Promise.all([
+      const [networksRes, peersRes, , usersRes] = await Promise.all([
         api.getNetworks(1, 5).catch(() => null),
         api.getAllPeers(1, 1000).catch(() => null),
         api.getIPAMAllocations(1, 1000).catch(() => null),
-        api.getSecurityIncidents(1, 1000).catch(() => null),
         api.getUsers(1, 100).catch(() => null),
       ]);
 
       const peers = peersRes?.peers || [];
-      // Handle both paginated response and plain array (like users endpoint)
-      const securityData = Array.isArray(securityRes) ? securityRes : (securityRes?.data || []);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const usersData = (usersRes || []) as any[];
       const networks = networksRes?.data || [];
@@ -87,8 +79,7 @@ export default function DashboardPage() {
           total: peersRes?.total || 0,
           byType: {
             jump: peers.filter(p => p.is_jump).length,
-            isolated: peers.filter(p => !p.is_jump && p.is_isolated).length,
-            regular: peers.filter(p => !p.is_jump && !p.is_isolated).length,
+            regular: peers.filter(p => !p.is_jump).length,
           },
           byAgent: {
             agent: peers.filter(p => p.use_agent).length,
@@ -99,13 +90,9 @@ export default function DashboardPage() {
           total: totalCapacity,
           allocated: totalUsedSlots,
           available: totalCapacity - totalUsedSlots,
-          utilizationPercent: totalCapacity > 0 
+          utilizationPercent: totalCapacity > 0
             ? Math.round((totalUsedSlots / totalCapacity) * 100)
             : 0,
-        },
-        security: {
-          total: Array.isArray(securityRes) ? securityData.length : (securityRes?.total || 0),
-          unresolvedIncidents: securityData.filter((incident: SecurityIncident) => !incident.resolved),
         },
         users: {
           total: usersData.length,
@@ -186,21 +173,6 @@ export default function DashboardPage() {
           </div>
         </Link>
 
-        {/* Security */}
-        <Link to="/security" className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 hover:border-primary-300 dark:hover:border-primary-500 hover:shadow-md transition-all">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Security</span>
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-accent-blue">
-              <FontAwesomeIcon icon={faShieldHalved} className="text-xl text-white" />
-            </div>
-          </div>
-          <div className="text-3xl font-bold text-gray-900 dark:text-white">
-            {stats.security.total}
-          </div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            {stats.security.unresolvedIncidents.length > 0 ? 'unresolved incidents' : 'all clear'}
-          </div>
-        </Link>
       </div>
 
       {/* Two Column Layout */}
@@ -218,10 +190,6 @@ export default function DashboardPage() {
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-700 dark:text-gray-300">Jump Servers</span>
                   <span className="text-sm font-medium text-gray-900 dark:text-white">{stats.peers.byType.jump}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-700 dark:text-gray-300">Isolated</span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">{stats.peers.byType.isolated}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-700 dark:text-gray-300">Regular</span>
@@ -274,86 +242,38 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Recent Networks & Security Incidents */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Networks */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Recent Networks</h2>
-            <Link to="/networks" className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
-              View all →
-            </Link>
-          </div>
-          
-          {stats.networks.recentNetworks.length === 0 ? (
-            <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">No networks yet</p>
-          ) : (
-            <div className="space-y-3">
-              {stats.networks.recentNetworks.map(network => (
-                <Link
-                  key={network.id}
-                  to={`/networks/${network.id}`}
-                  className="block p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-primary-300 dark:hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900 dark:text-white">{network.name}</div>
-                      <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">{network.cidr}</div>
-                    </div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">
-                      {network.peer_count || 0} peers
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
+      {/* Recent Networks */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Recent Networks</h2>
+          <Link to="/networks" className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
+            View all →
+          </Link>
         </div>
 
-        {/* Active Security Incidents */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Active Security Incidents</h2>
-            <Link to="/security" className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
-              View all →
-            </Link>
-          </div>
-          
-          {stats.security.unresolvedIncidents.length === 0 ? (
-            <div className="text-center py-8">
-              <div className="text-4xl mb-2">
-                <FontAwesomeIcon icon={faCircleCheck} className="text-green-500" />
-              </div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">No active security incidents</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {stats.security.unresolvedIncidents.map(incident => (
-                <div
-                  key={incident.id}
-                  className="p-3 rounded-lg border border-gray-200 dark:border-gray-600"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                      incident.incident_type === 'shared_config' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
-                      incident.incident_type === 'session_conflict' ? 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200' :
-                      'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-                    }`}>
-                      {incident.incident_type.replace('_', ' ')}
-                    </span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-                      Active
-                    </span>
+        {stats.networks.recentNetworks.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">No networks yet</p>
+        ) : (
+          <div className="space-y-3">
+            {stats.networks.recentNetworks.map(network => (
+              <Link
+                key={network.id}
+                to={`/networks/${network.id}`}
+                className="block p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-primary-300 dark:hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900 dark:text-white">{network.name}</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">{network.cidr}</div>
                   </div>
-                  <div className="text-sm text-gray-900 dark:text-white">{incident.peer_name}</div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {new Date(incident.detected_at).toLocaleDateString()}
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
+                    {network.peer_count || 0} peers
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

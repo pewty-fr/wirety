@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"time"
 
 	"wirety/internal/domain/ipam"
 	"wirety/internal/domain/network"
@@ -95,31 +94,6 @@ func (c *CombinedRepository) DeleteSession(ctx context.Context, networkID, sessi
 func (c *CombinedRepository) ListSessions(ctx context.Context, networkID string) ([]*network.AgentSession, error) {
 	return c.netRepo.ListSessions(ctx, networkID)
 }
-func (c *CombinedRepository) RecordEndpointChange(ctx context.Context, networkID string, change *network.EndpointChange) error {
-	return c.netRepo.RecordEndpointChange(ctx, networkID, change)
-}
-func (c *CombinedRepository) GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*network.EndpointChange, error) {
-	return c.netRepo.GetEndpointChanges(ctx, networkID, peerID, since)
-}
-
-func (c *CombinedRepository) DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error {
-	return c.netRepo.DeleteEndpointChanges(ctx, networkID, peerID)
-}
-func (c *CombinedRepository) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
-	return c.netRepo.CreateSecurityIncident(ctx, incident)
-}
-func (c *CombinedRepository) GetSecurityIncident(ctx context.Context, id string) (*network.SecurityIncident, error) {
-	return c.netRepo.GetSecurityIncident(ctx, id)
-}
-func (c *CombinedRepository) ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*network.SecurityIncident, error) {
-	return c.netRepo.ListSecurityIncidents(ctx, resolved)
-}
-func (c *CombinedRepository) ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*network.SecurityIncident, error) {
-	return c.netRepo.ListSecurityIncidentsByNetwork(ctx, networkID, resolved)
-}
-func (c *CombinedRepository) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
-	return c.netRepo.ResolveSecurityIncident(ctx, incidentID, resolvedBy)
-}
 
 // Delegate ipam.Repository methods
 func (c *CombinedRepository) EnsureRootPrefix(ctx context.Context, cidr string) (*network.IPAMPrefix, error) {
@@ -150,8 +124,8 @@ func (c *CombinedRepository) ReleaseIP(ctx context.Context, cidr string, ip stri
 var _ FullRepository = (*CombinedRepository)(nil)
 
 // Captive portal whitelist operations
-func (c *CombinedRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
-	return c.netRepo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP, peerEndpointIP)
+func (c *CombinedRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) error {
+	return c.netRepo.AddCaptivePortalWhitelist(ctx, networkID, jumpPeerID, peerIP, peerEndpoint)
 }
 
 func (c *CombinedRepository) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
@@ -191,16 +165,3 @@ func (c *CombinedRepository) CleanupExpiredCaptivePortalTokens(ctx context.Conte
 	return c.netRepo.CleanupExpiredCaptivePortalTokens(ctx)
 }
 
-// Security config operations
-func (c *CombinedRepository) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	return c.netRepo.CreateSecurityConfig(ctx, networkID, config)
-}
-func (c *CombinedRepository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
-	return c.netRepo.GetSecurityConfig(ctx, networkID)
-}
-func (c *CombinedRepository) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	return c.netRepo.UpdateSecurityConfig(ctx, networkID, config)
-}
-func (c *CombinedRepository) DeleteSecurityConfig(ctx context.Context, networkID string) error {
-	return c.netRepo.DeleteSecurityConfig(ctx, networkID)
-}

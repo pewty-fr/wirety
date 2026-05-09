@@ -23,12 +23,16 @@ func NewUserRepository(db *sql.DB) *UserRepository { return &UserRepository{db: 
 func scanUser(rows scanner) (*auth.User, error) {
 	var u auth.User
 	var networks []string
+	var passwordHash sql.NullString
 	var lastLogin sql.NullTime
-	err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Role, pq.Array(&networks), &u.CreatedAt, &u.UpdatedAt, &lastLogin)
+	err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Role, pq.Array(&networks), &passwordHash, &u.CreatedAt, &u.UpdatedAt, &lastLogin)
 	if err != nil {
 		return nil, err
 	}
 	u.AuthorizedNetworks = networks
+	if passwordHash.Valid {
+		u.PasswordHash = passwordHash.String
+	}
 	if lastLogin.Valid {
 		u.LastLoginAt = lastLogin.Time
 	}
@@ -41,7 +45,7 @@ type scanner interface {
 }
 
 func (r *UserRepository) GetUser(userID string) (*auth.User, error) {
-	row := r.db.QueryRow(`SELECT id,email,name,role,authorized_networks,created_at,updated_at,last_login_at FROM users WHERE id=$1`, userID)
+	row := r.db.QueryRow(`SELECT id,email,name,role,authorized_networks,password_hash,created_at,updated_at,last_login_at FROM users WHERE id=$1`, userID)
 	u, err := scanUser(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -53,7 +57,7 @@ func (r *UserRepository) GetUser(userID string) (*auth.User, error) {
 }
 
 func (r *UserRepository) GetUserByEmail(email string) (*auth.User, error) {
-	row := r.db.QueryRow(`SELECT id,email,name,role,authorized_networks,created_at,updated_at,last_login_at FROM users WHERE email=$1`, email)
+	row := r.db.QueryRow(`SELECT id,email,name,role,authorized_networks,password_hash,created_at,updated_at,last_login_at FROM users WHERE email=$1`, email)
 	u, err := scanUser(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -68,8 +72,8 @@ func (r *UserRepository) CreateUser(user *auth.User) error {
 	now := time.Now()
 	user.CreatedAt = now
 	user.UpdatedAt = now
-	_, err := r.db.Exec(`INSERT INTO users (id,email,name,role,authorized_networks,created_at,updated_at,last_login_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		user.ID, user.Email, user.Name, user.Role, pq.Array(user.AuthorizedNetworks), user.CreatedAt, user.UpdatedAt, nil)
+	_, err := r.db.Exec(`INSERT INTO users (id,email,name,role,authorized_networks,password_hash,created_at,updated_at,last_login_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		user.ID, user.Email, user.Name, user.Role, pq.Array(user.AuthorizedNetworks), nullStringPtr(user.PasswordHash), user.CreatedAt, user.UpdatedAt, nil)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
 	}
@@ -78,12 +82,20 @@ func (r *UserRepository) CreateUser(user *auth.User) error {
 
 func (r *UserRepository) UpdateUser(user *auth.User) error {
 	user.UpdatedAt = time.Now()
-	_, err := r.db.Exec(`UPDATE users SET email=$2,name=$3,role=$4,authorized_networks=$5,updated_at=$6,last_login_at=$7 WHERE id=$1`,
-		user.ID, user.Email, user.Name, user.Role, pq.Array(user.AuthorizedNetworks), user.UpdatedAt, nullTimePtr(user.LastLoginAt))
+	_, err := r.db.Exec(`UPDATE users SET email=$2,name=$3,role=$4,authorized_networks=$5,password_hash=$6,updated_at=$7,last_login_at=$8 WHERE id=$1`,
+		user.ID, user.Email, user.Name, user.Role, pq.Array(user.AuthorizedNetworks), nullStringPtr(user.PasswordHash), user.UpdatedAt, nullTimePtr(user.LastLoginAt))
 	if err != nil {
 		return fmt.Errorf("update user: %w", err)
 	}
 	return nil
+}
+
+// nullStringPtr returns interface{} nil if s is empty.
+func nullStringPtr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // nullTimePtr returns interface{} nil if zero time
@@ -107,7 +119,7 @@ func (r *UserRepository) DeleteUser(userID string) error {
 }
 
 func (r *UserRepository) ListUsers() ([]*auth.User, error) {
-	rows, err := r.db.Query(`SELECT id,email,name,role,authorized_networks,created_at,updated_at,last_login_at FROM users ORDER BY created_at ASC`)
+	rows, err := r.db.Query(`SELECT id,email,name,role,authorized_networks,password_hash,created_at,updated_at,last_login_at FROM users ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -126,7 +138,7 @@ func (r *UserRepository) ListUsers() ([]*auth.User, error) {
 }
 
 func (r *UserRepository) GetFirstUser() (*auth.User, error) {
-	row := r.db.QueryRow(`SELECT id,email,name,role,authorized_networks,created_at,updated_at,last_login_at FROM users ORDER BY created_at ASC LIMIT 1`)
+	row := r.db.QueryRow(`SELECT id,email,name,role,authorized_networks,password_hash,created_at,updated_at,last_login_at FROM users ORDER BY created_at ASC LIMIT 1`)
 	u, err := scanUser(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

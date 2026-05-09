@@ -8,7 +8,94 @@ import (
 	"wirety/internal/domain/auth"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
+
+// minPasswordLength is the minimum length enforced when setting a user password.
+const minPasswordLength = 8
+
+// hashPassword bcrypts a password with the default cost. Returns "" if password is "".
+func hashPassword(password string) (string, error) {
+	if password == "" {
+		return "", nil
+	}
+	b, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// CreateUser godoc
+// @Summary      Create user (admin only, simple-auth mode)
+// @Description  Create a new local user with email + password. Only available when AUTH_ENABLED=false; in OIDC mode users are auto-created on first login.
+// @Tags         users
+// @Accept       json
+// @Produce      json
+// @Param        user body auth.UserCreateRequest true "User to create"
+// @Success      201 {object} auth.User
+// @Failure      400 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      409 {object} map[string]string
+// @Router       /users [post]
+// @Security     BearerAuth
+func (h *Handler) CreateUser(c *gin.Context) {
+	// Local user creation is only meaningful in simple-auth mode — OIDC mode
+	// auto-creates users on first login.
+	if h.authConfig != nil && h.authConfig.Enabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": "user creation via API is only available when AUTH_ENABLED=false"})
+		return
+	}
+
+	var req auth.UserCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.Password) < minPasswordLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "password must be at least 8 characters"})
+		return
+	}
+	if req.Role != auth.RoleAdministrator && req.Role != auth.RoleUser {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "role must be 'administrator' or 'user'"})
+		return
+	}
+
+	if existing, _ := h.userRepo.GetUserByEmail(req.Email); existing != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "a user with this email already exists"})
+		return
+	}
+
+	hash, err := hashPassword(req.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+		return
+	}
+
+	user := &auth.User{
+		ID:                 uuid.New().String(),
+		Email:              req.Email,
+		Name:               req.Name,
+		Role:               req.Role,
+		AuthorizedNetworks: req.AuthorizedNetworks,
+		PasswordHash:       hash,
+	}
+	if err := h.userRepo.CreateUser(user); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "user.create").
+		Str("target_user_id", user.ID).
+		Str("target_email", user.Email).
+		Str("target_role", string(user.Role)).
+		Msg("audit")
+
+	c.JSON(http.StatusCreated, user)
+}
 
 // ListUsers godoc
 // @Summary      List all users
@@ -93,16 +180,37 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		user.AuthorizedNetworks = req.AuthorizedNetworks
 	}
 
+	// Optional password reset (admin-only; OIDC users have no password to reset).
+	passwordReset := false
+	if req.Password != "" {
+		if len(req.Password) < minPasswordLength {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password must be at least 8 characters"})
+			return
+		}
+		hash, err := hashPassword(req.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+			return
+		}
+		user.PasswordHash = hash
+		passwordReset = true
+	}
+
 	if err := h.userRepo.UpdateUser(user); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	id, email := actor(c)
-	audit.Server(id, email, c.ClientIP()).
+	ev := audit.Server(id, email, c.ClientIP()).
 		Str("action", "user.update").
-		Str("target_user_id", userID).
-		Msg("audit")
+		Str("target_user_id", userID)
+	if passwordReset {
+		ev = ev.Bool("password_reset", true)
+		// Invalidate all existing sessions so the user must log in again with the new password.
+		_ = h.userRepo.DeleteUserSessions(userID)
+	}
+	ev.Msg("audit")
 
 	c.JSON(http.StatusOK, user)
 }

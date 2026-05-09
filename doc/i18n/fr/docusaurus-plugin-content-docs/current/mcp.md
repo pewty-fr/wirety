@@ -72,13 +72,6 @@ Les permissions sont appliquées par token — un token admin peut appeler les o
 | `create_route` | Créer une route (CIDR de destination via jump peer) | Oui |
 | `update_route` | Mettre à jour la configuration d'une route | Oui |
 
-### Incidents de sécurité
-| Outil | Description | Admin uniquement |
-|-------|-------------|-----------------|
-| `list_incidents` | Lister tous les incidents de sécurité | Non |
-| `get_incident` | Obtenir les détails d'un incident | Non |
-| `resolve_incident` | Marquer un incident comme résolu | Non |
-
 Les outils de groupes, politiques et routes ne sont enregistrés que lorsque le backend de base de données est activé (`DB_ENABLED=true`).
 
 ## Configuration Claude Code

@@ -1,9 +1,10 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUser, faPencil, faCheck, faTimes } from '@fortawesome/free-solid-svg-icons';
+import { faUser, faPencil, faCheck, faTimes, faKey, faTrash } from '@fortawesome/free-solid-svg-icons';
 import Modal from './Modal';
 import type { User, Network } from '../types';
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../contexts/AuthContext';
 
 interface UserDetailModalProps {
   isOpen: boolean;
@@ -13,12 +14,22 @@ interface UserDetailModalProps {
 }
 
 export default function UserDetailModal({ isOpen, onClose, user, onUpdate }: UserDetailModalProps) {
+  const { authConfig } = useAuth();
   const [isEditingNetworks, setIsEditingNetworks] = useState(false);
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>([]);
   const [availableNetworks, setAvailableNetworks] = useState<Network[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordMsg, setPasswordMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Password reset is only meaningful for locally-created users (simple-auth mode).
+  // The bootstrap "admin" user is rotated via the AUTH_PASSWORD env var, not the API.
+  const canResetPassword = authConfig?.simple_auth === true && user?.id !== 'admin';
+  const canDelete = currentUser?.role === 'administrator' && user?.id !== currentUser.id && user?.id !== 'admin';
 
   useEffect(() => {
     if (isOpen) {
@@ -88,6 +99,42 @@ export default function UserDetailModal({ isOpen, onClose, user, onUpdate }: Use
   };
 
   const isAdmin = currentUser?.role === 'administrator';
+
+  const handleResetPassword = async () => {
+    if (!user) return;
+    if (newPassword.length < 8) {
+      setPasswordMsg({ ok: false, text: 'Password must be at least 8 characters' });
+      return;
+    }
+    setPasswordSaving(true);
+    setPasswordMsg(null);
+    try {
+      await api.updateUser(user.id, { password: newPassword });
+      setPasswordMsg({ ok: true, text: 'Password reset. The user must sign in again.' });
+      setNewPassword('');
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: string } }; message?: string };
+      setPasswordMsg({ ok: false, text: e?.response?.data?.error || e?.message || 'Failed to reset password' });
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!user) return;
+    if (!window.confirm(`Delete user "${user.name}" (${user.email})? This cannot be undone.`)) return;
+    setIsDeleting(true);
+    try {
+      await api.deleteUser(user.id);
+      onUpdate?.();
+      onClose();
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: string } }; message?: string };
+      alert(e?.response?.data?.error || e?.message || 'Failed to delete user');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   if (!user) return null;
 
@@ -260,8 +307,53 @@ export default function UserDetailModal({ isOpen, onClose, user, onUpdate }: Use
           </div>
         </div>
 
+        {/* Password reset (simple-auth mode only, admin-only) */}
+        {isAdmin && canResetPassword && (
+          <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40 rounded-lg p-4">
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-100 mb-3 flex items-center gap-2">
+              <FontAwesomeIcon icon={faKey} className="text-amber-600 dark:text-amber-400" />
+              Reset password
+            </h4>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="New password (min. 8 characters)"
+                minLength={8}
+                className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+              <button
+                onClick={handleResetPassword}
+                disabled={passwordSaving || newPassword.length < 8}
+                className="px-3 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              >
+                {passwordSaving ? 'Saving...' : 'Reset'}
+              </button>
+            </div>
+            {passwordMsg && (
+              <p className={`text-xs mt-2 ${passwordMsg.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                {passwordMsg.text}
+              </p>
+            )}
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+              Resetting the password invalidates all of the user's existing sessions.
+            </p>
+          </div>
+        )}
+
         {/* Actions */}
-        <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+        <div className="flex justify-between items-center pt-4 border-t border-gray-200 dark:border-gray-700">
+          {canDelete ? (
+            <button
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="flex items-center gap-2 px-4 py-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <FontAwesomeIcon icon={faTrash} />
+              {isDeleting ? 'Deleting...' : 'Delete user'}
+            </button>
+          ) : <span />}
           <button
             onClick={onClose}
             className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer transition-colors"

@@ -123,7 +123,7 @@ version: '3.8'
 
 services:
   server:
-    image: rg.fr-par.scw.cloud/wirety/server:latest
+    image: ghcr.io/pewty-fr/wirety/server:latest
     ports:
       - "8080:8080"
     environment:
@@ -136,7 +136,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: rg.fr-par.scw.cloud/wirety/frontend:latest
+    image: ghcr.io/pewty-fr/wirety/front:latest
     ports:
       - "80:80"
     environment:
@@ -661,7 +661,6 @@ curl -H "Authorization: Bearer $TOKEN" \
 4. **Secrets management**: Use Kubernetes secrets or vault
 5. **Token rotation**: Regularly rotate enrollment tokens
 6. **Firewall rules**: Restrict WireGuard ports
-7. **Incident monitoring**: Set up alerts for security incidents
 
 ## Troubleshooting
 
@@ -710,5 +709,4 @@ ip route | grep wg0
 ## Next Steps
 
 - [OIDC Configuration](/guides/oidc.md)
-- [Incident Management](/incidents.md)
 - [Network Configuration](/network.md)

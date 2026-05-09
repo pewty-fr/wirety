@@ -220,6 +220,13 @@ export default function GroupsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex items-center gap-2">
                         <button
+                          onClick={(e) => { e.stopPropagation(); setEditingGroup(group); setIsGroupModalOpen(true); }}
+                          className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
+                          title="Edit group"
+                        >
+                          <FontAwesomeIcon icon={faPencil} />
+                        </button>
+                        <button
                           onClick={(e) => handleDelete(group, e)}
                           className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 transition-colors"
                           title="Delete group"

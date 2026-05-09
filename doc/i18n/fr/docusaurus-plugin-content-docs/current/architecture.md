@@ -448,4 +448,4 @@ Les éléments suivants étaient précédemment listés comme travaux futurs et 
 - [Configuration du serveur](/server.md)
 - [Configuration de l'agent](/agent.md)
 - [Gestion des réseaux](/network.md)
-- [Sécurité et incidents](/incidents.md)
+- [Portail captif](/captive-portal.md)
