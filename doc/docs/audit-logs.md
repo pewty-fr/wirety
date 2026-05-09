@@ -169,7 +169,7 @@ The server and agent also emit human-readable **operational logs** to `stderr` v
 ```yaml
 services:
   wirety-server:
-    image: rg.fr-par.scw.cloud/wirety/server:latest
+    image: ghcr.io/pewty-fr/wirety/server:latest
     environment:
       AUDIT_LOG: "true"
     logging:

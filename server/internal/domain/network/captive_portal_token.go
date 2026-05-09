@@ -7,8 +7,8 @@ type CaptivePortalToken struct {
 	Token          string    `json:"token"`
 	NetworkID      string    `json:"network_id"`
 	JumpPeerID     string    `json:"jump_peer_id"`
-	PeerIP         string    `json:"peer_ip"`                    // WireGuard private IP of the connecting peer
-	PeerEndpointIP string    `json:"peer_endpoint_ip,omitempty"` // public endpoint IP at connect time
+	PeerIP       string    `json:"peer_ip"`                 // WireGuard private IP of the connecting peer
+	PeerEndpoint string    `json:"peer_endpoint,omitempty"` // full public endpoint "ip:port" at connect time
 	CreatedAt      time.Time `json:"created_at"`
 	ExpiresAt      time.Time `json:"expires_at"`
 }

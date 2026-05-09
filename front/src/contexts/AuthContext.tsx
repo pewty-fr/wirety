@@ -26,7 +26,7 @@ interface AuthContextType {
   oauthError: string | null;
   clearOauthError: () => void;
   login: () => void;
-  simpleLogin: (password: string) => Promise<boolean>;
+  simpleLogin: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -158,13 +158,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.href = authUrl;
   };
 
-  const simpleLogin = async (password: string): Promise<boolean> => {
+  const simpleLogin = async (username: string, password: string): Promise<boolean> => {
     try {
       const response = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'admin', password }),
+        body: JSON.stringify({ username, password }),
       });
 
       if (!response.ok) return false;

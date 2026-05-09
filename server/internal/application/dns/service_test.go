@@ -40,7 +40,7 @@ func (m *mockPeerRepository) ListPeers(ctx context.Context, networkID string) ([
 }
 
 // Additional methods to satisfy network.Repository interface
-func (m *mockPeerRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
+func (m *mockPeerRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) error {
 	return nil
 }
 func (m *mockPeerRepository) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
@@ -105,42 +105,6 @@ func (m *mockPeerRepository) DeleteSession(ctx context.Context, networkID, sessi
 }
 func (m *mockPeerRepository) ListSessions(ctx context.Context, networkID string) ([]*network.AgentSession, error) {
 	return nil, nil
-}
-func (m *mockPeerRepository) RecordEndpointChange(ctx context.Context, networkID string, change *network.EndpointChange) error {
-	return nil
-}
-func (m *mockPeerRepository) GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*network.EndpointChange, error) {
-	return nil, nil
-}
-func (m *mockPeerRepository) DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error {
-	return nil
-}
-func (m *mockPeerRepository) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
-	return nil
-}
-func (m *mockPeerRepository) GetSecurityIncident(ctx context.Context, incidentID string) (*network.SecurityIncident, error) {
-	return nil, nil
-}
-func (m *mockPeerRepository) ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*network.SecurityIncident, error) {
-	return nil, nil
-}
-func (m *mockPeerRepository) ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*network.SecurityIncident, error) {
-	return nil, nil
-}
-func (m *mockPeerRepository) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
-	return nil
-}
-func (m *mockPeerRepository) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	return nil
-}
-func (m *mockPeerRepository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
-	return nil, nil
-}
-func (m *mockPeerRepository) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	return nil
-}
-func (m *mockPeerRepository) DeleteSecurityConfig(ctx context.Context, networkID string) error {
-	return nil
 }
 
 // Stub methods for interface compliance

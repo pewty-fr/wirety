@@ -452,31 +452,7 @@ func (m *mockFullRepository) DeleteSession(ctx context.Context, networkID, sessi
 func (m *mockFullRepository) ListSessions(ctx context.Context, networkID string) ([]*network.AgentSession, error) {
 	return nil, nil
 }
-func (m *mockFullRepository) RecordEndpointChange(ctx context.Context, networkID string, change *network.EndpointChange) error {
-	return nil
-}
-func (m *mockFullRepository) GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*network.EndpointChange, error) {
-	return nil, nil
-}
-func (m *mockFullRepository) DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error {
-	return nil
-}
-func (m *mockFullRepository) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
-	return nil
-}
-func (m *mockFullRepository) GetSecurityIncident(ctx context.Context, incidentID string) (*network.SecurityIncident, error) {
-	return nil, nil
-}
-func (m *mockFullRepository) ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*network.SecurityIncident, error) {
-	return nil, nil
-}
-func (m *mockFullRepository) ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*network.SecurityIncident, error) {
-	return nil, nil
-}
-func (m *mockFullRepository) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
-	return nil
-}
-func (m *mockFullRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
+func (m *mockFullRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) error {
 	return nil
 }
 func (m *mockFullRepository) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
@@ -504,20 +480,6 @@ func (m *mockFullRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Co
 	return nil
 }
 func (m *mockFullRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
-	return nil
-}
-
-// Security config operations
-func (m *mockFullRepository) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	return nil
-}
-func (m *mockFullRepository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
-	return nil, nil
-}
-func (m *mockFullRepository) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	return nil
-}
-func (m *mockFullRepository) DeleteSecurityConfig(ctx context.Context, networkID string) error {
 	return nil
 }
 

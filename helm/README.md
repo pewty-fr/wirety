@@ -13,13 +13,18 @@ This Helm chart deploys Wirety Server and Frontend to Kubernetes.
 
 ### Quick Start
 
-```bash
-# Add helm repo (once published)
-helm repo add wirety https://charts.wirety.example
-helm repo update
+The chart is published to GitHub Container Registry as an OCI artefact, so no
+classic helm-repo `add` step is needed.
 
-# Install with default values
-helm install wirety wirety/wirety
+```bash
+# Install the latest released chart
+helm install wirety oci://ghcr.io/pewty-fr/wirety/chart/wirety \
+  --namespace wirety --create-namespace
+
+# Or pin to a specific version
+helm install wirety oci://ghcr.io/pewty-fr/wirety/chart/wirety \
+  --version 2.0.0 \
+  --namespace wirety --create-namespace
 
 # Or install from source
 helm install wirety ./helm
@@ -75,7 +80,7 @@ helm install wirety ./helm -f values.yaml
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `server.image.repository` | Server image repository | `ghcr.io/pewty/wirety-server` |
+| `server.image.repository` | Server image repository | `ghcr.io/pewty-fr/wirety/server` |
 | `server.image.tag` | Server image tag | `Chart.AppVersion` |
 | `server.env.HTTP_PORT` | HTTP port | `8080` |
 | `server.env.AUTH_ENABLED` | Enable OIDC auth | `false` |
@@ -88,7 +93,7 @@ helm install wirety ./helm -f values.yaml
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `frontend.image.repository` | Frontend image repository | `ghcr.io/pewty/wirety-front` |
+| `frontend.image.repository` | Frontend image repository | `ghcr.io/pewty-fr/wirety/front` |
 | `frontend.image.tag` | Frontend image tag | `Chart.AppVersion` |
 | `frontend.resources` | Resource limits/requests | See values.yaml |
 

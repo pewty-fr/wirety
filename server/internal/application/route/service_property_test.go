@@ -3,7 +3,6 @@ package route
 import (
 	"context"
 	"testing"
-	"time"
 
 	"wirety/internal/domain/network"
 
@@ -312,31 +311,7 @@ func (a *networkGetterAdapter) DeleteSession(ctx context.Context, networkID, ses
 func (a *networkGetterAdapter) ListSessions(ctx context.Context, networkID string) ([]*network.AgentSession, error) {
 	return nil, nil
 }
-func (a *networkGetterAdapter) RecordEndpointChange(ctx context.Context, networkID string, change *network.EndpointChange) error {
-	return nil
-}
-func (a *networkGetterAdapter) GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*network.EndpointChange, error) {
-	return nil, nil
-}
-func (a *networkGetterAdapter) DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error {
-	return nil
-}
-func (a *networkGetterAdapter) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
-	return nil
-}
-func (a *networkGetterAdapter) GetSecurityIncident(ctx context.Context, incidentID string) (*network.SecurityIncident, error) {
-	return nil, nil
-}
-func (a *networkGetterAdapter) ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*network.SecurityIncident, error) {
-	return nil, nil
-}
-func (a *networkGetterAdapter) ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*network.SecurityIncident, error) {
-	return nil, nil
-}
-func (a *networkGetterAdapter) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
-	return nil
-}
-func (a *networkGetterAdapter) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
+func (a *networkGetterAdapter) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) error {
 	return nil
 }
 func (a *networkGetterAdapter) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP string) error {
@@ -364,20 +339,6 @@ func (a *networkGetterAdapter) RemoveCaptivePortalWhitelistByPeerIP(ctx context.
 	return nil
 }
 func (a *networkGetterAdapter) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
-	return nil
-}
-
-// Security config operations
-func (a *networkGetterAdapter) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	return nil
-}
-func (a *networkGetterAdapter) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
-	return nil, nil
-}
-func (a *networkGetterAdapter) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	return nil
-}
-func (a *networkGetterAdapter) DeleteSecurityConfig(ctx context.Context, networkID string) error {
 	return nil
 }
 

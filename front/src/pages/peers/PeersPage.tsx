@@ -6,7 +6,7 @@ import JumpPeerModal from '../../components/JumpPeerModal';
 import RegularPeerModal from '../../components/RegularPeerModal';
 import PeerDetailModal from '../../components/PeerDetailModal';
 import SearchableSelect from '../../components/SearchableSelect';
-import { useNetworks, usePeers, useACLs, useSecurityIncidents } from '../../hooks/useQueries';
+import { useNetworks, usePeers, useACLs } from '../../hooks/useQueries';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/client';
 import type { Peer, User } from '../../types';
@@ -59,12 +59,19 @@ export default function PeersPage() {
   const { data: networks = [], isLoading: networksLoading } = useNetworks();
   const { data: peersData, isLoading: peersLoading, refetch: refetchPeers } = usePeers(page, pageSize);
   const { data: networkACLs = {}, isLoading: aclsLoading } = useACLs(networks);
-  const { data: incidentsData } = useSecurityIncidents(false, 200);
 
   const peers = useMemo(() => peersData?.peers || [], [peersData]);
   const total = peersData?.total || 0;
-  const incidentPeerIds = incidentsData?.incidentPeerIds || new Set<string>();
   const loading = networksLoading || peersLoading || aclsLoading;
+
+  // Tick-driven "now" so the Connected column re-evaluates every 30 s without
+  // a full refetch.  Calling Date.now() during render is impure (lint rule
+  // react-hooks/purity), so we capture it in state.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Calculate blocked peers from ACLs
   const blockedPeers = useMemo(() => {
@@ -278,6 +285,7 @@ export default function PeersPage() {
                   {isAdmin && (
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
                   )}
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Connected</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Agent</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
@@ -287,14 +295,22 @@ export default function PeersPage() {
                 {filteredPeers.map((peer) => {
                   const hasActiveAgent = peer.session_status?.has_active_agent;
                   const isBlocked = blockedPeers.has(peer.id);
-                  const hasIncident = incidentPeerIds.has(peer.id);
-                  
+
+                  // "Connected" derives from the freshness of the last heartbeat
+                  // (3-minute window — matches WireGuard's own ~180s threshold).
+                  // For agent peers, has_active_agent already factors that in.
+                  // For non-agent peers, we look at last_seen on their session
+                  // (populated by jump peers reporting the peer's endpoint).
+                  const lastSeenStr = peer.session_status?.current_session?.last_seen;
+                  const lastSeenAgeMs = lastSeenStr ? now - new Date(lastSeenStr).getTime() : Infinity;
+                  const isConnected = hasActiveAgent || lastSeenAgeMs <= 3 * 60 * 1000;
+
                   return (
                     <tr
                       key={peer.id}
                       onClick={() => handlePeerClick(peer)}
                       className={`hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer ${
-                        (hasIncident || isBlocked) ? 'bg-orange-100 dark:bg-yellow-900/20' : ''
+                        isBlocked ? 'bg-orange-100 dark:bg-yellow-900/20' : ''
                       }`}
                     >
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -303,14 +319,14 @@ export default function PeersPage() {
                             <FontAwesomeIcon icon={peer.is_jump ? faRocket : peer.use_agent ? faServer : faLaptop} className="text-lg text-white" />
                           </div>
                           <div>
-                            <div className={`text-sm font-medium ${hasIncident ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white'}`}>{peer.name}</div>
+                            <div className="text-sm font-medium text-gray-900 dark:text-white">{peer.name}</div>
                           </div>
                         </div>
                       </td>
-                      <td className={`px-6 py-4 whitespace-nowrap text-sm ${hasIncident ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white'}`}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                         {peer.network_name || peer.network_id}
                       </td>
-                      <td className={`px-6 py-4 whitespace-nowrap text-sm font-mono ${hasIncident ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white'}`}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-white">
                         {peer.address}
                       </td>
                       {isAdmin && (
@@ -319,11 +335,25 @@ export default function PeersPage() {
                         </td>
                       )}
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {/* Agent column: dot badge only */}
+                        {/* Connected column: badge based on last_seen freshness (3-min window) */}
+                        {isConnected ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                            Connected
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                            <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                            Offline
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {/* Agent column: shows whether peer runs the wirety agent */}
                         <div className="flex items-center">
                           <span className={`w-3 h-3 rounded-full ${
                             !peer.use_agent ? 'bg-gray-400' : (hasActiveAgent ? 'bg-green-500' : 'bg-red-500')
-                          }`}></span>
+                          }`} title={!peer.use_agent ? 'No agent (static config)' : hasActiveAgent ? 'Agent online' : 'Agent offline'}></span>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">

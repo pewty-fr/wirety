@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -78,9 +77,10 @@ type Runner struct {
 	whitelist   map[string]string
 	whitelistMu sync.RWMutex
 	// wgIPToEndpoint maps each peer's WireGuard private IP to its current public
-	// endpoint IP (port stripped). Refreshed every 300 ms by the heartbeat
-	// goroutine so that isAuthenticated can compare stored vs. live endpoint
-	// without spawning a wg command on every HTTP request.
+	// endpoint as reported by `wg show endpoints` ("ip:port", no stripping).
+	// Refreshed every 300 ms by the heartbeat goroutine so that isAuthenticated
+	// can compare stored vs. live endpoint without spawning a wg command on
+	// every HTTP request.
 	wgIPToEndpoint   map[string]string
 	wgIPToEndpointMu sync.RWMutex
 	// captivePortalSrv is the running captive portal HTTP server (jump peer only).
@@ -90,6 +90,16 @@ type Runner struct {
 	// ifaceMu protects wgInterface which can be updated by handlePeerNameChange
 	// while being read concurrently by the heartbeat and tunnel-monitor goroutines.
 	ifaceMu sync.RWMutex
+	// lastPolicy / lastWhitelistRaw / lastFwState cache the most recent policy
+	// and whitelist so resyncFirewall can re-apply iptables when a whitelisted
+	// peer's public endpoint changes (without waiting for the next server push).
+	// lastWhitelistRaw holds entries in "wgIP@endpointIP" format; lastFwState
+	// holds the wgIPs that survived the live endpoint check on the last sync,
+	// so we can short-circuit the iptables call when nothing has changed.
+	lastPolicy       *pol.JumpPolicy
+	lastWhitelistRaw []string
+	lastFwState      []string
+	lastSyncMu       sync.Mutex
 }
 
 func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string, peerID string, networkID string) *Runner {
@@ -143,16 +153,21 @@ func (r *Runner) isAuthenticated(peerIP string) bool {
 }
 
 // getCurrentEndpointForWgIP returns the most-recently-observed public endpoint
-// IP (port stripped) for the given WireGuard private IP, or "" if unknown.
+// endpoint ("ip:port", strict) for the given WireGuard private IP, or "" if unknown.
 func (r *Runner) getCurrentEndpointForWgIP(wgIP string) string {
 	r.wgIPToEndpointMu.RLock()
 	defer r.wgIPToEndpointMu.RUnlock()
 	return r.wgIPToEndpoint[wgIP]
 }
 
-// updateWGIPEndpointMap rebuilds the wgIP → public endpoint IP lookup table
-// from the current WireGuard state.  Called every 300 ms by the heartbeat
+// updateWGIPEndpointMap rebuilds the wgIP → public endpoint ("ip:port") lookup
+// table from the current WireGuard state.  Called every 300 ms by the heartbeat
 // goroutine so isAuthenticated can do a cheap map lookup without shelling out.
+//
+// We deliberately keep the port: any change to the public source port (e.g. a
+// fresh WireGuard handshake after a tunnel restart, or NAT rebinding) counts
+// as an endpoint change and forces re-authentication via the captive portal.
+// This is the strictest possible check.
 func (r *Runner) updateWGIPEndpointMap() {
 	iface := r.getInterface()
 	allowedIPs := GetWireGuardAllowedIPs(iface) // pubkey → []CIDR
@@ -161,16 +176,7 @@ func (r *Runner) updateWGIPEndpointMap() {
 	m := make(map[string]string, len(allowedIPs))
 	for pubkey, cidrs := range allowedIPs {
 		ep, ok := endpoints[pubkey]
-		if !ok {
-			continue
-		}
-		// Strip the port — we compare IPs only to be robust against NAT port
-		// changes that do not indicate a network change.
-		epIP, _, err := net.SplitHostPort(ep)
-		if err != nil {
-			epIP = ep // bare IP with no port (unusual but tolerate)
-		}
-		if epIP == "" || epIP == "(none)" {
+		if !ok || ep == "" || ep == "(none)" {
 			continue
 		}
 		for _, cidr := range cidrs {
@@ -181,7 +187,7 @@ func (r *Runner) updateWGIPEndpointMap() {
 			}
 			ip := cidr[:strings.IndexByte(cidr, '/')]
 			if ip != "" {
-				m[ip] = epIP
+				m[ip] = ep // full "ip:port" — strict match
 			}
 		}
 	}
@@ -205,6 +211,83 @@ func (r *Runner) updateWhitelist(ips []string) {
 			r.whitelist[entry] = "" // no endpoint constraint
 		}
 	}
+}
+
+// filterWhitelistByEndpoint returns the wgIPs whose live public endpoint matches
+// the endpoint stored at authentication time.  Entries without a stored endpoint
+// (legacy / non-SSO) are passed through unchanged.  Entries whose live endpoint
+// is unknown OR differs from the stored endpoint are dropped — this is what
+// causes the firewall to revoke access when a stolen WireGuard config tries to
+// connect from a different network.
+func (r *Runner) filterWhitelistByEndpoint(entries []string) []string {
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		wgIP, expectedEP := entry, ""
+		if idx := strings.IndexByte(entry, '@'); idx != -1 {
+			wgIP = entry[:idx]
+			expectedEP = entry[idx+1:]
+		}
+		if expectedEP == "" {
+			out = append(out, wgIP) // legacy entry — no constraint
+			continue
+		}
+		if currentEP := r.getCurrentEndpointForWgIP(wgIP); currentEP != "" && currentEP == expectedEP {
+			out = append(out, wgIP)
+		}
+		// else: drop — endpoint mismatch or unknown
+	}
+	return out
+}
+
+// resyncFirewall re-applies the most recent policy with a freshly-filtered
+// whitelist.  Called from the 300 ms ticker so an endpoint change for a
+// whitelisted peer immediately revokes its iptables ACCEPT rules without waiting
+// for the next server push.  No-op if nothing has changed (cheap to call often).
+func (r *Runner) resyncFirewall() {
+	if r.fwAdapter == nil {
+		return
+	}
+	r.lastSyncMu.Lock()
+	policy := r.lastPolicy
+	whitelist := r.lastWhitelistRaw
+	r.lastSyncMu.Unlock()
+	if policy == nil {
+		return
+	}
+
+	filtered := r.filterWhitelistByEndpoint(whitelist)
+
+	r.lastSyncMu.Lock()
+	if stringSliceEqual(r.lastFwState, filtered) {
+		r.lastSyncMu.Unlock()
+		return // no change since last sync
+	}
+	r.lastFwState = filtered
+	r.lastSyncMu.Unlock()
+
+	if err := r.fwAdapter.Sync(policy, policy.IP, filtered); err != nil {
+		log.Error().Err(err).Msg("firewall re-sync after endpoint change failed")
+	} else {
+		log.Info().Strs("whitelist", filtered).Msg("firewall re-synced after endpoint change")
+	}
+}
+
+// stringSliceEqual reports whether two whitelist slices contain the same set of
+// IPs (order-insensitive — the firewall is keyed on set membership).
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(a))
+	for _, x := range a {
+		seen[x] = struct{}{}
+	}
+	for _, x := range b {
+		if _, ok := seen[x]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // SetHeaders sets HTTP headers to send on WebSocket connection (e.g. Authorization).
@@ -310,6 +393,12 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					// Keep the wgIP → public endpoint IP cache fresh so that
 					// isAuthenticated can verify endpoints without shelling out.
 					r.updateWGIPEndpointMap()
+
+					// Re-apply iptables if any whitelisted peer's live endpoint
+					// no longer matches its stored endpoint.  This is what
+					// revokes firewall ACCEPT for a stolen config trying to
+					// reach the network from a different public IP.
+					r.resyncFirewall()
 
 					// Compare with last known endpoints
 					lastPeerEndpointsMu.RLock()
@@ -431,7 +520,8 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
 					Msg("applying firewall policy update")
 
-				// Get whitelisted IPs for firewall rules
+				// Whitelist entries arrive in "wgIP@endpointIP" format (or plain
+				// "wgIP" for legacy / non-SSO entries).
 				whitelistedIPs := payload.Whitelist
 				if whitelistedIPs == nil {
 					whitelistedIPs = []string{}
@@ -440,6 +530,14 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				// Keep in-memory whitelist in sync so the captive portal HTTP server
 				// can return OS probe success responses for authenticated peers.
 				r.updateWhitelist(whitelistedIPs)
+
+				// Cache the policy + raw whitelist so resyncFirewall() (called from
+				// the 300 ms ticker) can re-apply iptables when a peer's endpoint
+				// changes between server pushes.
+				r.lastSyncMu.Lock()
+				r.lastPolicy = payload.Policy
+				r.lastWhitelistRaw = whitelistedIPs
+				r.lastSyncMu.Unlock()
 
 				// Notify the captive portal server that at least one policy has been
 				// received. Until this point the server treats all peers as
@@ -451,13 +549,22 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					cpSrv.NotifyPolicyReceived()
 				}
 
-				// Apply policy-based iptables rules atomically
-				// The Sync method flushes the chain and applies all rules in order
-				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, whitelistedIPs); err != nil {
+				// Filter the whitelist by live endpoint match before handing it to
+				// the firewall adapter.  A wgIP whose current public endpoint does
+				// not match the IP recorded at authentication time (i.e. stolen
+				// config from a different network) is dropped from iptables, so
+				// non-HTTP traffic is also denied — not just captive-portal HTTP.
+				filtered := r.filterWhitelistByEndpoint(whitelistedIPs)
+				r.lastSyncMu.Lock()
+				r.lastFwState = filtered
+				r.lastSyncMu.Unlock()
+
+				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, filtered); err != nil {
 					log.Error().Err(err).Msg("failed applying firewall policy update")
 				} else {
 					log.Info().
 						Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
+						Int("whitelisted_peers", len(filtered)).
 						Msg("firewall policy update applied successfully")
 					audit.Agent(r.peerID, r.networkID).
 						Str("action", "firewall.sync").
@@ -833,12 +940,13 @@ func (r *Runner) startCaptivePortalServer() {
 			})
 		}
 
-		// Wire up endpoint-IP lookup so the captive portal server can include
-		// the peer's current public IP in the token request.  The server stores
-		// this alongside the WireGuard IP; the jump peer later checks that a
-		// peer trying to reach the network is still connecting from the same
-		// public IP, preventing a stolen config from bypassing the portal.
-		srv.SetEndpointIPLookup(r.getCurrentEndpointForWgIP)
+		// Wire up endpoint lookup so the captive portal server can include the
+		// peer's full current public endpoint ("ip:port") in the token request.
+		// The server stores this alongside the WireGuard IP; the jump peer
+		// later checks that a peer trying to reach the network is still
+		// connecting from the same source IP+port — any change (NAT rebind,
+		// tunnel restart, different network) forces re-authentication.
+		srv.SetEndpointLookup(r.getCurrentEndpointForWgIP)
 	}
 
 	// Start the HTTPS server in a background goroutine. It uses a self-signed cert

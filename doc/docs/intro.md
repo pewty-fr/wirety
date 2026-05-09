@@ -26,7 +26,7 @@ Wirety orchestrates a WireGuard overlay by distinguishing Jump Peers (traffic hu
 ## Install (Helm)
 ```bash
 # Install Wirety using OCI registry
-helm install wirety oci://rg.fr-par.scw.cloud/wirety/chart/wirety \
+helm install wirety oci://ghcr.io/pewty-fr/wirety/chart/wirety \
   --version <version> \
   --namespace wirety \
   --create-namespace \

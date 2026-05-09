@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { AxiosInstance } from 'axios';
-import type { Network, Peer, IPAMAllocation, SecurityIncident, SecurityConfig, SecurityConfigUpdateRequest, User, PaginatedResponse, PeerSessionStatus, ACL, Group, Policy, PolicyRule, Route, DNSMapping, PeerReachability, APIToken } from '../types';
+import type { Network, Peer, IPAMAllocation, User, PaginatedResponse, PeerConnectivityStatus, ACL, Group, Policy, PolicyRule, Route, DNSMapping, PeerReachability, APIToken } from '../types';
 
 class ApiClient {
   private client: AxiosInstance;
@@ -97,9 +97,9 @@ class ApiClient {
         for (const peer of peers) {
           peer.network_id = network.id;
           peer.network_name = network.name;
-          // Fetch session status for peers using agents
+          // Fetch connectivity status (last_seen / has_active_agent)
           try {
-            peer.session_status = await this.getPeerSessionStatus(network.id, peer.id);
+            peer.session_status = await this.getPeerConnectivityStatus(network.id, peer.id);
           } catch (error) {
             console.warn(`Failed to fetch session status for peer ${peer.id}:`, error);
           }
@@ -134,7 +134,7 @@ class ApiClient {
     return response.data.data || [];
   }
 
-  async getPeerSessionStatus(networkId: string, peerId: string): Promise<PeerSessionStatus> {
+  async getPeerConnectivityStatus(networkId: string, peerId: string): Promise<PeerConnectivityStatus> {
     const response = await this.client.get(`/networks/${networkId}/peers/${peerId}/session`);
     return response.data;
   }
@@ -142,9 +142,9 @@ class ApiClient {
   async getPeer(networkId: string, peerId: string): Promise<Peer> {
     const response = await this.client.get(`/networks/${networkId}/peers/${peerId}`);
     const peer = response.data;
-    // Fetch session status for peers using agents
+    // Fetch connectivity status (last_seen / has_active_agent)
     try {
-      peer.session_status = await this.getPeerSessionStatus(networkId, peerId);
+      peer.session_status = await this.getPeerConnectivityStatus(networkId, peerId);
     } catch (error) {
       console.warn(`Failed to fetch session status for peer ${peerId}:`, error);
     }
@@ -217,30 +217,6 @@ class ApiClient {
     return response.data;
   }
 
-  // Security
-  async getSecurityIncidents(page: number = 1, pageSize: number = 20, resolved?: boolean): Promise<{ data: SecurityIncident[], total: number, page: number, page_size: number }> {
-    const params = new URLSearchParams({ page: page.toString(), page_size: pageSize.toString() });
-    if (resolved !== undefined) {
-      params.append('resolved', resolved.toString());
-    }
-    const response = await this.client.get(`/security/incidents?${params}`);
-    return response.data;
-  }
-
-  async resolveIncident(incidentId: string): Promise<void> {
-    await this.client.post(`/security/incidents/${incidentId}/resolve`);
-  }
-
-  async getSecurityConfig(networkId: string): Promise<SecurityConfig> {
-    const response = await this.client.get(`/networks/${networkId}/security/config`);
-    return response.data;
-  }
-
-  async updateSecurityConfig(networkId: string, data: SecurityConfigUpdateRequest): Promise<SecurityConfig> {
-    const response = await this.client.put(`/networks/${networkId}/security/config`, data);
-    return response.data;
-  }
-
   // Users
   async getCurrentUser(): Promise<User> {
     const response = await this.client.get('/users/me');
@@ -263,9 +239,25 @@ class ApiClient {
     name?: string;
     role?: string;
     authorized_networks?: string[];
+    password?: string;
   }): Promise<User> {
     const response = await this.client.put(`/users/${id}`, data);
     return response.data;
+  }
+
+  async createUser(data: {
+    email: string;
+    name: string;
+    role: 'administrator' | 'user';
+    authorized_networks?: string[];
+    password: string;
+  }): Promise<User> {
+    const response = await this.client.post('/users', data);
+    return response.data;
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await this.client.delete(`/users/${id}`);
   }
 
   async getDefaultPermissions(): Promise<{

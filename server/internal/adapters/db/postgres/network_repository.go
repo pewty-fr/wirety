@@ -9,7 +9,6 @@ import (
 
 	"wirety/internal/domain/network"
 
-	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
@@ -442,162 +441,21 @@ func (r *NetworkRepository) ListSessions(ctx context.Context, networkID string) 
 	return out, rows.Err()
 }
 
-// Endpoint change tracking
-func (r *NetworkRepository) RecordEndpointChange(ctx context.Context, networkID string, change *network.EndpointChange) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO endpoint_changes (peer_id,old_endpoint,new_endpoint,changed_at,source) VALUES ($1,$2,$3,$4,$5)`,
-		change.PeerID, change.OldEndpoint, change.NewEndpoint, change.ChangedAt, change.Source)
-	if err != nil {
-		return fmt.Errorf("record endpoint change: %w", err)
-	}
-	return nil
-}
-
-func (r *NetworkRepository) GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*network.EndpointChange, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT peer_id,old_endpoint,new_endpoint,changed_at,source FROM endpoint_changes WHERE peer_id=$1 AND changed_at > $2 ORDER BY changed_at DESC`, peerID, since)
-	if err != nil {
-		return nil, fmt.Errorf("get endpoint changes: %w", err)
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-	out := make([]*network.EndpointChange, 0)
-	for rows.Next() {
-		var c network.EndpointChange
-		if err = rows.Scan(&c.PeerID, &c.OldEndpoint, &c.NewEndpoint, &c.ChangedAt, &c.Source); err != nil {
-			return nil, err
-		}
-		out = append(out, &c)
-	}
-	return out, rows.Err()
-}
-
-func (r *NetworkRepository) DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM endpoint_changes WHERE peer_id=$1`, peerID)
-	if err != nil {
-		return fmt.Errorf("delete endpoint changes: %w", err)
-	}
-	return nil
-}
-
-// Security incident operations
-func (r *NetworkRepository) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
-	var resolvedAt interface{}
-	if !incident.ResolvedAt.IsZero() {
-		resolvedAt = incident.ResolvedAt
-	}
-
-	_, err := r.db.ExecContext(ctx, `INSERT INTO security_incidents (id,peer_id,peer_name,network_id,network_name,incident_type,detected_at,public_key,endpoints,details,resolved,resolved_at,resolved_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		incident.ID, incident.PeerID, incident.PeerName, incident.NetworkID, incident.NetworkName, incident.IncidentType, incident.DetectedAt, incident.PublicKey, pq.Array(incident.Endpoints), incident.Details, incident.Resolved, resolvedAt, incident.ResolvedBy)
-	if err != nil {
-		return fmt.Errorf("create incident: %w", err)
-	}
-	return nil
-}
-
-func (r *NetworkRepository) GetSecurityIncident(ctx context.Context, incidentID string) (*network.SecurityIncident, error) {
-	var i network.SecurityIncident
-	var endpoints []string
-	var resolvedAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, `SELECT id,peer_id,peer_name,network_id,network_name,incident_type,detected_at,public_key,endpoints,details,resolved,resolved_at,resolved_by FROM security_incidents WHERE id=$1`, incidentID).
-		Scan(&i.ID, &i.PeerID, &i.PeerName, &i.NetworkID, &i.NetworkName, &i.IncidentType, &i.DetectedAt, &i.PublicKey, pq.Array(&endpoints), &i.Details, &i.Resolved, &resolvedAt, &i.ResolvedBy)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("incident not found")
-		}
-		return nil, fmt.Errorf("get incident: %w", err)
-	}
-	i.Endpoints = endpoints
-	if resolvedAt.Valid {
-		i.ResolvedAt = resolvedAt.Time
-	}
-	return &i, nil
-}
-
-func (r *NetworkRepository) ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*network.SecurityIncident, error) {
-	q := `SELECT id,peer_id,peer_name,network_id,network_name,incident_type,detected_at,public_key,endpoints,details,resolved,resolved_at,resolved_by FROM security_incidents`
-	args := []interface{}{}
-	if resolved != nil {
-		q += ` WHERE resolved=$1`
-		args = append(args, *resolved)
-	}
-	rows, err := r.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list incidents: %w", err)
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-	out := make([]*network.SecurityIncident, 0)
-	for rows.Next() {
-		var i network.SecurityIncident
-		var endpoints []string
-		var resolvedAt sql.NullTime
-		if err = rows.Scan(&i.ID, &i.PeerID, &i.PeerName, &i.NetworkID, &i.NetworkName, &i.IncidentType, &i.DetectedAt, &i.PublicKey, pq.Array(&endpoints), &i.Details, &i.Resolved, &resolvedAt, &i.ResolvedBy); err != nil {
-			return nil, err
-		}
-		i.Endpoints = endpoints
-		if resolvedAt.Valid {
-			i.ResolvedAt = resolvedAt.Time
-		}
-		out = append(out, &i)
-	}
-	return out, rows.Err()
-}
-
-func (r *NetworkRepository) ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*network.SecurityIncident, error) {
-	q := `SELECT id,peer_id,peer_name,network_id,network_name,incident_type,detected_at,public_key,endpoints,details,resolved,resolved_at,resolved_by FROM security_incidents WHERE network_id=$1`
-	args := []interface{}{networkID}
-	if resolved != nil {
-		q += ` AND resolved=$2`
-		args = append(args, *resolved)
-	}
-	rows, err := r.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list network incidents: %w", err)
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-	out := make([]*network.SecurityIncident, 0)
-	for rows.Next() {
-		var i network.SecurityIncident
-		var endpoints []string
-		var resolvedAt sql.NullTime
-		if err = rows.Scan(&i.ID, &i.PeerID, &i.PeerName, &i.NetworkID, &i.NetworkName, &i.IncidentType, &i.DetectedAt, &i.PublicKey, pq.Array(&endpoints), &i.Details, &i.Resolved, &resolvedAt, &i.ResolvedBy); err != nil {
-			return nil, err
-		}
-		i.Endpoints = endpoints
-		if resolvedAt.Valid {
-			i.ResolvedAt = resolvedAt.Time
-		}
-		out = append(out, &i)
-	}
-	return out, rows.Err()
-}
-
-func (r *NetworkRepository) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE security_incidents SET resolved=TRUE,resolved_at=$2,resolved_by=$3 WHERE id=$1`, incidentID, time.Now(), resolvedBy)
-	if err != nil {
-		return fmt.Errorf("resolve incident: %w", err)
-	}
-	return nil
-}
-
 // CaptivePortalWhitelistTTL is how long a whitelist entry remains valid after authentication.
 // After this duration the peer must re-authenticate via the captive portal.
 const CaptivePortalWhitelistTTL = 24 * time.Hour
 
 // Captive portal whitelist operations
 
-func (r *NetworkRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
+func (r *NetworkRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) error {
 	now := time.Now()
 	expiresAt := now.Add(CaptivePortalWhitelistTTL)
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, peer_endpoint_ip, created_at, expires_at)
+		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, peer_endpoint, created_at, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (network_id, jump_peer_id, peer_ip)
-		DO UPDATE SET expires_at = EXCLUDED.expires_at, peer_endpoint_ip = EXCLUDED.peer_endpoint_ip
-	`, networkID, jumpPeerID, peerIP, peerEndpointIP, now, expiresAt)
+		DO UPDATE SET expires_at = EXCLUDED.expires_at, peer_endpoint = EXCLUDED.peer_endpoint
+	`, networkID, jumpPeerID, peerIP, peerEndpoint, now, expiresAt)
 	return err
 }
 
@@ -621,7 +479,7 @@ func (r *NetworkRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Con
 
 func (r *NetworkRepository) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT peer_ip, COALESCE(peer_endpoint_ip, '') FROM captive_portal_whitelist
+		SELECT peer_ip, COALESCE(peer_endpoint, '') FROM captive_portal_whitelist
 		WHERE network_id=$1 AND jump_peer_id=$2
 		  AND (expires_at IS NULL OR expires_at > NOW())
 		ORDER BY created_at ASC
@@ -668,9 +526,9 @@ func (r *NetworkRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Con
 
 func (r *NetworkRepository) CreateCaptivePortalToken(ctx context.Context, token *network.CaptivePortalToken) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO captive_portal_tokens (token, network_id, jump_peer_id, peer_ip, peer_endpoint_ip, created_at, expires_at)
+		INSERT INTO captive_portal_tokens (token, network_id, jump_peer_id, peer_ip, peer_endpoint, created_at, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, token.Token, token.NetworkID, token.JumpPeerID, token.PeerIP, token.PeerEndpointIP, token.CreatedAt, token.ExpiresAt)
+	`, token.Token, token.NetworkID, token.JumpPeerID, token.PeerIP, token.PeerEndpoint, token.CreatedAt, token.ExpiresAt)
 	return err
 }
 
@@ -678,7 +536,7 @@ func (r *NetworkRepository) GetCaptivePortalToken(ctx context.Context, tokenStr 
 	var token network.CaptivePortalToken
 	var endpointIP sql.NullString
 	err := r.db.QueryRowContext(ctx, `
-		SELECT token, network_id, jump_peer_id, peer_ip, peer_endpoint_ip, created_at, expires_at
+		SELECT token, network_id, jump_peer_id, peer_ip, peer_endpoint, created_at, expires_at
 		FROM captive_portal_tokens
 		WHERE token=$1
 	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.PeerIP, &endpointIP, &token.CreatedAt, &token.ExpiresAt)
@@ -689,7 +547,7 @@ func (r *NetworkRepository) GetCaptivePortalToken(ctx context.Context, tokenStr 
 		return nil, fmt.Errorf("get captive portal token: %w", err)
 	}
 	if endpointIP.Valid {
-		token.PeerEndpointIP = endpointIP.String
+		token.PeerEndpoint = endpointIP.String
 	}
 	return &token, nil
 }
@@ -708,75 +566,3 @@ func (r *NetworkRepository) CleanupExpiredCaptivePortalTokens(ctx context.Contex
 	return err
 }
 
-// Security config operations
-
-func (r *NetworkRepository) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	config.ID = uuid.New().String()
-	config.NetworkID = networkID
-	config.CreatedAt = time.Now()
-	config.UpdatedAt = time.Now()
-
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO security_configs (id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, port_change_threshold, max_port_changes_per_window, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, config.ID, config.NetworkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.PortChangeThreshold, config.MaxPortChangesPerWindow, config.CreatedAt, config.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("create security config: %w", err)
-	}
-
-	return nil
-}
-
-func (r *NetworkRepository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
-	var config network.SecurityConfig
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, network_id, enabled, session_conflict_threshold, endpoint_change_threshold, max_endpoint_changes_per_day, port_change_threshold, max_port_changes_per_window, created_at, updated_at
-		FROM security_configs
-		WHERE network_id = $1
-	`, networkID).Scan(&config.ID, &config.NetworkID, &config.Enabled, &config.SessionConflictThreshold, &config.EndpointChangeThreshold, &config.MaxEndpointChangesPerDay, &config.PortChangeThreshold, &config.MaxPortChangesPerWindow, &config.CreatedAt, &config.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("security config not found")
-		}
-		return nil, fmt.Errorf("get security config: %w", err)
-	}
-
-	return &config, nil
-}
-
-func (r *NetworkRepository) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	config.UpdatedAt = time.Now()
-
-	res, err := r.db.ExecContext(ctx, `
-		UPDATE security_configs
-		SET enabled = $2, session_conflict_threshold = $3, endpoint_change_threshold = $4, max_endpoint_changes_per_day = $5, port_change_threshold = $6, max_port_changes_per_window = $7, updated_at = $8
-		WHERE network_id = $1
-	`, networkID, config.Enabled, config.SessionConflictThreshold, config.EndpointChangeThreshold, config.MaxEndpointChangesPerDay, config.PortChangeThreshold, config.MaxPortChangesPerWindow, config.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("update security config: %w", err)
-	}
-
-	rows, _ := res.RowsAffected()
-	if rows == 0 {
-		return fmt.Errorf("security config not found")
-	}
-
-	return nil
-}
-
-func (r *NetworkRepository) DeleteSecurityConfig(ctx context.Context, networkID string) error {
-	res, err := r.db.ExecContext(ctx, `
-		DELETE FROM security_configs
-		WHERE network_id = $1
-	`, networkID)
-	if err != nil {
-		return fmt.Errorf("delete security config: %w", err)
-	}
-
-	rows, _ := res.RowsAffected()
-	if rows == 0 {
-		return fmt.Errorf("security config not found")
-	}
-
-	return nil
-}

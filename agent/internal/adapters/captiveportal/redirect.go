@@ -105,13 +105,14 @@ type Server struct {
 	// the infinite-loop caused by browsers (especially Firefox) ignoring TTL=1
 	// and caching DNS for up to 60 seconds.
 	lookupPeerIP func(host string) string
-	// lookupEndpointIP resolves a peer's WireGuard private IP to its current
-	// public endpoint IP (port stripped).  When set, the token request sent to
-	// the server includes the peer's public IP so the server can store it in
-	// the whitelist entry.  The jump peer later verifies that a peer's current
-	// public IP still matches the one recorded at authentication time, so a
-	// stolen WireGuard config from a different network triggers re-authentication.
-	lookupEndpointIP func(wgIP string) string
+	// lookupEndpoint resolves a peer's WireGuard private IP to its current
+	// public endpoint ("ip:port", strict).  When set, the token request sent
+	// to the server includes the peer's full public endpoint so the server
+	// can store it in the whitelist entry.  The jump peer later verifies that
+	// the peer's current endpoint still matches the one recorded at
+	// authentication time — any change (different IP, NAT port rebinding,
+	// tunnel restart) triggers re-authentication.
+	lookupEndpoint func(wgIP string) string
 }
 
 // NewServer creates a captive portal HTTP server.
@@ -146,12 +147,12 @@ func (s *Server) SetPeerIPLookup(fn func(host string) string) {
 	s.lookupPeerIP = fn
 }
 
-// SetEndpointIPLookup sets a function that returns the current public endpoint
-// IP (port stripped) for a given WireGuard private IP.  When set, the captive
-// portal token request includes the peer's public IP so the server can bind the
-// whitelist entry to a specific originating network.
-func (s *Server) SetEndpointIPLookup(fn func(wgIP string) string) {
-	s.lookupEndpointIP = fn
+// SetEndpointLookup sets a function that returns the current public endpoint
+// ("ip:port", strict) for a given WireGuard private IP.  When set, the captive
+// portal token request includes the peer's full public endpoint so the server
+// can bind the whitelist entry to a specific source IP+port.
+func (s *Server) SetEndpointLookup(fn func(wgIP string) string) {
+	s.lookupEndpoint = fn
 }
 
 // NotifyPolicyReceived marks the server as having received at least one policy
@@ -509,16 +510,16 @@ func serveProbeSuccess(w http.ResponseWriter, r *http.Request) bool {
 }
 
 type createTokenRequest struct {
-	PeerIP         string `json:"peer_ip"`
-	PeerEndpointIP string `json:"peer_endpoint_ip,omitempty"` // public IP at connect time
+	PeerIP       string `json:"peer_ip"`
+	PeerEndpoint string `json:"peer_endpoint,omitempty"` // full "ip:port" at connect time
 }
 
 func (s *Server) createToken(peerIP string) (string, error) {
-	var endpointIP string
-	if s.lookupEndpointIP != nil {
-		endpointIP = s.lookupEndpointIP(peerIP)
+	var endpoint string
+	if s.lookupEndpoint != nil {
+		endpoint = s.lookupEndpoint(peerIP)
 	}
-	body, _ := json.Marshal(createTokenRequest{PeerIP: peerIP, PeerEndpointIP: endpointIP})
+	body, _ := json.Marshal(createTokenRequest{PeerIP: peerIP, PeerEndpoint: endpoint})
 	req, err := http.NewRequest(http.MethodPost, s.serverURL+"/api/v1/captive-portal/token", bytes.NewReader(body)) // #nosec G107
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)

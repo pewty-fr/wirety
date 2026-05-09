@@ -15,22 +15,16 @@ type Repository struct {
 	networks         map[string]*network.Network
 	connections      map[string]map[string]*network.PeerConnection // networkID -> connectionKey -> PeerConnection
 	sessions         map[string]map[string]*network.AgentSession   // networkID -> sessionID -> AgentSession
-	endpointChanges  map[string][]*network.EndpointChange          // networkID -> []EndpointChange
-	incidents        map[string]*network.SecurityIncident          // incidentID -> SecurityIncident
 	captiveWhitelist map[string]map[string]string                  // "networkID:jumpPeerID" -> peerIP -> endpointIP (may be "")
 	captiveTokens    map[string]*network.CaptivePortalToken        // token -> CaptivePortalToken
-	securityConfigs  map[string]*network.SecurityConfig            // networkID -> SecurityConfig
 }
 
 // NewRepository creates a new in-memory repository
 func NewRepository() *Repository {
 	repo := &Repository{
-		networks:        make(map[string]*network.Network),
-		connections:     make(map[string]map[string]*network.PeerConnection),
-		sessions:        make(map[string]map[string]*network.AgentSession),
-		endpointChanges: make(map[string][]*network.EndpointChange),
-		incidents:       make(map[string]*network.SecurityIncident),
-		securityConfigs: make(map[string]*network.SecurityConfig),
+		networks:    make(map[string]*network.Network),
+		connections: make(map[string]map[string]*network.PeerConnection),
+		sessions:    make(map[string]map[string]*network.AgentSession),
 	}
 	return repo
 }
@@ -376,136 +370,10 @@ func (r *Repository) ListSessions(ctx context.Context, networkID string) ([]*net
 	return sessions, nil
 }
 
-// Endpoint change tracking
-
-// RecordEndpointChange records an endpoint change for a peer
-func (r *Repository) RecordEndpointChange(ctx context.Context, networkID string, change *network.EndpointChange) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.endpointChanges[networkID] == nil {
-		r.endpointChanges[networkID] = make([]*network.EndpointChange, 0)
-	}
-
-	r.endpointChanges[networkID] = append(r.endpointChanges[networkID], change)
-	return nil
-}
-
-// GetEndpointChanges retrieves endpoint changes for a peer since a given time
-func (r *Repository) GetEndpointChanges(ctx context.Context, networkID, peerID string, since time.Time) ([]*network.EndpointChange, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var changes []*network.EndpointChange
-	if r.endpointChanges[networkID] == nil {
-		return changes, nil
-	}
-
-	for _, change := range r.endpointChanges[networkID] {
-		if change.PeerID == peerID && change.ChangedAt.After(since) {
-			changes = append(changes, change)
-		}
-	}
-
-	return changes, nil
-}
-
-func (r *Repository) DeleteEndpointChanges(ctx context.Context, networkID, peerID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.endpointChanges[networkID] == nil {
-		return nil
-	}
-
-	// Filter out changes for this peer
-	filtered := make([]*network.EndpointChange, 0)
-	for _, change := range r.endpointChanges[networkID] {
-		if change.PeerID != peerID {
-			filtered = append(filtered, change)
-		}
-	}
-
-	r.endpointChanges[networkID] = filtered
-	return nil
-}
-
-// Security incident operations
-
-// CreateSecurityIncident creates a new security incident
-func (r *Repository) CreateSecurityIncident(ctx context.Context, incident *network.SecurityIncident) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.incidents[incident.ID] = incident
-	return nil
-}
-
-// GetSecurityIncident retrieves a security incident by ID
-func (r *Repository) GetSecurityIncident(ctx context.Context, incidentID string) (*network.SecurityIncident, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	incident, exists := r.incidents[incidentID]
-	if !exists {
-		return nil, fmt.Errorf("incident not found")
-	}
-
-	return incident, nil
-}
-
-// ListSecurityIncidents lists all security incidents, optionally filtered by resolved status
-func (r *Repository) ListSecurityIncidents(ctx context.Context, resolved *bool) ([]*network.SecurityIncident, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var incidents []*network.SecurityIncident
-	for _, incident := range r.incidents {
-		if resolved == nil || incident.Resolved == *resolved {
-			incidents = append(incidents, incident)
-		}
-	}
-
-	return incidents, nil
-}
-
-// ListSecurityIncidentsByNetwork lists security incidents for a specific network
-func (r *Repository) ListSecurityIncidentsByNetwork(ctx context.Context, networkID string, resolved *bool) ([]*network.SecurityIncident, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var incidents []*network.SecurityIncident
-	for _, incident := range r.incidents {
-		if incident.NetworkID == networkID {
-			if resolved == nil || incident.Resolved == *resolved {
-				incidents = append(incidents, incident)
-			}
-		}
-	}
-
-	return incidents, nil
-}
-
-// ResolveSecurityIncident marks a security incident as resolved
-func (r *Repository) ResolveSecurityIncident(ctx context.Context, incidentID, resolvedBy string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	incident, exists := r.incidents[incidentID]
-	if !exists {
-		return fmt.Errorf("incident not found")
-	}
-
-	incident.Resolved = true
-	incident.ResolvedAt = time.Now()
-	incident.ResolvedBy = resolvedBy
-
-	return nil
-}
 
 // Captive portal whitelist operations
 
-func (r *Repository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpointIP string) error {
+func (r *Repository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -516,7 +384,7 @@ func (r *Repository) AddCaptivePortalWhitelist(ctx context.Context, networkID, j
 	if r.captiveWhitelist[key] == nil {
 		r.captiveWhitelist[key] = make(map[string]string)
 	}
-	r.captiveWhitelist[key][peerIP] = peerEndpointIP
+	r.captiveWhitelist[key][peerIP] = peerEndpoint
 	return nil
 }
 
@@ -639,52 +507,3 @@ func (r *Repository) CleanupExpiredCaptivePortalTokens(ctx context.Context) erro
 	return nil
 }
 
-// Security config operations
-
-// CreateSecurityConfig creates a security configuration for a network
-func (r *Repository) CreateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if _, exists := r.securityConfigs[networkID]; exists {
-		return fmt.Errorf("security config already exists for network")
-	}
-
-	r.securityConfigs[networkID] = config
-	return nil
-}
-
-// GetSecurityConfig retrieves the security configuration for a network
-func (r *Repository) GetSecurityConfig(ctx context.Context, networkID string) (*network.SecurityConfig, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	config, exists := r.securityConfigs[networkID]
-	if !exists {
-		return nil, fmt.Errorf("security config not found")
-	}
-
-	return config, nil
-}
-
-// UpdateSecurityConfig updates the security configuration for a network
-func (r *Repository) UpdateSecurityConfig(ctx context.Context, networkID string, config *network.SecurityConfig) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if _, exists := r.securityConfigs[networkID]; !exists {
-		return fmt.Errorf("security config not found")
-	}
-
-	r.securityConfigs[networkID] = config
-	return nil
-}
-
-// DeleteSecurityConfig deletes the security configuration for a network
-func (r *Repository) DeleteSecurityConfig(ctx context.Context, networkID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	delete(r.securityConfigs, networkID)
-	return nil
-}

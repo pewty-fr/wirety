@@ -72,13 +72,6 @@ Permissions are enforced per-token — an admin token can call admin-only tools;
 | `create_route` | Create a route (destination CIDR via jump peer) | Yes |
 | `update_route` | Update a route's configuration | Yes |
 
-### Security Incidents
-| Tool | Description | Admin only |
-|------|-------------|-----------|
-| `list_incidents` | List all security incidents | No |
-| `get_incident` | Get incident details | No |
-| `resolve_incident` | Mark an incident as resolved | No |
-
 Groups, policies, and routes tools are only registered when the database backend is enabled (`DB_ENABLED=true`).
 
 ## Claude Code Setup

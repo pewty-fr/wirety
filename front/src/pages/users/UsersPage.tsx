@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUser, faUsers, faCog } from '@fortawesome/free-solid-svg-icons';
+import { faUser, faUsers, faCog, faUserPlus } from '@fortawesome/free-solid-svg-icons';
 import PageHeader from '../../components/PageHeader';
 import UserDetailModal from '../../components/UserDetailModal';
 import DefaultPermissionsModal from '../../components/DefaultPermissionsModal';
+import CreateUserModal from '../../components/CreateUserModal';
 import api from '../../api/client';
+import { useAuth } from '../../contexts/AuthContext';
 import type { User } from '../../types';
 
 export default function UsersPage() {
+  const { authConfig } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -15,7 +18,12 @@ export default function UsersPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isDefaultPermissionsModalOpen, setIsDefaultPermissionsModalOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  // "New user" is only meaningful when OIDC is disabled — in OIDC mode users
+  // are auto-provisioned on first login, so a manual create form would be misleading.
+  const canCreateUser = authConfig?.simple_auth === true;
 
   useEffect(() => {
     const loadCurrentUser = async () => {
@@ -67,10 +75,20 @@ export default function UsersPage() {
         subtitle={`${total} user${total !== 1 ? 's' : ''} total`}
         action={
           isAdmin ? (
-            <div className="mb-6">
+            <div className="mb-6 flex items-center gap-2">
+              {canCreateUser && (
+                <button
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                >
+                  <FontAwesomeIcon icon={faUserPlus} />
+                  New User
+                </button>
+              )}
               <button
                 onClick={() => setIsDefaultPermissionsModalOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                title="Default permissions"
               >
                 <FontAwesomeIcon icon={faCog} />
               </button>
@@ -202,6 +220,15 @@ export default function UsersPage() {
         isOpen={isDefaultPermissionsModalOpen}
         onClose={() => setIsDefaultPermissionsModalOpen(false)}
       />
+
+      {/* Create User Modal — simple-auth mode only */}
+      {canCreateUser && (
+        <CreateUserModal
+          isOpen={isCreateModalOpen}
+          onClose={() => setIsCreateModalOpen(false)}
+          onCreated={loadUsers}
+        />
+      )}
     </div>
   );
 }

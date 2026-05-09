@@ -42,21 +42,10 @@ export default function NetworkTopology({ peer, allPeers }: NetworkTopologyProps
           }
         }
 
-        // Jump peers can access everything
-        if (from.is_jump) return true;
-
-        // To jump peer - everyone can access
-        if (to.is_jump) return true;
-
-        // Isolated peers can't access other isolated peers
-        if (from.is_isolated && to.is_isolated) return false;
-
-        // Isolated peers can't access regular peers (only jump)
-        if (from.is_isolated && !to.is_jump && !to.is_isolated) return false;
-
-        // Regular peers can't access isolated peers
-        if (!from.is_isolated && !from.is_jump && to.is_isolated) return false;
-
+        // Jump peers can access everything; everyone can access jump peers.
+        // Regular-to-regular access is gated by groups/policies, which are not
+        // resolved here — visually we just show full connectivity.
+        if (from.is_jump || to.is_jump) return true;
         return true;
       };
 
@@ -74,7 +63,7 @@ export default function NetworkTopology({ peer, allPeers }: NetworkTopologyProps
         const isBlocked = acl?.enabled && acl.blocked_peers && acl.blocked_peers[p.id];
         
         const label = `${p.name}<br/>${p.address}`;
-        const className = isBlocked ? 'blocked' : (p.is_jump ? 'jump' : p.is_isolated ? 'isolated' : 'regular');
+        const className = isBlocked ? 'blocked' : (p.is_jump ? 'jump' : 'regular');
         lines.push(`  PEER_${p.id}["${label}"]:::${className}`);
       });
       lines.push('');
@@ -83,37 +72,14 @@ export default function NetworkTopology({ peer, allPeers }: NetworkTopologyProps
       accessiblePeers.forEach(targetPeer => {
         if (targetPeer.id === peer.id) return;
 
-        // Check connection status for jump servers
-        const isConnected = targetPeer.is_jump && targetPeer.session?.reported_endpoint;
+        // Edge labeling — connection state inferred from heartbeat session.
+        const isConnected = targetPeer.is_jump && !!targetPeer.session_status?.current_session?.reported_endpoint;
         const lineStyle = isConnected ? '===' : '-.-';
-        // Jump peer edge labeling
-        let label: string;
-        if (targetPeer.is_jump) {
-          if (peer.full_encapsulation) {
-            // Explicitly show Internet access on existing jump edge
-            label = isConnected ? 'Full Tunnel (Internet)' : 'Down';
-          } else {
-            label = isConnected ? 'Connected' : 'Down';
-          }
-        } else {
-          label = 'Can Access';
-        }
-        
+        const label = targetPeer.is_jump
+          ? (isConnected ? 'Connected' : 'Down')
+          : 'Can Access';
         lines.push(`  PEER_${peer.id} ${lineStyle}>|${label}| PEER_${targetPeer.id}`);
       });
-
-      // Omit interconnections between other peers to reflect only direct accessibility from current peer.
-
-      // Add Internet node (only show if there is a connected jump and peer is full encapsulation)
-      if (peer.full_encapsulation) {
-        const connectedJump = accessiblePeers.find(p => p.is_jump && p.session?.reported_endpoint);
-        if (connectedJump) {
-          lines.push('');
-          lines.push('  INTERNET["🌐 Internet"]');
-          // Single path from jump peer to Internet to avoid duplicate peer→jump edge
-          lines.push(`  PEER_${connectedJump.id} ==> INTERNET`);
-        }
-      }
 
       return lines.join('\n');
     };
@@ -194,7 +160,6 @@ export default function NetworkTopology({ peer, allPeers }: NetworkTopologyProps
         <p>• <strong>Solid lines (===)</strong>: Active connection to jump server</p>
         <p>• <strong>Dashed lines (- - -)</strong>: Inactive jump connection</p>
         <p>• Only direct edges from current peer (no transit via jump)</p>
-        {peer.full_encapsulation && <p>• Internet access routed via jump peer (Full Tunnel)</p>}
       </div>
     </div>
   );
