@@ -159,14 +159,24 @@ func (s *Server) SetPeerRoutes(routes map[string][]string) {
 
 // isFullTunnelPeer reports whether the peer with the given source IP has been
 // observed configuring 0.0.0.0/0 (or ::/0) in its WireGuard AllowedIPs — i.e.
-// the peer is full-tunnel.  Returns false when the peer's routes are unknown
-// (defaults to "do not aggressively redirect" to avoid breaking unknown peers).
+// the peer is full-tunnel.
+//
+// When the peer's routes are unknown (no heartbeat received yet, or peer does not
+// run the agent), we default to true — i.e. assume full-tunnel.  This is the
+// conservative captive-portal choice: redirecting external DNS for a split-tunnel
+// peer that doesn't run the agent merely causes their browser to land on the
+// captive portal page (which they can dismiss by authenticating), whereas NOT
+// redirecting for an actual full-tunnel peer leaves them staring at silent
+// connection drops with no hint that they need to log in.
+//
+// Once the peer's agent reports local AllowedIPs, peerRoutes is populated and
+// the accurate split-tunnel vs. full-tunnel decision takes over.
 func (s *Server) isFullTunnelPeer(peerIP string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	cidrs, ok := s.peerRoutes[peerIP]
 	if !ok {
-		return false
+		return true // unknown → assume full-tunnel (see comment above)
 	}
 	for _, c := range cidrs {
 		switch strings.TrimSpace(c) {

@@ -21,6 +21,18 @@ type AgentHeartbeat struct {
 	WireGuardUptime int64             `json:"wireguard_uptime"` // seconds
 	PeerEndpoints   map[string]string `json:"peer_endpoints"`   // Map of peer public key to endpoint
 
+	// PeerHandshakes holds the Unix timestamp of the most-recent WireGuard
+	// handshake for each peer, keyed by peer public key.  Reported by jump-peer
+	// agents (via `wg show <iface> latest-handshakes`).  The server uses these
+	// timestamps instead of endpoint presence to update wgLastSeen: a handshake
+	// is the ground-truth liveness indicator because WireGuard re-handshakes
+	// every ~180 s — a stale handshake (> 185 s ago) means the tunnel is down
+	// even though `wg show endpoints` still shows the last known endpoint.
+	//
+	// When this field is absent (older agents), the server falls back to the
+	// previous endpoint-presence logic.
+	PeerHandshakes map[string]int64 `json:"peer_handshakes,omitempty"` // pubkey → Unix timestamp
+
 	// LocalAllowedIPs is the list of CIDRs configured in this peer's WireGuard
 	// AllowedIPs (i.e. what THIS peer routes through the VPN).  Reported by every
 	// agent on every heartbeat.  Consumed by the jump peer's DNS server to decide
@@ -58,4 +70,13 @@ type PeerConnectivityStatus struct {
 	HasActiveAgent bool          `json:"has_active_agent"`
 	CurrentSession *AgentSession `json:"current_session,omitempty"`
 	LastChecked    time.Time     `json:"last_checked"`
+
+	// CaptivePortalState is the peer's current captive-portal authentication
+	// state, computed server-side from the whitelist, pending-token, and
+	// quarantine tables.  Possible values:
+	//   "authenticated"  — peer completed OIDC auth and is in a jump peer's whitelist
+	//   "pending_auth"   — peer has an active (unused) captive-portal token
+	//   "quarantined"    — peer exceeded auth-failure threshold; access blocked
+	//   ""               — no auth record (new / un-authenticated peer)
+	CaptivePortalState string `json:"captive_portal_state,omitempty"`
 }

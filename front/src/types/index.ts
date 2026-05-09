@@ -41,6 +41,8 @@ export interface PeerConnectivityStatus {
   has_active_agent: boolean;
   current_session?: AgentSession;
   last_checked: string;
+  /** Captive portal auth state: "authenticated" | "pending_auth" | "quarantined" | "" */
+  captive_portal_state?: string;
 }
 
 export interface AgentSession {

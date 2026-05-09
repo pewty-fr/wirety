@@ -417,6 +417,46 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                   </span>
                 </div>
               )}
+
+              {/* Captive Portal Auth State (non-jump peers only) */}
+              {!displayPeer.is_jump && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">Portal Auth</span>
+                  {(() => {
+                    const state = displayPeer.session_status?.captive_portal_state;
+                    if (state === 'authenticated') {
+                      return (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                          Authenticated
+                        </span>
+                      );
+                    }
+                    if (state === 'pending_auth') {
+                      return (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                          <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                          Pending Auth
+                        </span>
+                      );
+                    }
+                    if (state === 'quarantined') {
+                      return (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                          <span className="w-2 h-2 rounded-full bg-red-500" />
+                          Quarantined
+                        </span>
+                      );
+                    }
+                    return (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                        <span className="w-2 h-2 rounded-full bg-gray-400" />
+                        Not authenticated
+                      </span>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           </div>
 

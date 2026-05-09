@@ -907,14 +907,39 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 			activePeerIPs := make(map[string]bool)
 
 			// 1. Update wgLastSeen for all peers the jump peer can see via WireGuard.
+			//
+			// Prefer PeerHandshakes (from `wg show latest-handshakes`) over
+			// PeerEndpoints (from `wg show endpoints`) for the liveness signal:
+			//   - PeerHandshakes is the ground truth — WireGuard re-handshakes every
+			//     ~180 s, so a stale timestamp (> 185 s) means the tunnel is down.
+			//   - PeerEndpoints persists even when a peer is offline (WireGuard
+			//     remembers the last known endpoint), so endpoint presence alone
+			//     cannot distinguish "connected" from "was connected".
+			//
+			// Fallback to endpoint presence for backward compat with older agents
+			// that don't yet report PeerHandshakes.
+			const wgHandshakeStaleness = 185 * time.Second // 180 s rekey + 5 s grace
 			s.wgLastSeenMu.Lock()
 			for _, p := range peers {
 				if p.ID == peerID {
 					continue // skip self
 				}
 				key := networkID + ":" + p.ID
-				if _, seen := heartbeat.PeerEndpoints[p.PublicKey]; seen {
-					s.wgLastSeen[key] = now
+				if len(heartbeat.PeerHandshakes) > 0 {
+					// New path: use handshake recency.
+					if ts, ok := heartbeat.PeerHandshakes[p.PublicKey]; ok {
+						handshakeAge := now.Sub(time.Unix(ts, 0))
+						if handshakeAge <= wgHandshakeStaleness {
+							s.wgLastSeen[key] = now
+						}
+						// If handshake is stale, do NOT update wgLastSeen — the entry
+						// will naturally expire and HasActiveAgent will flip to false.
+					}
+				} else {
+					// Legacy path: endpoint presence (older agents).
+					if _, seen := heartbeat.PeerEndpoints[p.PublicKey]; seen {
+						s.wgLastSeen[key] = now
+					}
 				}
 			}
 			s.wgLastSeenMu.Unlock()
@@ -1008,7 +1033,69 @@ func (s *Service) GetPeerConnectivityStatus(ctx context.Context, networkID, peer
 		status.HasActiveAgent = s.wsConnectionChecker.IsConnected(networkID, peerID)
 	}
 
+	// 4. Captive portal auth state.
+	status.CaptivePortalState = s.getPeerCaptivePortalState(ctx, networkID, peerID)
+
 	return status, nil
+}
+
+// getPeerCaptivePortalState returns the captive-portal authentication state for
+// a given peer.  Priority: quarantined > authenticated > pending_auth > "".
+func (s *Service) getPeerCaptivePortalState(ctx context.Context, networkID, peerID string) string {
+	// Quarantine takes highest priority.
+	if q, err := s.repo.GetQuarantine(ctx, networkID, peerID); err == nil && q != nil {
+		if q.IsQuarantined(time.Now()) {
+			return "quarantined"
+		}
+	}
+
+	// Need the peer's WireGuard IP to match against whitelist / token entries.
+	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
+	if err != nil {
+		return ""
+	}
+	wgIP := peer.Address
+	if idx := indexByte(wgIP, '/'); idx != -1 {
+		wgIP = wgIP[:idx]
+	}
+
+	// Find all jump peers in the network so we can check their whitelists/tokens.
+	allPeers, err := s.repo.ListPeers(ctx, networkID)
+	if err != nil {
+		return ""
+	}
+
+	for _, jp := range allPeers {
+		if !jp.IsJump {
+			continue
+		}
+
+		// Check whitelist (authenticated).
+		wl, err := s.repo.GetCaptivePortalWhitelist(ctx, networkID, jp.ID)
+		if err == nil {
+			for _, entry := range wl {
+				entryIP := entry
+				if idx := indexByte(entry, '@'); idx != -1 {
+					entryIP = entry[:idx]
+				}
+				if entryIP == wgIP {
+					return "authenticated"
+				}
+			}
+		}
+
+		// Check active tokens (pending_auth).
+		tokens, err := s.repo.ListActiveCaptivePortalTokens(ctx, networkID, jp.ID)
+		if err == nil {
+			for _, t := range tokens {
+				if t.PeerIP == wgIP {
+					return "pending_auth"
+				}
+			}
+		}
+	}
+
+	return ""
 }
 
 // ListSessions returns all sessions in a network

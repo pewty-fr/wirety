@@ -1145,6 +1145,19 @@ func (r *Runner) sendHeartbeat() {
 		"wireguard_uptime": sysInfo.WireGuardUptime,
 		"peer_endpoints":   sysInfo.PeerEndpoints,
 	}
+
+	// Include WireGuard handshake timestamps so the server can use real
+	// data-plane liveness (not just endpoint presence) for connectivity detection.
+	// wg show latest-handshakes returns a timestamp-per-peer map; zero-valued
+	// entries (no handshake yet) are already filtered out by GetWireGuardHandshakes.
+	if handshakes := GetWireGuardHandshakes(r.getInterface()); len(handshakes) > 0 {
+		handshakeUnix := make(map[string]int64, len(handshakes))
+		for pubKey, t := range handshakes {
+			handshakeUnix[pubKey] = t.Unix()
+		}
+		heartbeat["peer_handshakes"] = handshakeUnix
+	}
+
 	if local := r.getLocalAllowedIPs(); len(local) > 0 {
 		heartbeat["local_allowed_ips"] = local
 	}
