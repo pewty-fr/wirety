@@ -326,6 +326,28 @@ func getInt64Claim(claims jwt.MapClaims, key string) int64 {
 	return 0
 }
 
+// ParseTokenExpiry extracts the exp claim from a JWT without verifying its signature.
+// Returns the expiry time and true if successful; zero time and false otherwise.
+// This is used to determine when an id_token should be refreshed, regardless of
+// what expires_in the provider returned (e.g. Slack returns the OAuth access-token
+// lifetime in expires_in but the id_token JWT itself may expire much sooner).
+func (s *Service) ParseTokenExpiry(tokenString string) (time.Time, bool) {
+	// ParseUnverified returns (*Token, []string parts, error); claims are on token.Claims.
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
+	if err != nil {
+		return time.Time{}, false
+	}
+	mapClaims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return time.Time{}, false
+	}
+	exp := getInt64Claim(mapClaims, "exp")
+	if exp == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(exp, 0), true
+}
+
 // RefreshAccessToken refreshes an access token using a refresh token.
 // It returns the new identity token, the new refresh token (empty if the provider
 // does not rotate refresh tokens), the token lifetime in seconds, and any error.

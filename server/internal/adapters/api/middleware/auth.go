@@ -174,6 +174,23 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		return nil, fmt.Errorf("session expired")
 	}
 
+	// applyRefreshedTokens updates the session fields from a successful refresh response.
+	// It prefers the JWT exp claim for AccessTokenExpiresAt because some providers
+	// (e.g. Slack) return expires_in for the OAuth access token which can be much
+	// longer than the id_token JWT's own lifetime.
+	applyRefreshedTokens := func(newAccessToken, newRefreshToken string, expiresIn int) {
+		session.AccessToken = newAccessToken
+		if exp, ok := authService.ParseTokenExpiry(newAccessToken); ok {
+			session.AccessTokenExpiresAt = exp
+		} else {
+			session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+		}
+		// Only update refresh token when the provider returned a new one (rotating tokens).
+		if newRefreshToken != "" {
+			session.RefreshToken = newRefreshToken
+		}
+	}
+
 	// refreshOnce performs a single token refresh and updates the session in the DB.
 	// It captures the new refresh token from the provider (important for rotating-token
 	// providers such as Azure Entra ID — discarding it would burn the token and cause
@@ -183,12 +200,7 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		if err != nil {
 			return err
 		}
-		session.AccessToken = newAccessToken
-		session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
-		// Only update refresh token when the provider returned a new one (rotating tokens).
-		if newRefreshToken != "" {
-			session.RefreshToken = newRefreshToken
-		}
+		applyRefreshedTokens(newAccessToken, newRefreshToken, expiresIn)
 		return userRepo.UpdateSession(session)
 	}
 
@@ -200,8 +212,10 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 	// by the winner and skip the refresh altogether.
 	didRefresh := false
 	if session.IsAccessTokenExpired() {
-		// Providers without refresh tokens (e.g. Slack) cannot renew the session —
-		// expire it immediately so the user is prompted to log in again.
+		// No refresh token: cannot renew, expire the session immediately.
+		// Note: Slack issues refresh tokens (xoxe-1-...) when token rotation is
+		// enabled in the Slack app settings. With rotation enabled this branch is
+		// never hit for Slack sessions.
 		if session.RefreshToken == "" {
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("session expired")
@@ -218,11 +232,7 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 				if err != nil {
 					return err
 				}
-				session.AccessToken = newAccessToken
-				session.AccessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
-				if newRefreshToken != "" {
-					session.RefreshToken = newRefreshToken
-				}
+				applyRefreshedTokens(newAccessToken, newRefreshToken, expiresIn)
 				return userRepo.UpdateSession(session)
 			}
 		}
@@ -270,9 +280,29 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		}
 
 		// Token invalid but we haven't refreshed yet — try one refresh under lock.
+		// Re-read the session first: a concurrent request may have already refreshed
+		// the one-time-use refresh token (e.g. Slack's xoxe-1-... rotating token).
+		// Without this re-read, two concurrent requests would both try to burn the same
+		// refresh token, the second getting invalid_grant → session deleted.
 		mu := getSessionRefreshLock(sessionHash)
 		mu.Lock()
-		refreshErr := refreshOnce()
+		if fresh, readErr := userRepo.GetSession(sessionHash); readErr == nil {
+			session = fresh
+			// Re-bind applyRefreshedTokens and refreshOnce to the updated session.
+			refreshOnce = func() error {
+				newAccessToken, newRefreshToken, expiresIn, err := authService.RefreshAccessToken(c.Request.Context(), session.RefreshToken)
+				if err != nil {
+					return err
+				}
+				applyRefreshedTokens(newAccessToken, newRefreshToken, expiresIn)
+				return userRepo.UpdateSession(session)
+			}
+		}
+		// If another goroutine already refreshed, the token may be valid now — skip.
+		var refreshErr error
+		if _, validErr := authService.ValidateToken(c.Request.Context(), session.AccessToken); validErr != nil {
+			refreshErr = refreshOnce()
+		}
 		mu.Unlock()
 		if refreshErr != nil {
 			_ = userRepo.DeleteSession(sessionHash)
