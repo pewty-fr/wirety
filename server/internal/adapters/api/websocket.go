@@ -167,13 +167,22 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 		return
 	}
 
-	// Get whitelist if this is a jump peer
+	// Get full captive-portal security state if this is a jump peer
 	var whitelist []string
+	var pendingAuth []network.PendingAuthEntry
+	var denylist []network.EndpointDenylistAgentEntry
+	var quarantined []string
+	var peerRoutes map[string][]string
 	if peer.IsJump {
-		whitelist, err = h.service.GetCaptivePortalWhitelist(c.Request.Context(), networkID, peer.ID)
+		state, err := h.service.GetCaptivePortalSecurityState(c.Request.Context(), networkID, peer.ID)
 		if err != nil {
-			log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peer.ID).Msg("Failed to get whitelist")
-			whitelist = []string{}
+			log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peer.ID).Msg("Failed to get captive portal security state")
+		} else {
+			whitelist = state.Whitelist
+			pendingAuth = state.PendingAuth
+			denylist = state.Denylist
+			quarantined = state.Quarantined
+			peerRoutes = state.PeerRoutes
 		}
 	}
 
@@ -184,16 +193,24 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 	}
 
 	msg := struct {
-		Config      string      `json:"config"`
-		DNS         interface{} `json:"dns,omitempty"`
-		Policy      interface{} `json:"policy,omitempty"`
-		Whitelist   []string    `json:"whitelist,omitempty"`
-		OAuthIssuer string      `json:"oauth_issuer,omitempty"`
+		Config      string                                `json:"config"`
+		DNS         interface{}                           `json:"dns,omitempty"`
+		Policy      interface{}                           `json:"policy,omitempty"`
+		Whitelist   []string                              `json:"whitelist,omitempty"`
+		PendingAuth []network.PendingAuthEntry            `json:"pending_auth,omitempty"`
+		Denylist    []network.EndpointDenylistAgentEntry  `json:"endpoint_denylist,omitempty"`
+		Quarantined []string                              `json:"quarantined,omitempty"`
+		PeerRoutes  map[string][]string                   `json:"peer_routes,omitempty"`
+		OAuthIssuer string                                `json:"oauth_issuer,omitempty"`
 	}{
 		Config:      cfg,
 		DNS:         dnsCfg,
 		Policy:      policy,
 		Whitelist:   whitelist,
+		PendingAuth: pendingAuth,
+		Denylist:    denylist,
+		Quarantined: quarantined,
+		PeerRoutes:  peerRoutes,
 		OAuthIssuer: oauthIssuer,
 	}
 	data, _ := json.Marshal(msg)
@@ -252,13 +269,22 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 				return
 			}
 
-			// Get whitelist if this is a jump peer
+			// Get full captive-portal security state if this is a jump peer
 			var whitelist []string
+			var pendingAuth []network.PendingAuthEntry
+			var denylist []network.EndpointDenylistAgentEntry
+			var quarantined []string
+			var peerRoutes map[string][]string
 			if peer.IsJump {
-				whitelist, err = m.service.GetCaptivePortalWhitelist(ctx, networkID, peerID)
+				state, err := m.service.GetCaptivePortalSecurityState(ctx, networkID, peerID)
 				if err != nil {
-					log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to get whitelist")
-					whitelist = []string{}
+					log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to get captive portal security state")
+				} else {
+					whitelist = state.Whitelist
+					pendingAuth = state.PendingAuth
+					denylist = state.Denylist
+					quarantined = state.Quarantined
+					peerRoutes = state.PeerRoutes
 				}
 			}
 
@@ -269,13 +295,17 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 			}
 
 			msg := struct {
-				Config      string      `json:"config"`
-				DNS         interface{} `json:"dns,omitempty"`
-				Policy      interface{} `json:"policy,omitempty"`
-				PeerID      string      `json:"peer_id"`
-				PeerName    string      `json:"peer_name"`
-				Whitelist   []string    `json:"whitelist,omitempty"`
-				OAuthIssuer string      `json:"oauth_issuer,omitempty"`
+				Config      string                                `json:"config"`
+				DNS         interface{}                           `json:"dns,omitempty"`
+				Policy      interface{}                           `json:"policy,omitempty"`
+				PeerID      string                                `json:"peer_id"`
+				PeerName    string                                `json:"peer_name"`
+				Whitelist   []string                              `json:"whitelist,omitempty"`
+				PendingAuth []network.PendingAuthEntry            `json:"pending_auth,omitempty"`
+				Denylist    []network.EndpointDenylistAgentEntry  `json:"endpoint_denylist,omitempty"`
+				Quarantined []string                              `json:"quarantined,omitempty"`
+				PeerRoutes  map[string][]string                   `json:"peer_routes,omitempty"`
+				OAuthIssuer string                                `json:"oauth_issuer,omitempty"`
 			}{
 				Config:      cfg,
 				DNS:         dnsCfg,
@@ -283,6 +313,10 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 				PeerID:      peer.ID,
 				PeerName:    peer.Name,
 				Whitelist:   whitelist,
+				PendingAuth: pendingAuth,
+				Denylist:    denylist,
+				Quarantined: quarantined,
+				PeerRoutes:  peerRoutes,
 				OAuthIssuer: oauthIssuer,
 			}
 			data, _ := json.Marshal(msg)

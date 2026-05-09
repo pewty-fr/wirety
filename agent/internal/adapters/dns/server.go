@@ -47,7 +47,21 @@ type Server struct {
 	// intercepted for unauthenticated peers — external internet queries are
 	// always forwarded to upstream so split-tunnel peers keep internet access.
 	routeDomainSuffixes []string
-	mu                  sync.RWMutex
+
+	// peerRoutes maps each peer's WireGuard private IP to the local AllowedIPs
+	// they configured on their device.  Reported via the agent heartbeat and
+	// pushed to the jump peer in the WS payload.  When a peer's AllowedIPs
+	// include 0.0.0.0/0 (full-tunnel), ALL external DNS queries from that peer
+	// are redirected to the captive portal IP while they are unauthenticated —
+	// because their entire internet traffic flows through the jump peer anyway,
+	// so intercepting DNS doesn't break anything that wasn't already gated.
+	// Split-tunnel peers (no 0.0.0.0/0) keep the legacy behaviour: only probe
+	// domains and internal VPN domains are intercepted, external lookups are
+	// forwarded normally because their external traffic doesn't cross the
+	// jump peer's iptables rules anyway.
+	peerRoutes map[string][]string
+
+	mu sync.RWMutex
 }
 
 // computeRouteDomainSuffixes derives the unique domain suffixes served by route
@@ -81,6 +95,7 @@ func NewServer(domain string, peers []dom.DNSPeer) *Server {
 		peers:               peers,
 		upstreamServers:     []string{"8.8.8.8:53", "1.1.1.1:53"}, // Default upstream DNS
 		routeDomainSuffixes: computeRouteDomainSuffixes(peers),
+		peerRoutes:          make(map[string][]string),
 	}
 }
 
@@ -125,6 +140,41 @@ func (s *Server) SetRedirectExclusions(hosts []string) {
 		s.redirectExclusions[h] = struct{}{}
 	}
 	log.Info().Strs("exclusions", hosts).Msg("DNS: redirect exclusions updated")
+}
+
+// SetPeerRoutes records each peer's WireGuard AllowedIPs so the DNS server can
+// decide route-aware whether to redirect external queries from unauthenticated
+// peers.  Called by the agent runner whenever the server pushes an updated
+// peer_routes map in the WebSocket payload.
+func (s *Server) SetPeerRoutes(routes map[string][]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make(map[string][]string, len(routes))
+	for k, v := range routes {
+		cp[k] = append([]string(nil), v...)
+	}
+	s.peerRoutes = cp
+	log.Debug().Int("peer_count", len(cp)).Msg("DNS: peer routes updated")
+}
+
+// isFullTunnelPeer reports whether the peer with the given source IP has been
+// observed configuring 0.0.0.0/0 (or ::/0) in its WireGuard AllowedIPs — i.e.
+// the peer is full-tunnel.  Returns false when the peer's routes are unknown
+// (defaults to "do not aggressively redirect" to avoid breaking unknown peers).
+func (s *Server) isFullTunnelPeer(peerIP string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cidrs, ok := s.peerRoutes[peerIP]
+	if !ok {
+		return false
+	}
+	for _, c := range cidrs {
+		switch strings.TrimSpace(c) {
+		case "0.0.0.0/0", "::/0":
+			return true
+		}
+	}
+	return false
 }
 
 // SetUpstreamServers sets the upstream DNS servers for forwarding
@@ -261,12 +311,6 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		// "nas.home.wg.example.com"). These domains are only meaningful inside
 		// the VPN, so redirecting them to the captive portal IP for unauthenticated
 		// peers is always correct — both for full-tunnel and split-tunnel peers.
-		//
-		// We deliberately do NOT intercept arbitrary external domains here.
-		// For split-tunnel peers external traffic never travels through the jump
-		// peer, so intercepting their DNS would break internet access without
-		// helping the captive portal. Full-tunnel peers are handled by OS probe
-		// interception (section 2 above) which triggers the CNA/NCSI popup.
 		if redirectInternal {
 			_, isExcluded := exclusions[name]
 			if !isExcluded {
@@ -294,6 +338,41 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 					resolved = true
 					continue
 				}
+			}
+		}
+
+		// 4. Aggressive external interception for full-tunnel unauthenticated peers.
+		//
+		// If a peer has 0.0.0.0/0 (or ::/0) in its locally-configured WireGuard
+		// AllowedIPs, ALL of its traffic flows through the jump peer.  In that case
+		// we redirect *every* external A/AAAA query to the captive portal IP — any
+		// browser request the peer makes will hit the captive portal HTTP/HTTPS
+		// server (port 80 / 443 on the WG IP, allowed via the INPUT chain) and be
+		// redirected to the SSO auth page.  Without this, the peer's browser would
+		// look up real external IPs and have its connections silently dropped by
+		// the FORWARD chain, with no captive-portal redirect ever firing — leaving
+		// the user staring at "site unreachable" with no clue they need to log in.
+		//
+		// Split-tunnel peers don't get this treatment: their external traffic
+		// doesn't cross the jump peer at all, so intercepting their DNS would
+		// break their internet without serving any security purpose (they couldn't
+		// reach internal VPN resources anyway, since those go through the jump
+		// peer's iptables which already blocks unauthenticated access).
+		if redirectInternal && s.isFullTunnelPeer(peerIP) {
+			if _, isExcluded := exclusions[name]; !isExcluded {
+				if q.Qtype == dns.TypeA {
+					log.Debug().Str("domain", name).Str("peer", peerIP).Str("portal_ip", portalIP).
+						Msg("DNS: full-tunnel unauthenticated peer — redirecting external A to captive portal")
+					m.Answer = append(m.Answer, &dns.A{
+						Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 5},
+						A:   net.ParseIP(portalIP),
+					})
+				} else {
+					log.Debug().Str("domain", name).Str("peer", peerIP).
+						Msg("DNS: full-tunnel unauthenticated peer — suppressing AAAA (forcing IPv4 captive portal)")
+				}
+				resolved = true
+				continue
 			}
 		}
 	}

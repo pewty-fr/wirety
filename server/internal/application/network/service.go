@@ -868,6 +868,28 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 		return fmt.Errorf("failed to update session: %w", err)
 	}
 
+	// Persist this peer's locally-configured AllowedIPs so the jump peer's DNS
+	// server can decide route-aware whether to redirect external queries when
+	// this peer is unauthenticated.  Empty list = unknown / split-tunnel default.
+	if heartbeat.LocalAllowedIPs != nil {
+		if err := s.repo.UpsertPeerLocalRoutes(ctx, networkID, peerID, heartbeat.LocalAllowedIPs); err != nil {
+			log.Warn().Err(err).Msg("failed to persist peer local routes from heartbeat")
+		}
+	}
+
+	// Process endpoint-takeover reports from jump-peer agents.  Each report tells
+	// us that the WireGuard endpoint of an already-authenticated peer flipped to
+	// a foreign source — meaning a second device using the same WireGuard private
+	// key is competing for the peer slot.  We persist a denylist entry so the
+	// jump peer can DROP further UDP packets from that rogue source at the
+	// physical-interface level, preventing the oscillation that would otherwise
+	// force the legitimate user to re-authenticate every WireGuard keepalive.
+	if len(heartbeat.EndpointTakeovers) > 0 {
+		if err := s.processEndpointTakeovers(ctx, networkID, peerID, heartbeat.EndpointTakeovers); err != nil {
+			log.Warn().Err(err).Msg("failed to process endpoint takeovers")
+		}
+	}
+
 	// Jump peers also report which other peers are currently connected via
 	// WireGuard.  We use those endpoint reports for three things:
 	//   1. Update wgLastSeen for ALL reported peers — this is the data-plane
@@ -1089,6 +1111,22 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 		return nil, fmt.Errorf("failed to whitelist peer: %w", err)
 	}
 
+	// Mark the token as consumed so the strike-tracking cleanup loop knows that
+	// this token led to a successful auth (and therefore is NOT a strike).
+	_ = s.repo.MarkCaptivePortalTokenConsumed(ctx, captiveToken)
+
+	// Successful SSO auth = the user proved ownership.  Reset any accumulated
+	// auth-failure strikes and release the peer from quarantine if it was there.
+	_ = s.ResetCaptivePortalStrikes(ctx, cpt.NetworkID, matchedPeer.ID)
+
+	// Clear any endpoint denylist entries targeting this peer.  The previously
+	// "rogue" source might have been the legitimate user themselves roaming —
+	// since they just authenticated successfully, we extend the benefit of the
+	// doubt and remove the physical-interface block.  If the same source was
+	// truly malicious, it will still need to authenticate again the next time
+	// it attempts a takeover (and will accumulate strikes if it can't).
+	_ = s.repo.ClearEndpointDenylistForPeer(ctx, cpt.NetworkID, cpt.PeerIP)
+
 	// Do NOT delete the token here. The redirect server caches the token for up to
 	// 9 minutes (tokenTTL) to avoid creating a new DB token on every intercepted
 	// HTTP request. If the agent has not yet synced iptables by the time the browser
@@ -1135,6 +1173,358 @@ func (s *Service) RemoveCaptivePortalWhitelist(ctx context.Context, networkID, j
 // GetCaptivePortalWhitelist retrieves the whitelist for a jump peer
 func (s *Service) GetCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID string) ([]string, error) {
 	return s.repo.GetCaptivePortalWhitelist(ctx, networkID, jumpPeerID)
+}
+
+// processEndpointTakeovers handles the EndpointTakeovers field of an
+// agent heartbeat.  For each rogue source observed by the jump peer, we persist
+// a denylist entry so the jump peer can block that public IP:port at the
+// physical interface — preventing the rogue source from completing further
+// WireGuard handshakes and stealing the peer slot back.
+func (s *Service) processEndpointTakeovers(ctx context.Context, networkID, jumpPeerID string, takeovers []network.EndpointTakeoverReport) error {
+	for _, t := range takeovers {
+		blockedIP, blockedPort := splitEndpoint(t.ObservedAt)
+		if blockedIP == "" {
+			continue
+		}
+		entry := &network.EndpointDenylistEntry{
+			NetworkID:   networkID,
+			JumpPeerID:  jumpPeerID,
+			WgIP:        t.WgIP,
+			BlockedIP:   blockedIP,
+			BlockedPort: blockedPort,
+			Reason:      fmt.Sprintf("rogue takeover: authed=%s observed=%s", t.AuthenticatedAt, t.ObservedAt),
+		}
+		if err := s.repo.AddEndpointDenylist(ctx, entry); err != nil {
+			log.Warn().Err(err).
+				Str("wg_ip", t.WgIP).
+				Str("blocked", t.ObservedAt).
+				Msg("failed to add endpoint denylist entry")
+			continue
+		}
+		log.Warn().
+			Str("network_id", networkID).
+			Str("jump_peer_id", jumpPeerID).
+			Str("wg_ip", t.WgIP).
+			Str("authenticated_at", t.AuthenticatedAt).
+			Str("observed_at", t.ObservedAt).
+			Msg("captive portal: rogue WireGuard source denylisted (config sharing / theft suspected)")
+	}
+	// Push refreshed firewall state to the jump peer.
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+	return nil
+}
+
+// splitEndpoint parses "ip:port" into (ip, port).  Returns ("", 0) on parse
+// failure.  Handles IPv6 brackets ("[::1]:51820") as well as bare IPv4.
+func splitEndpoint(ep string) (string, int) {
+	host, port, err := net.SplitHostPort(ep)
+	if err != nil {
+		return "", 0
+	}
+	var p int
+	for _, c := range port {
+		if c < '0' || c > '9' {
+			return "", 0
+		}
+		p = p*10 + int(c-'0')
+	}
+	return host, p
+}
+
+// RecordCaptivePortalAuthFailure increments the strike counter for a peer.
+// When the threshold is crossed the peer enters quarantine for QuarantineDuration.
+// Called from the cleanup path when a token expires without ever being converted
+// into a successful AuthenticateCaptivePortal call.
+func (s *Service) RecordCaptivePortalAuthFailure(ctx context.Context, networkID, peerID string) error {
+	q, err := s.repo.GetQuarantine(ctx, networkID, peerID)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if q == nil {
+		q = &network.CaptivePortalQuarantine{NetworkID: networkID, PeerID: peerID}
+	}
+	q.Strikes++
+	q.LastStrikeAt = &now
+	if q.Strikes >= network.QuarantineStrikeThreshold {
+		until := now.Add(network.QuarantineDuration)
+		q.QuarantinedUntil = &until
+		log.Warn().
+			Str("network_id", networkID).
+			Str("peer_id", peerID).
+			Int("strikes", q.Strikes).
+			Time("until", until).
+			Msg("captive portal: peer quarantined after repeated auth failures")
+	}
+	if err := s.repo.UpsertQuarantine(ctx, q); err != nil {
+		return err
+	}
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+	return nil
+}
+
+// ResetCaptivePortalStrikes is called on a successful AuthenticateCaptivePortal
+// — the user proved ownership via SSO, so any accumulated strikes are erased
+// and (if quarantined) the peer is released.
+func (s *Service) ResetCaptivePortalStrikes(ctx context.Context, networkID, peerID string) error {
+	q, err := s.repo.GetQuarantine(ctx, networkID, peerID)
+	if err != nil || q == nil {
+		return err
+	}
+	if q.Strikes == 0 && q.QuarantinedUntil == nil {
+		return nil
+	}
+	return s.repo.ClearQuarantine(ctx, networkID, peerID)
+}
+
+// CaptivePortalSecurityState aggregates everything the jump peer needs to know
+// to enforce the three-tier authentication gate: who is authenticated, who has
+// an in-flight token (pending auth), who is rogue (denylisted), who is
+// quarantined, and per-peer routes for DNS interception decisions.
+type CaptivePortalSecurityState struct {
+	Whitelist   []string                     // "wgIP@endpointIP" entries (existing format)
+	PendingAuth []PendingAuthEntry           // peers with active tokens
+	Denylist    []EndpointDenylistAgentEntry // physical-interface DROP rules
+	Quarantined []string                     // wgIPs currently quarantined
+	PeerRoutes  map[string][]string          // wgIP -> AllowedIPs (for DNS)
+}
+
+// PendingAuthEntry describes a peer that has an active captive portal token
+// (issued, not yet expired, not yet successfully exchanged for a whitelist
+// entry).  The jump peer adds a temporary "HTTPS-only" allow rule for the wgIP
+// during this window to allow the OIDC redirect chain to reach external
+// providers (Slack, GitHub, accounts.google.com, …).
+type PendingAuthEntry struct {
+	WgIP      string    `json:"wg_ip"`
+	Endpoint  string    `json:"endpoint,omitempty"` // "ip:port" recorded at token creation
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// EndpointDenylistAgentEntry is the wire form sent to the agent: just the
+// rogue source IP:port.  The agent translates each entry into an iptables
+// DROP rule on the physical interface for the WireGuard listen port.
+type EndpointDenylistAgentEntry struct {
+	BlockedIP   string `json:"blocked_ip"`
+	BlockedPort int    `json:"blocked_port"`
+}
+
+// GetCaptivePortalSecurityState assembles the full security payload for a jump peer.
+func (s *Service) GetCaptivePortalSecurityState(ctx context.Context, networkID, jumpPeerID string) (*CaptivePortalSecurityState, error) {
+	state := &CaptivePortalSecurityState{}
+
+	// 1. Whitelist (authenticated peers).
+	wl, err := s.repo.GetCaptivePortalWhitelist(ctx, networkID, jumpPeerID)
+	if err != nil {
+		return nil, fmt.Errorf("get whitelist: %w", err)
+	}
+	state.Whitelist = wl
+
+	// Build a set of already-authenticated wgIPs so we don't include them in
+	// the pending list (their iptables rule is the full whitelist tier, not
+	// the temporary HTTPS-only tier).
+	authenticated := make(map[string]struct{}, len(wl))
+	for _, entry := range wl {
+		wgIP := entry
+		if idx := indexByte(entry, '@'); idx != -1 {
+			wgIP = entry[:idx]
+		}
+		authenticated[wgIP] = struct{}{}
+	}
+
+	// 2. Pending-auth peers (active tokens not yet converted).
+	tokens, err := s.repo.ListActiveCaptivePortalTokens(ctx, networkID, jumpPeerID)
+	if err != nil {
+		return nil, fmt.Errorf("list active tokens: %w", err)
+	}
+	for _, t := range tokens {
+		if _, alreadyAuthed := authenticated[t.PeerIP]; alreadyAuthed {
+			continue
+		}
+		state.PendingAuth = append(state.PendingAuth, PendingAuthEntry{
+			WgIP:      t.PeerIP,
+			Endpoint:  t.PeerEndpoint,
+			ExpiresAt: t.ExpiresAt,
+		})
+	}
+
+	// 3. Denylist (per-peer rogue source blocks).
+	deny, err := s.repo.GetEndpointDenylist(ctx, networkID, jumpPeerID)
+	if err != nil {
+		return nil, fmt.Errorf("get denylist: %w", err)
+	}
+	// Deduplicate by (BlockedIP, BlockedPort) — the agent applies one iptables
+	// rule per unique source, regardless of which wgIP it targets.
+	seenDeny := make(map[string]struct{}, len(deny))
+	for _, e := range deny {
+		key := e.BlockedIP + ":" + intToStr(e.BlockedPort)
+		if _, ok := seenDeny[key]; ok {
+			continue
+		}
+		seenDeny[key] = struct{}{}
+		state.Denylist = append(state.Denylist, EndpointDenylistAgentEntry{
+			BlockedIP:   e.BlockedIP,
+			BlockedPort: e.BlockedPort,
+		})
+	}
+
+	// 4. Quarantined peers — block all access including captive portal redirect.
+	qList, err := s.repo.ListQuarantinedPeers(ctx, networkID)
+	if err != nil {
+		return nil, fmt.Errorf("list quarantined: %w", err)
+	}
+	if len(qList) > 0 {
+		// Translate peer IDs to wgIPs.
+		peers, err := s.repo.ListPeers(ctx, networkID)
+		if err == nil {
+			peerByID := make(map[string]*network.Peer, len(peers))
+			for _, p := range peers {
+				peerByID[p.ID] = p
+			}
+			for _, q := range qList {
+				p, ok := peerByID[q.PeerID]
+				if !ok {
+					continue
+				}
+				addr := p.Address
+				if idx := indexByte(addr, '/'); idx != -1 {
+					addr = addr[:idx]
+				}
+				state.Quarantined = append(state.Quarantined, addr)
+			}
+		}
+	}
+
+	// 5. Per-peer local routes (for DNS interception).  Map from wgIP → CIDRs.
+	routes, err := s.repo.ListPeerLocalRoutes(ctx, networkID)
+	if err == nil && len(routes) > 0 {
+		peers, err := s.repo.ListPeers(ctx, networkID)
+		if err == nil {
+			state.PeerRoutes = make(map[string][]string, len(routes))
+			for _, p := range peers {
+				cidrs, ok := routes[p.ID]
+				if !ok {
+					continue
+				}
+				addr := p.Address
+				if idx := indexByte(addr, '/'); idx != -1 {
+					addr = addr[:idx]
+				}
+				state.PeerRoutes[addr] = cidrs
+			}
+		}
+	}
+
+	return state, nil
+}
+
+// indexByte is a local helper to avoid importing "strings" just for this.
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// intToStr is a tiny non-allocating int→string for hash keys.
+func intToStr(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [12]byte
+	i := len(buf)
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+// CleanupExpiredCaptivePortalTokens deletes expired tokens AND records a strike
+// for each token that expired without ever being consumed.  Tokens that crossed
+// the strike threshold are persisted in captive_portal_quarantine and the jump
+// peer is notified so it can refresh the firewall state.
+//
+// Called periodically from main.go's cleanup goroutine.
+func (s *Service) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
+	expired, err := s.repo.ListExpiredUnconsumedCaptivePortalTokens(ctx)
+	if err != nil {
+		return fmt.Errorf("list expired unconsumed tokens: %w", err)
+	}
+	for _, t := range expired {
+		// Map peer_ip → peer_id so we can record the strike against the peer
+		// (quarantine is per-peer, not per-IP).
+		peers, err := s.repo.ListPeers(ctx, t.NetworkID)
+		if err != nil {
+			continue
+		}
+		var peerID string
+		for _, p := range peers {
+			addr := p.Address
+			if idx := strings.IndexByte(addr, '/'); idx != -1 {
+				addr = addr[:idx]
+			}
+			if addr == t.PeerIP {
+				peerID = p.ID
+				break
+			}
+		}
+		if peerID == "" {
+			continue
+		}
+		_ = s.RecordCaptivePortalAuthFailure(ctx, t.NetworkID, peerID)
+	}
+	// Now actually drop the rows.
+	return s.repo.CleanupExpiredCaptivePortalTokens(ctx)
+}
+
+// CleanupExpiredEndpointDenylist removes denylist entries that have aged out.
+// Called periodically from main.go's cleanup goroutine.
+func (s *Service) CleanupExpiredEndpointDenylist(ctx context.Context) error {
+	return s.repo.CleanupExpiredEndpointDenylist(ctx)
+}
+
+// RevokePeerAuthentication forcibly removes a peer from the captive portal
+// whitelist across all jump peers in the network and clears any pending tokens
+// for that peer.  Used by the dashboard "revoke connection" button — the next
+// HTTP request from the peer will hit the captive portal and be redirected to
+// SSO.
+func (s *Service) RevokePeerAuthentication(ctx context.Context, networkID, peerID string) error {
+	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
+	if err != nil {
+		return fmt.Errorf("get peer: %w", err)
+	}
+	wgIP := peer.Address
+	if idx := strings.IndexByte(wgIP, '/'); idx != -1 {
+		wgIP = wgIP[:idx]
+	}
+	if err := s.repo.RemoveCaptivePortalWhitelistByPeerIP(ctx, networkID, wgIP); err != nil {
+		return fmt.Errorf("remove whitelist: %w", err)
+	}
+	log.Info().
+		Str("network_id", networkID).
+		Str("peer_id", peerID).
+		Str("wg_ip", wgIP).
+		Msg("captive portal: peer authentication revoked by admin")
+	if s.wsNotifier != nil {
+		s.wsNotifier.NotifyNetworkPeers(networkID)
+	}
+	return nil
 }
 
 // CleanupWhitelistForDisconnectedPeers removes peers from whitelist when their connection is down

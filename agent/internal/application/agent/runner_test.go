@@ -8,6 +8,7 @@ import (
 	"time"
 	dom "wirety/agent/internal/domain/dns"
 	pol "wirety/agent/internal/domain/policy"
+	"wirety/agent/internal/ports"
 )
 
 // Mock implementations for testing
@@ -170,15 +171,15 @@ type mockFirewall struct {
 	syncErr        error
 }
 
-func (m *mockFirewall) Sync(policy *pol.JumpPolicy, selfIP string, whitelistedIPs []string) error {
+func (m *mockFirewall) Sync(req ports.SyncRequest) error {
 	if m.syncErr != nil {
 		return m.syncErr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.policy = policy
-	m.selfIP = selfIP
-	m.whitelistedIPs = whitelistedIPs
+	m.policy = req.Policy
+	m.selfIP = req.SelfIP
+	m.whitelistedIPs = req.AuthenticatedIPs
 	m.synced = true
 	return nil
 }

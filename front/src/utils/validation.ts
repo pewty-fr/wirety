@@ -124,3 +124,37 @@ export function getCIDRError(cidr: string): string | null {
 
   return 'Invalid IP address format';
 }
+
+/**
+ * Generates a random IPv6 Unique Local Address (ULA) prefix per RFC 4193.
+ *
+ * ULAs are the IPv6 equivalent of RFC 1918 private addresses: they are
+ * non-routable on the public internet and intended exactly for private
+ * networks like a Wirety VPN.  RFC 4193 mandates:
+ *   • prefix `fc00::/7` with the L bit set (`fd00::/8` in practice)
+ *   • a 40-bit pseudo-random Global ID (NOT sequential or low-bit) to make
+ *     two independent ULA networks effectively non-collide-able if they ever
+ *     end up bridged
+ *   • subnet at /64 (one trillion subnets per Global ID; for a single VPN
+ *     network /64 is the natural choice — plenty of room for `/128` peers)
+ *
+ * Returns CIDRs in the form `fd<10 hex chars>:<4>:<4>::/64`.  Multiple calls
+ * produce independent random Global IDs (browser crypto.getRandomValues).
+ */
+export function suggestIPv6ULACIDRs(count: number = 5): string[] {
+  const out: string[] = [];
+  // We need 40 random bits for the Global ID + 16 bits for the subnet ID.
+  // Build it via crypto.getRandomValues so each suggestion is genuinely random
+  // (NOT seeded from time/network state, per RFC 4193 §3.2.2).
+  for (let i = 0; i < count; i++) {
+    const bytes = new Uint8Array(7); // 5 (Global ID) + 2 (subnet ID) = 56 bits
+    crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    // Format as fdXX:XXXX:XXXX:YYYY::/64
+    //   GlobalID = first 40 bits  -> hex[0..10] (5 bytes)
+    //   SubnetID = next 16 bits   -> hex[10..14] (2 bytes)
+    const cidr = `fd${hex.slice(0, 2)}:${hex.slice(2, 6)}:${hex.slice(6, 10)}:${hex.slice(10, 14)}::/64`;
+    out.push(cidr);
+  }
+  return out;
+}

@@ -195,6 +195,15 @@ class ApiClient {
     await this.client.delete(`/networks/${networkId}/peers/${peerId}`);
   }
 
+  /**
+   * Revokes a peer's captive-portal authentication.  The peer remains in the
+   * network — only its authenticated session is cleared.  The next request
+   * from the peer will hit the captive portal and be redirected to SSO.
+   */
+  async revokePeerAuthentication(networkId: string, peerId: string): Promise<void> {
+    await this.client.post(`/networks/${networkId}/peers/${peerId}/revoke-auth`);
+  }
+
   async getPeerReachability(networkId: string, peerId: string): Promise<PeerReachability> {
     const response = await this.client.get(`/networks/${networkId}/peers/${peerId}/reachability`);
     return response.data;

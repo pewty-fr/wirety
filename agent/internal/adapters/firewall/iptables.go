@@ -5,8 +5,10 @@ import (
 	"net"
 	"net/url"
 	"os/exec"
+	"strconv"
 	"strings"
 	dom "wirety/agent/internal/domain/policy"
+	"wirety/agent/internal/ports"
 
 	"github.com/rs/zerolog/log"
 )
@@ -443,7 +445,28 @@ func splitByFamily(ips []string) (ipv4s, ipv6s []string) {
 // Sync applies forwarding/NAT plus policy-based iptables rules.
 // This method is called periodically when policy updates are received.
 // To avoid dropping active connections, we check if rules exist before adding them.
-func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string) error {
+//
+// Three-tier authentication gate (WIRETY_JUMP chain on FORWARD):
+//   1. AuthenticatedIPs — full network access, jumps to WIRETY_POLICY.
+//   2. PendingAuthIPs   — peer has an in-flight captive-portal token; only
+//                          external HTTPS is allowed (for the OIDC redirect chain).
+//   3. QuarantinedIPs   — repeated auth failures; explicit DROP, no captive
+//                          portal redirect (the user gets nothing until quarantine
+//                          expires or admin clears it).
+//   Default              — DROP, but DNS/captive-portal HTTP/HTTPS to the jump
+//                          peer itself remain reachable via the INPUT chain so
+//                          new peers can complete the OIDC flow.
+//
+// Physical-interface denylist (INPUT on the egress NIC, scoped to WireGuard
+// listen port): drops UDP packets from rogue source IP:port pairs that the
+// server flagged after detecting endpoint takeovers.  This prevents a rogue
+// source from completing further WireGuard handshakes, ending the oscillation
+// that would otherwise force the legitimate user to re-authenticate every
+// keepalive cycle.
+func (a *Adapter) Sync(req ports.SyncRequest) error {
+	p := req.Policy
+	_ = req.SelfIP // currently unused; reserved for future per-peer rules
+	whitelistedIPs := req.AuthenticatedIPs
 	if p == nil {
 		return nil
 	}
@@ -536,7 +559,18 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 		}
 	}
 
-	// Authenticated peers jump to the policy chain; all others fall through.
+	// Tier 0 (highest priority): explicitly drop traffic from quarantined peers,
+	// even before checking the authenticated whitelist.  This stops a peer that
+	// already had a stale whitelist entry from being treated as authenticated
+	// in the brief window after their auth is revoked but before the next
+	// server push.
+	for _, ip := range req.QuarantinedIPs {
+		if err := a.run("-A", chain, "-i", a.iface, "-s", ip, "-j", "DROP"); err != nil {
+			log.Warn().Err(err).Str("ip", ip).Msg("failed to add quarantine DROP rule")
+		}
+	}
+
+	// Tier 1: Authenticated peers jump to the policy chain.
 	for _, ip := range whitelistIPv4 {
 		if err := a.run("-A", chain, "-i", a.iface, "-s", ip, "-j", policyChain); err != nil {
 			log.Warn().Err(err).Str("ip", ip).Msg("failed to add whitelist jump rule")
@@ -545,27 +579,31 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 
 	// Block HTTPS to RFC 1918 private address ranges with a TCP RST so the
 	// browser fails immediately (instead of spinning for ~30 s on a silent DROP).
-	// This covers the VPN subnet, private LANs behind the jump peer, and any
-	// other internal resources — unauthenticated peers cannot reach them via HTTPS.
+	// This applies to ALL non-authenticated peers (pending-auth and unauth alike)
+	// so internal VPN resources stay protected during the OIDC flow.
 	for _, privateNet := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
 		_ = a.run("-A", chain, "-i", a.iface, "-d", privateNet, "-p", "tcp", "--dport", "443", "-j", "REJECT", "--reject-with", "tcp-reset")
 	}
 
-	// Allow HTTPS to all public (external) addresses for unauthenticated peers.
-	// This is necessary for the OIDC captive portal login flow: the browser must
-	// reach the OIDC authorization endpoint (e.g. slack.com, github.com,
-	// accounts.google.com) before it can authenticate. Using specific OIDC issuer
-	// IPs is not viable — CDN-hosted providers (Slack, Google, GitHub) rotate IPs
-	// continuously and the specific IPs resolved at iptables-sync time will be
-	// stale within seconds.
-	//
-	// Security model: VPN-internal resources (RFC 1918, blocked above) remain
-	// inaccessible to unauthenticated peers. External internet access via HTTPS
-	// is intentionally permitted — it is a precondition for OIDC authentication.
-	_ = a.run("-A", chain, "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "ACCEPT")
+	// Tier 2: peers with an in-flight captive portal token get external HTTPS
+	// access for the duration of the token (≈10 minutes).  Scoped per-peer
+	// (`-s wgIP`) so a peer that hasn't even hit the captive portal yet does NOT
+	// get this grant — they must trigger token creation first via an HTTP probe
+	// that gets redirected.  This replaces the previous global "ACCEPT all
+	// HTTPS" rule that was the captive-portal bypass we're closing.
+	pendingIPv4, _ := splitByFamily(req.PendingAuthIPs)
+	for _, ip := range pendingIPv4 {
+		if err := a.run("-A", chain, "-i", a.iface, "-s", ip, "-p", "tcp", "--dport", "443", "-j", "ACCEPT"); err != nil {
+			log.Warn().Err(err).Str("ip", ip).Msg("failed to add pending-auth HTTPS allow rule")
+		}
+	}
 
 	// Drop all remaining traffic from unauthenticated peers (covers non-HTTPS
-	// ports to external IPs, and all traffic to internal IPs on non-HTTPS ports).
+	// ports to external IPs, all traffic to internal IPs on non-HTTPS ports,
+	// and external HTTPS for peers that haven't yet been issued a token).
+	// New peers reach the captive portal via the INPUT chain rules (HTTP/HTTPS
+	// to the jump peer's WG IP), not through FORWARD — so this DROP doesn't
+	// prevent the initial captive-portal redirect from firing.
 	_ = a.run("-A", chain, "-i", a.iface, "-j", "DROP")
 
 	// Populate WIRETY_POLICY with per-destination rules for authenticated peers.
@@ -642,14 +680,89 @@ func (a *Adapter) Sync(p *dom.JumpPolicy, selfIP string, whitelistedIPs []string
 	// Private IPv6 ranges:
 	//   fc00::/7  — ULA (Unique Local Addresses, RFC 4193) — analogous to RFC 1918
 	//   fe80::/10 — link-local — not routable, but blocked for completeness
-	a.syncIPv6(p, whitelistIPv6, endpoint)
+	a.syncIPv6(p, whitelistIPv6, endpoint, req)
+
+	// ── Physical-interface denylist (rogue WireGuard sources) ────────────────
+	//
+	// Drops UDP packets to the WireGuard listen port from sources flagged by the
+	// server as rogue takeovers.  This is the second-line defence that actually
+	// stops a stolen WireGuard config from being usable concurrently with the
+	// legitimate session: even though WireGuard's protocol accepts handshakes
+	// from any source matching the cryptographic identity, our iptables rule
+	// drops them before the kernel module ever sees them, so the legitimate
+	// peer's stored endpoint is never overwritten.
+	a.syncWireGuardDenylist(req.EndpointDenylist, req.WireGuardListenPort)
 
 	return nil
 }
 
+// WIRETY_WGDENY is the chain that holds the per-source DROP rules for rogue
+// WireGuard UDP packets.  Maintained idempotently: each Sync flushes and
+// rebuilds it from the current denylist set.
+const wgDenyChain = "WIRETY_WGDENY"
+
+// syncWireGuardDenylist (re)builds the WIRETY_WGDENY chain on the INPUT path
+// of the physical interface.  Each entry becomes a `-s <ip> [--sport <port>]
+// -p udp --dport <wg_port> -j DROP` rule, covering both legacy iptables and
+// ip6tables (entries with IPv6 addresses go to ip6tables only).
+//
+// If wgListenPort is zero we skip the whole step — without a WireGuard port we
+// can't safely DROP UDP packets (we'd risk dropping unrelated UDP traffic from
+// the same source, e.g. a DNS reply).
+func (a *Adapter) syncWireGuardDenylist(entries []ports.DenylistEntry, wgListenPort int) {
+	if wgListenPort <= 0 {
+		log.Debug().Msg("WireGuard denylist: listen port unknown, skipping")
+		// Still flush the chain so stale rules from a previous sync don't linger.
+		_ = a.run("-N", wgDenyChain)
+		_ = a.run("-F", wgDenyChain)
+		_ = a.runIPv6("-N", wgDenyChain)
+		_ = a.runIPv6("-F", wgDenyChain)
+		return
+	}
+
+	// Create + flush idempotently.
+	_ = a.run("-N", wgDenyChain)
+	_ = a.run("-F", wgDenyChain)
+	_ = a.runIPv6("-N", wgDenyChain)
+	_ = a.runIPv6("-F", wgDenyChain)
+
+	wgPortStr := strconv.Itoa(wgListenPort)
+
+	for _, e := range entries {
+		ip := net.ParseIP(e.BlockedIP)
+		if ip == nil {
+			continue
+		}
+		args := []string{"-A", wgDenyChain, "-p", "udp", "--dport", wgPortStr, "-s", e.BlockedIP}
+		if e.BlockedPort > 0 {
+			args = append(args, "--sport", strconv.Itoa(e.BlockedPort))
+		}
+		args = append(args, "-j", "DROP")
+		if ip.To4() != nil {
+			if err := a.run(args...); err != nil {
+				log.Warn().Err(err).Str("source", e.BlockedIP).Int("port", e.BlockedPort).Msg("failed to add WireGuard denylist rule")
+			} else {
+				log.Info().Str("source", e.BlockedIP).Int("port", e.BlockedPort).Int("wg_port", wgListenPort).Msg("WireGuard denylist: rogue source blocked at physical interface")
+			}
+		} else {
+			if err := a.runIPv6(args...); err != nil {
+				log.Warn().Err(err).Str("source", e.BlockedIP).Int("port", e.BlockedPort).Msg("failed to add WireGuard denylist rule (IPv6)")
+			} else {
+				log.Info().Str("source", e.BlockedIP).Int("port", e.BlockedPort).Int("wg_port", wgListenPort).Msg("WireGuard denylist: rogue source blocked at physical interface (IPv6)")
+			}
+		}
+	}
+
+	// Wire WIRETY_WGDENY into INPUT (idempotent — no -i filter, the rules
+	// inside the chain match by destination port so they only affect WireGuard
+	// traffic regardless of which interface it arrived on).
+	_ = a.runIfNotExists("-I", "INPUT", "1", "-p", "udp", "--dport", wgPortStr, "-j", wgDenyChain)
+	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-p", "udp", "--dport", wgPortStr, "-j", wgDenyChain)
+}
+
 // syncIPv6 applies ip6tables rules mirroring the iptables WIRETY_JUMP / WIRETY_POLICY
 // two-chain design for IPv6 traffic on the WireGuard interface.
-func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint serverEndpoint) {
+func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint serverEndpoint, req ports.SyncRequest) {
 	chain6 := "WIRETY6_JUMP"
 	policy6 := "WIRETY6_POLICY"
 
@@ -670,26 +783,37 @@ func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint s
 		}
 	}
 
-	// Rule 2: Authenticated peer IPv6 addresses jump to the policy chain.
+	// Tier 0: explicit DROP for quarantined IPv6 addresses (parallels IPv4).
+	_, quarantineIPv6 := splitByFamily(req.QuarantinedIPs)
+	for _, ip := range quarantineIPv6 {
+		if err := a.runIPv6("-A", chain6, "-i", a.iface, "-s", ip, "-j", "DROP"); err != nil {
+			log.Warn().Err(err).Str("ip", ip).Msg("failed to add IPv6 quarantine DROP rule")
+		}
+	}
+
+	// Tier 1: Authenticated peer IPv6 addresses jump to the policy chain.
 	for _, ip := range whitelistIPv6 {
 		if err := a.runIPv6("-A", chain6, "-i", a.iface, "-s", ip, "-j", policy6); err != nil {
 			log.Warn().Err(err).Str("ip", ip).Msg("failed to add IPv6 whitelist jump rule")
 		}
 	}
 
-	// Rule 3: Block HTTPS to ULA and link-local ranges (private IPv6 resources).
+	// Block HTTPS to ULA and link-local ranges (private IPv6 resources).
 	// These are the IPv6 equivalents of RFC 1918 — unauthenticated peers must not
 	// reach private IPv6 services before completing captive portal authentication.
 	for _, privateNet6 := range []string{"fc00::/7", "fe80::/10"} {
 		_ = a.runIPv6("-A", chain6, "-i", a.iface, "-d", privateNet6, "-p", "tcp", "--dport", "443", "-j", "REJECT", "--reject-with", "tcp-reset")
 	}
 
-	// Rule 4: Allow HTTPS to external (non-ULA) IPv6 addresses so that
-	// unauthenticated peers can reach OIDC providers (e.g. accounts.google.com)
-	// to complete captive portal authentication.
-	_ = a.runIPv6("-A", chain6, "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "ACCEPT")
+	// Tier 2: pending-auth peers get external HTTPS access for OIDC redirects.
+	_, pendingIPv6 := splitByFamily(req.PendingAuthIPs)
+	for _, ip := range pendingIPv6 {
+		if err := a.runIPv6("-A", chain6, "-i", a.iface, "-s", ip, "-p", "tcp", "--dport", "443", "-j", "ACCEPT"); err != nil {
+			log.Warn().Err(err).Str("ip", ip).Msg("failed to add IPv6 pending-auth HTTPS allow rule")
+		}
+	}
 
-	// Rule 5: Drop all remaining IPv6 traffic from unauthenticated peers.
+	// Drop all remaining IPv6 traffic from unauthenticated peers.
 	_ = a.runIPv6("-A", chain6, "-i", a.iface, "-j", "DROP")
 
 	// Policy chain: per-destination rules (or catch-all ACCEPT for backward compat).

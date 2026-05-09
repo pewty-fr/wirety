@@ -12,7 +12,6 @@ import (
 	"wirety/internal/application/auth"
 	"wirety/internal/config"
 	domainAuth "wirety/internal/domain/auth"
-	"wirety/internal/infrastructure/github"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
@@ -277,9 +276,25 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		mu.Unlock()
 	}
 
-	// GitHub sessions store an opaque access token — skip JWT validation entirely.
-	// Session validity (30-day RefreshTokenExpiresAt) is the only expiry mechanism.
-	if strings.HasPrefix(session.AccessToken, github.TokenPrefix) {
+	// Opaque access tokens cannot be validated as JWTs.
+	// This covers:
+	//   • GitHub tokens (ghs_*, ghp_*, etc.)
+	//   • Slack xoxp-* tokens returned on token refresh when the provider does
+	//     not include a new id_token in the refresh response (observed in practice).
+	//   • Any other non-JWT provider token.
+	//
+	// For these sessions we skip JWT validation entirely and rely on:
+	//   1. session.IsValid() (checked above) — long-term expiry via RefreshTokenExpiresAt.
+	//   2. A successful token refresh — proof of continued authorization.
+	//
+	// This check is placed AFTER all refresh logic so it correctly handles the case
+	// where the token transitioned from JWT → opaque during this very request's refresh.
+	if !isJWT(session.AccessToken) {
+		log.Debug().
+			Str("user_id", session.UserID).
+			Str("token_prefix", tokenPrefix).
+			Bool("did_refresh", didRefresh).
+			Msg("opaque (non-JWT) access token: skipping JWT validation, session remains valid")
 		user, err := userRepo.GetUser(session.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("user not found: %w", err)
@@ -289,15 +304,15 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		return user, nil
 	}
 
-	// Validate the access token; capture claims for role-sync on refresh.
+	// Validate the JWT access token; capture claims for role-sync on refresh.
 	claims, err := authService.ValidateToken(c.Request.Context(), session.AccessToken)
 	if err != nil {
 		log.Debug().Str("user_id", session.UserID).Str("token_prefix", tokenPrefix).Bool("did_refresh", didRefresh).Err(err).Msg("JWT validation failed")
 
 		if didRefresh {
-			// We just refreshed but the new token is already invalid — something is
-			// fundamentally wrong (e.g. clock skew, revoked key). Don't burn another
-			// refresh token; just fail.
+			// We just refreshed and got back a proper JWT, but it's already invalid —
+			// something is fundamentally wrong (e.g. clock skew, revoked key).
+			// Don't burn another refresh token; just fail.
 			log.Error().Str("user_id", session.UserID).Err(err).Msg("JWT invalid immediately after refresh — session deleted (clock skew?)")
 			_ = userRepo.DeleteSession(sessionHash)
 			return nil, fmt.Errorf("token invalid after refresh: %w", err)
@@ -335,7 +350,11 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		}
 		// If another goroutine already refreshed, the token may be valid now — skip.
 		var refreshErr error
-		if _, validErr := authService.ValidateToken(c.Request.Context(), session.AccessToken); validErr != nil {
+		if !isJWT(session.AccessToken) {
+			// Another goroutine refreshed and got an opaque token — handled above on
+			// the next pass; just re-read and let the opaque-token path run.
+			log.Debug().Str("user_id", session.UserID).Msg("token is now opaque after lock re-read (another goroutine refreshed first)")
+		} else if _, validErr := authService.ValidateToken(c.Request.Context(), session.AccessToken); validErr != nil {
 			log.Debug().Str("user_id", session.UserID).Msg("JWT still invalid after lock re-read; running refresh")
 			refreshErr = refreshOnce()
 		} else {
@@ -349,7 +368,20 @@ func handleSessionAuth(c *gin.Context, authService *auth.Service, userRepo domai
 		}
 		didRefresh = true
 
-		// Validate the freshly obtained token.
+		// If the refresh produced an opaque token, fall through to the opaque-token
+		// path on the next request; skip further JWT validation for this request.
+		if !isJWT(session.AccessToken) {
+			log.Debug().Str("user_id", session.UserID).Str("token_prefix", tokenPrefix).Msg("opaque token after refresh in JWT-invalid path: session valid, skipping validation")
+			user, err := userRepo.GetUser(session.UserID)
+			if err != nil {
+				return nil, fmt.Errorf("user not found: %w", err)
+			}
+			session.LastUsedAt = time.Now()
+			_ = userRepo.UpdateSession(session)
+			return user, nil
+		}
+
+		// Validate the freshly obtained JWT.
 		claims, err = authService.ValidateToken(c.Request.Context(), session.AccessToken)
 		if err != nil {
 			log.Error().Str("user_id", session.UserID).Err(err).Msg("JWT validation failed after refresh — session deleted")
@@ -478,4 +510,12 @@ func GetUserFromContext(c *gin.Context) *domainAuth.User {
 		}
 	}
 	return nil
+}
+
+// isJWT returns true when s is a standard three-segment JSON Web Token
+// (header.payload.signature).  Opaque provider tokens (GitHub ghs_* / ghp_*,
+// Slack xoxp-*, etc.) contain no dots and return false, signalling that JWT
+// validation should be skipped.
+func isJWT(s string) bool {
+	return strings.Count(s, ".") == 2 && len(s) > 20
 }

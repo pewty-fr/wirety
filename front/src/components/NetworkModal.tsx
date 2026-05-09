@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Modal from './Modal';
 import api from '../api/client';
 import type { Network } from '../types';
-import { isValidCIDR, getCIDRError } from '../utils/validation';
+import { isValidCIDR, getCIDRError, suggestIPv6ULACIDRs } from '../utils/validation';
 
 interface NetworkModalProps {
   isOpen: boolean;
@@ -29,6 +29,8 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [ipv6Suggestions, setIpv6Suggestions] = useState<string[]>([]);
+  const [showIpv6Suggestions, setShowIpv6Suggestions] = useState(false);
 
   const isEditMode = !!network;
 
@@ -57,7 +59,14 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
     setCidrV6Error(null);
     setSuggestions([]);
     setShowSuggestions(false);
+    setIpv6Suggestions([]);
+    setShowIpv6Suggestions(false);
   }, [network, isOpen]);
+
+  const generateIPv6Suggestions = () => {
+    setIpv6Suggestions(suggestIPv6ULACIDRs(5));
+    setShowIpv6Suggestions(true);
+  };
 
   const fetchSuggestions = async () => {
     setLoadingSuggestions(true);
@@ -263,6 +272,49 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             IPv6 CIDR <span className="text-gray-400 font-normal">(optional)</span>
           </label>
+
+          {/* IPv6 ULA Suggestion button (only for create) */}
+          {!isEditMode && (
+            <div className="mb-2 flex justify-end">
+              <button
+                type="button"
+                onClick={generateIPv6Suggestions}
+                className="px-3 py-1.5 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                title="Generate random Unique Local Address (RFC 4193) prefixes — the IPv6 equivalent of RFC 1918 private addresses"
+              >
+                Suggest ULA prefixes
+              </button>
+            </div>
+          )}
+
+          {/* IPv6 CIDR Suggestions */}
+          {showIpv6Suggestions && ipv6Suggestions.length > 0 && (
+            <div className="mb-2 p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
+              <p className="text-xs font-medium text-purple-800 dark:text-purple-300 mb-2">
+                Suggested IPv6 ULA prefixes (RFC 4193, click to use):
+              </p>
+              <div className="grid grid-cols-1 gap-2">
+                {ipv6Suggestions.map((cidr) => (
+                  <button
+                    key={cidr}
+                    type="button"
+                    onClick={() => {
+                      setFormData((prev) => ({ ...prev, cidr_v6: cidr }));
+                      setCidrV6Error(null);
+                      setShowIpv6Suggestions(false);
+                    }}
+                    className="text-left px-2 py-1 text-sm font-mono bg-white dark:bg-gray-700 border border-purple-300 dark:border-purple-700 rounded hover:bg-purple-100 dark:hover:bg-purple-800 text-gray-900 dark:text-white transition-colors"
+                  >
+                    {cidr}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-purple-700 dark:text-purple-300">
+                Each prefix uses a freshly randomised 40-bit Global ID per RFC 4193 §3.2.2 — non-routable on the public internet, safe for private use.
+              </p>
+            </div>
+          )}
+
           <input
             type="text"
             value={formData.cidr_v6}
@@ -283,7 +335,9 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
           {cidrV6Error && (
             <p className="mt-1 text-sm text-red-600">{cidrV6Error}</p>
           )}
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">IPv6 network address range for dual-stack support</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            IPv6 network address range for dual-stack support. Use a Unique Local Address (<code className="font-mono">fd00::/8</code>) — the IPv6 equivalent of RFC 1918 — never a globally-routable prefix.
+          </p>
         </div>
 
         {/* DNS Servers */}

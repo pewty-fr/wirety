@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -586,5 +587,266 @@ func (r *NetworkRepository) CleanupExpiredCaptivePortalTokens(ctx context.Contex
 		DELETE FROM captive_portal_tokens WHERE expires_at < NOW()
 	`)
 	return err
+}
+
+func (r *NetworkRepository) MarkCaptivePortalTokenConsumed(ctx context.Context, tokenStr string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE captive_portal_tokens SET consumed_at = NOW()
+		WHERE token=$1 AND consumed_at IS NULL
+	`, tokenStr)
+	return err
+}
+
+func (r *NetworkRepository) ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*network.CaptivePortalToken, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT token, network_id, jump_peer_id, peer_ip, COALESCE(peer_endpoint, ''), created_at, expires_at
+		FROM captive_portal_tokens
+		WHERE expires_at < NOW() AND consumed_at IS NULL
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*network.CaptivePortalToken
+	for rows.Next() {
+		t := &network.CaptivePortalToken{}
+		if err := rows.Scan(&t.Token, &t.NetworkID, &t.JumpPeerID, &t.PeerIP, &t.PeerEndpoint, &t.CreatedAt, &t.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ListActiveCaptivePortalTokens returns all unexpired tokens for a jump peer.
+func (r *NetworkRepository) ListActiveCaptivePortalTokens(ctx context.Context, networkID, jumpPeerID string) ([]*network.CaptivePortalToken, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT token, network_id, jump_peer_id, peer_ip, COALESCE(peer_endpoint, ''), created_at, expires_at
+		FROM captive_portal_tokens
+		WHERE network_id=$1 AND jump_peer_id=$2 AND expires_at > NOW()
+		ORDER BY created_at ASC
+	`, networkID, jumpPeerID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*network.CaptivePortalToken
+	for rows.Next() {
+		t := &network.CaptivePortalToken{}
+		if err := rows.Scan(&t.Token, &t.NetworkID, &t.JumpPeerID, &t.PeerIP, &t.PeerEndpoint, &t.CreatedAt, &t.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// Endpoint denylist operations
+
+func (r *NetworkRepository) AddEndpointDenylist(ctx context.Context, e *network.EndpointDenylistEntry) error {
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now()
+	}
+	if e.ExpiresAt.IsZero() {
+		e.ExpiresAt = e.CreatedAt.Add(network.EndpointDenylistDefaultTTL)
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO captive_portal_endpoint_denylist
+			(network_id, jump_peer_id, wg_ip, blocked_ip, blocked_port, reason, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (network_id, jump_peer_id, wg_ip, blocked_ip, blocked_port)
+		DO UPDATE SET reason = EXCLUDED.reason, expires_at = EXCLUDED.expires_at
+	`, e.NetworkID, e.JumpPeerID, e.WgIP, e.BlockedIP, e.BlockedPort, e.Reason, e.CreatedAt, e.ExpiresAt)
+	return err
+}
+
+func (r *NetworkRepository) GetEndpointDenylist(ctx context.Context, networkID, jumpPeerID string) ([]*network.EndpointDenylistEntry, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT network_id, jump_peer_id, wg_ip, blocked_ip, blocked_port, COALESCE(reason, ''), created_at, expires_at
+		FROM captive_portal_endpoint_denylist
+		WHERE network_id=$1 AND jump_peer_id=$2 AND expires_at > NOW()
+		ORDER BY created_at ASC
+	`, networkID, jumpPeerID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*network.EndpointDenylistEntry
+	for rows.Next() {
+		e := &network.EndpointDenylistEntry{}
+		if err := rows.Scan(&e.NetworkID, &e.JumpPeerID, &e.WgIP, &e.BlockedIP, &e.BlockedPort, &e.Reason, &e.CreatedAt, &e.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ClearEndpointDenylistForPeer removes all denylist entries targeting the given
+// peer (across all jump peers in the network).  Called when a peer successfully
+// re-authenticates: their previous "rogue" source was actually a legitimate
+// roam, and we should let them reconnect from any source.
+func (r *NetworkRepository) ClearEndpointDenylistForPeer(ctx context.Context, networkID, wgIP string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_endpoint_denylist
+		WHERE network_id=$1 AND wg_ip=$2
+	`, networkID, wgIP)
+	return err
+}
+
+func (r *NetworkRepository) CleanupExpiredEndpointDenylist(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_endpoint_denylist
+		WHERE expires_at < NOW()
+	`)
+	return err
+}
+
+// Quarantine operations
+
+func (r *NetworkRepository) GetQuarantine(ctx context.Context, networkID, peerID string) (*network.CaptivePortalQuarantine, error) {
+	q := &network.CaptivePortalQuarantine{NetworkID: networkID, PeerID: peerID}
+	var lastStrike, until sql.NullTime
+	err := r.db.QueryRowContext(ctx, `
+		SELECT strikes, last_strike_at, quarantined_until
+		FROM captive_portal_quarantine
+		WHERE network_id=$1 AND peer_id=$2
+	`, networkID, peerID).Scan(&q.Strikes, &lastStrike, &until)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get quarantine: %w", err)
+	}
+	if lastStrike.Valid {
+		t := lastStrike.Time
+		q.LastStrikeAt = &t
+	}
+	if until.Valid {
+		t := until.Time
+		q.QuarantinedUntil = &t
+	}
+	return q, nil
+}
+
+func (r *NetworkRepository) UpsertQuarantine(ctx context.Context, q *network.CaptivePortalQuarantine) error {
+	var lastStrike, until interface{}
+	if q.LastStrikeAt != nil {
+		lastStrike = *q.LastStrikeAt
+	}
+	if q.QuarantinedUntil != nil {
+		until = *q.QuarantinedUntil
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO captive_portal_quarantine (network_id, peer_id, strikes, last_strike_at, quarantined_until)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (network_id, peer_id)
+		DO UPDATE SET strikes=$3, last_strike_at=$4, quarantined_until=$5
+	`, q.NetworkID, q.PeerID, q.Strikes, lastStrike, until)
+	return err
+}
+
+func (r *NetworkRepository) ListQuarantinedPeers(ctx context.Context, networkID string) ([]*network.CaptivePortalQuarantine, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT network_id, peer_id, strikes, last_strike_at, quarantined_until
+		FROM captive_portal_quarantine
+		WHERE network_id=$1 AND quarantined_until IS NOT NULL AND quarantined_until > NOW()
+		ORDER BY peer_id
+	`, networkID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*network.CaptivePortalQuarantine
+	for rows.Next() {
+		q := &network.CaptivePortalQuarantine{}
+		var lastStrike, until sql.NullTime
+		if err := rows.Scan(&q.NetworkID, &q.PeerID, &q.Strikes, &lastStrike, &until); err != nil {
+			return nil, err
+		}
+		if lastStrike.Valid {
+			t := lastStrike.Time
+			q.LastStrikeAt = &t
+		}
+		if until.Valid {
+			t := until.Time
+			q.QuarantinedUntil = &t
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
+func (r *NetworkRepository) ClearQuarantine(ctx context.Context, networkID, peerID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM captive_portal_quarantine
+		WHERE network_id=$1 AND peer_id=$2
+	`, networkID, peerID)
+	return err
+}
+
+// Per-peer local routes (reported via heartbeat)
+
+func (r *NetworkRepository) UpsertPeerLocalRoutes(ctx context.Context, networkID, peerID string, allowedIPs []string) error {
+	if allowedIPs == nil {
+		allowedIPs = []string{}
+	}
+	data, err := json.Marshal(allowedIPs)
+	if err != nil {
+		return fmt.Errorf("marshal allowed_ips: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO peer_local_routes (network_id, peer_id, allowed_ips, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (network_id, peer_id)
+		DO UPDATE SET allowed_ips=EXCLUDED.allowed_ips, updated_at=NOW()
+	`, networkID, peerID, string(data))
+	return err
+}
+
+func (r *NetworkRepository) GetPeerLocalRoutes(ctx context.Context, networkID, peerID string) ([]string, error) {
+	var raw string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT allowed_ips FROM peer_local_routes
+		WHERE network_id=$1 AND peer_id=$2
+	`, networkID, peerID).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get peer_local_routes: %w", err)
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, fmt.Errorf("unmarshal allowed_ips: %w", err)
+	}
+	return out, nil
+}
+
+func (r *NetworkRepository) ListPeerLocalRoutes(ctx context.Context, networkID string) (map[string][]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT peer_id, allowed_ips FROM peer_local_routes
+		WHERE network_id=$1
+	`, networkID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string][]string)
+	for rows.Next() {
+		var peerID, raw string
+		if err := rows.Scan(&peerID, &raw); err != nil {
+			return nil, err
+		}
+		var cidrs []string
+		if err := json.Unmarshal([]byte(raw), &cidrs); err == nil {
+			out[peerID] = cidrs
+		}
+	}
+	return out, rows.Err()
 }
 

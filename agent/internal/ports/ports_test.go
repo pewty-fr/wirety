@@ -100,10 +100,10 @@ type mockFirewall struct {
 	synced         bool
 }
 
-func (m *mockFirewall) Sync(policy *pol.JumpPolicy, selfIP string, whitelistedIPs []string) error {
-	m.policy = policy
-	m.selfIP = selfIP
-	m.whitelistedIPs = whitelistedIPs
+func (m *mockFirewall) Sync(req SyncRequest) error {
+	m.policy = req.Policy
+	m.selfIP = req.SelfIP
+	m.whitelistedIPs = req.AuthenticatedIPs
 	m.synced = true
 	return nil
 }
@@ -257,7 +257,11 @@ func TestFirewallPort(t *testing.T) {
 	}
 	whitelistedIPs := []string{"10.0.0.2", "10.0.0.3"}
 
-	err := port.Sync(policy, "10.0.0.1", whitelistedIPs)
+	err := port.Sync(SyncRequest{
+		Policy:           policy,
+		SelfIP:           "10.0.0.1",
+		AuthenticatedIPs: whitelistedIPs,
+	})
 	if err != nil {
 		t.Errorf("Sync failed: %v", err)
 	}

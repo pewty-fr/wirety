@@ -165,3 +165,54 @@ func (c *CombinedRepository) CleanupExpiredCaptivePortalTokens(ctx context.Conte
 	return c.netRepo.CleanupExpiredCaptivePortalTokens(ctx)
 }
 
+func (c *CombinedRepository) ListActiveCaptivePortalTokens(ctx context.Context, networkID, jumpPeerID string) ([]*network.CaptivePortalToken, error) {
+	return c.netRepo.ListActiveCaptivePortalTokens(ctx, networkID, jumpPeerID)
+}
+
+func (c *CombinedRepository) MarkCaptivePortalTokenConsumed(ctx context.Context, tokenStr string) error {
+	return c.netRepo.MarkCaptivePortalTokenConsumed(ctx, tokenStr)
+}
+
+func (c *CombinedRepository) ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*network.CaptivePortalToken, error) {
+	return c.netRepo.ListExpiredUnconsumedCaptivePortalTokens(ctx)
+}
+
+// Endpoint denylist
+func (c *CombinedRepository) AddEndpointDenylist(ctx context.Context, e *network.EndpointDenylistEntry) error {
+	return c.netRepo.AddEndpointDenylist(ctx, e)
+}
+func (c *CombinedRepository) GetEndpointDenylist(ctx context.Context, networkID, jumpPeerID string) ([]*network.EndpointDenylistEntry, error) {
+	return c.netRepo.GetEndpointDenylist(ctx, networkID, jumpPeerID)
+}
+func (c *CombinedRepository) ClearEndpointDenylistForPeer(ctx context.Context, networkID, wgIP string) error {
+	return c.netRepo.ClearEndpointDenylistForPeer(ctx, networkID, wgIP)
+}
+func (c *CombinedRepository) CleanupExpiredEndpointDenylist(ctx context.Context) error {
+	return c.netRepo.CleanupExpiredEndpointDenylist(ctx)
+}
+
+// Quarantine
+func (c *CombinedRepository) GetQuarantine(ctx context.Context, networkID, peerID string) (*network.CaptivePortalQuarantine, error) {
+	return c.netRepo.GetQuarantine(ctx, networkID, peerID)
+}
+func (c *CombinedRepository) UpsertQuarantine(ctx context.Context, q *network.CaptivePortalQuarantine) error {
+	return c.netRepo.UpsertQuarantine(ctx, q)
+}
+func (c *CombinedRepository) ListQuarantinedPeers(ctx context.Context, networkID string) ([]*network.CaptivePortalQuarantine, error) {
+	return c.netRepo.ListQuarantinedPeers(ctx, networkID)
+}
+func (c *CombinedRepository) ClearQuarantine(ctx context.Context, networkID, peerID string) error {
+	return c.netRepo.ClearQuarantine(ctx, networkID, peerID)
+}
+
+// Peer local routes
+func (c *CombinedRepository) UpsertPeerLocalRoutes(ctx context.Context, networkID, peerID string, allowedIPs []string) error {
+	return c.netRepo.UpsertPeerLocalRoutes(ctx, networkID, peerID, allowedIPs)
+}
+func (c *CombinedRepository) GetPeerLocalRoutes(ctx context.Context, networkID, peerID string) ([]string, error) {
+	return c.netRepo.GetPeerLocalRoutes(ctx, networkID, peerID)
+}
+func (c *CombinedRepository) ListPeerLocalRoutes(ctx context.Context, networkID string) (map[string][]string, error) {
+	return c.netRepo.ListPeerLocalRoutes(ctx, networkID)
+}
+

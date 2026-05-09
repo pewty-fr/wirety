@@ -192,6 +192,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 					peers.GET("/:peerId/config", h.GetPeerConfig)
 					peers.GET("/:peerId/session", h.GetPeerConnectivityStatus)
 					peers.GET("/:peerId/reachability", h.GetPeerReachability)
+					peers.POST("/:peerId/revoke-auth", h.RevokePeerAuthentication)
 				}
 
 				networkOps.GET("/sessions", h.ListNetworkSessions)

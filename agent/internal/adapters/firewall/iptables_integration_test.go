@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	dom "wirety/agent/internal/domain/policy"
+	"wirety/agent/internal/ports"
 )
 
 // requireRoot skips the test if not running as root (or without NET_ADMIN capability).
@@ -58,7 +59,7 @@ func TestIntegration_WiretyChainCreated(t *testing.T) {
 	adapter := NewAdapter("wg0", nil)
 	policy := &dom.JumpPolicy{IP: "10.0.0.1", IPTablesRules: []string{}}
 
-	if err := adapter.Sync(policy, "10.0.0.1", nil); err != nil {
+	if err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.0.0.1"}); err != nil {
 		t.Fatalf("Sync failed: %v", err)
 	}
 
@@ -81,7 +82,7 @@ func TestIntegration_AcceptRuleApplied(t *testing.T) {
 		},
 	}
 
-	if err := adapter.Sync(policy, "10.100.0.1", nil); err != nil {
+	if err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.100.0.1"}); err != nil {
 		t.Fatalf("Sync failed: %v", err)
 	}
 
@@ -108,7 +109,7 @@ func TestIntegration_DropRuleApplied(t *testing.T) {
 		},
 	}
 
-	if err := adapter.Sync(policy, "10.100.0.1", nil); err != nil {
+	if err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.100.0.1"}); err != nil {
 		t.Fatalf("Sync failed: %v", err)
 	}
 
@@ -132,7 +133,7 @@ func TestIntegration_ReSyncFlushesOldRules(t *testing.T) {
 			"iptables -A FORWARD -s 10.100.0.99 -j ACCEPT",
 		},
 	}
-	if err := adapter.Sync(pol1, "10.100.0.1", nil); err != nil {
+	if err := adapter.Sync(ports.SyncRequest{Policy: pol1, SelfIP: "10.100.0.1"}); err != nil {
 		t.Fatalf("first Sync failed: %v", err)
 	}
 	if !strings.Contains(savedRules(t), "10.100.0.99") {
@@ -145,7 +146,7 @@ func TestIntegration_ReSyncFlushesOldRules(t *testing.T) {
 			"iptables -A FORWARD -s 10.100.0.88 -j ACCEPT",
 		},
 	}
-	if err := adapter.Sync(pol2, "10.100.0.1", nil); err != nil {
+	if err := adapter.Sync(ports.SyncRequest{Policy: pol2, SelfIP: "10.100.0.1"}); err != nil {
 		t.Fatalf("second Sync failed: %v", err)
 	}
 
@@ -167,7 +168,7 @@ func TestIntegration_ChainAttachedToForward(t *testing.T) {
 	adapter := NewAdapter("wg0", nil)
 	policy := &dom.JumpPolicy{IP: "10.100.0.1", IPTablesRules: []string{}}
 
-	if err := adapter.Sync(policy, "10.100.0.1", nil); err != nil {
+	if err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.100.0.1"}); err != nil {
 		t.Fatalf("Sync failed: %v", err)
 	}
 
@@ -195,7 +196,7 @@ func TestIntegration_EstablishedReturnRule(t *testing.T) {
 		},
 	}
 
-	if err := adapter.Sync(policy, "10.100.0.1", nil); err != nil {
+	if err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.100.0.1"}); err != nil {
 		t.Fatalf("Sync failed: %v", err)
 	}
 
@@ -235,7 +236,7 @@ func TestIntegration_RoundTripServerRules(t *testing.T) {
 
 	policy := &dom.JumpPolicy{IP: "10.100.0.1", IPTablesRules: serverRules}
 
-	if err := adapter.Sync(policy, "10.100.0.1", nil); err != nil {
+	if err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.100.0.1"}); err != nil {
 		t.Fatalf("Sync failed: %v", err)
 	}
 
@@ -275,7 +276,7 @@ func TestIntegration_EmptyRulesYieldsDefaultDrop(t *testing.T) {
 	adapter := NewAdapter("wg0", nil)
 	policy := &dom.JumpPolicy{IP: "10.100.0.1", IPTablesRules: []string{}}
 
-	if err := adapter.Sync(policy, "10.100.0.1", nil); err != nil {
+	if err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.100.0.1"}); err != nil {
 		t.Fatalf("Sync failed: %v", err)
 	}
 

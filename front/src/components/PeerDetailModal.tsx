@@ -22,6 +22,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
   const [activeTab, setActiveTab] = useState<'configuration' | 'access' | 'reachability'>('configuration');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [revoking, setRevoking] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
   const [configText, setConfigText] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -230,6 +231,26 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
       alert(err.response?.data?.error || 'Failed to delete peer');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleRevoke = async () => {
+    if (!confirm(
+      `Revoke captive-portal authentication for "${displayPeer.name}"?\n\n` +
+      `The peer will remain in the network, but the next request from it will be redirected to the captive portal for re-authentication via SSO. ` +
+      `Use this when you suspect a peer's WireGuard config is being shared or stolen.`
+    )) {
+      return;
+    }
+    setRevoking(true);
+    try {
+      await api.revokePeerAuthentication(displayPeer.network_id!, displayPeer.id);
+      onUpdate();
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      alert(err.response?.data?.error || 'Failed to revoke authentication');
+    } finally {
+      setRevoking(false);
     }
   };
 
@@ -792,17 +813,30 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
           {/* Actions */}
           <div className="flex justify-between gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
             {canEdit && (
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                title="Delete Peer"
-                className="group px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
-              >
-                <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-                {deleting ? 'Deleting...' : 'Delete'}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting || revoking}
+                  title="Delete Peer"
+                  className="group px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
+                >
+                  <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  {deleting ? 'Deleting...' : 'Delete'}
+                </button>
+                <button
+                  onClick={handleRevoke}
+                  disabled={deleting || revoking}
+                  title="Force re-authentication: removes the peer from the captive-portal whitelist so the next request from it is redirected to SSO. Use if a config is suspected of being shared/stolen."
+                  className="group px-4 py-2.5 bg-gradient-to-r from-amber-600 to-orange-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
+                >
+                  <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  {revoking ? 'Revoking...' : 'Revoke Auth'}
+                </button>
+              </div>
             )}
             <div className="flex gap-3 ml-auto">
               <button
