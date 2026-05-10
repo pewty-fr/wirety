@@ -173,6 +173,10 @@ func (c *CombinedRepository) MarkCaptivePortalTokenConsumed(ctx context.Context,
 	return c.netRepo.MarkCaptivePortalTokenConsumed(ctx, tokenStr)
 }
 
+func (c *CombinedRepository) SetCaptivePortalTokenConsumeState(ctx context.Context, tokenStr, state string) error {
+	return c.netRepo.SetCaptivePortalTokenConsumeState(ctx, tokenStr, state)
+}
+
 func (c *CombinedRepository) ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*network.CaptivePortalToken, error) {
 	return c.netRepo.ListExpiredUnconsumedCaptivePortalTokens(ctx)
 }

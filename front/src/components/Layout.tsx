@@ -22,6 +22,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import ProfileModal from './ProfileModal';
 import FooterBanner from './FooterBanner';
+import CaptivePortalAlertModal from './CaptivePortalAlertModal';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
 
 const navigationSections: { 
@@ -218,6 +219,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Profile Modal */}
       <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} />
+
+      {/* Captive Portal Alert — auto-shows when any of the user's devices need
+          to authenticate.  See CaptivePortalAlertModal for detection logic. */}
+      <CaptivePortalAlertModal />
     </div>
   );
 }

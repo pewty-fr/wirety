@@ -426,6 +426,9 @@ func (a *networkGetterAdapter) ListActiveCaptivePortalTokens(ctx context.Context
 func (a *networkGetterAdapter) MarkCaptivePortalTokenConsumed(ctx context.Context, token string) error {
 	return nil
 }
+func (a *networkGetterAdapter) SetCaptivePortalTokenConsumeState(ctx context.Context, token, state string) error {
+	return nil
+}
 func (a *networkGetterAdapter) ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*network.CaptivePortalToken, error) {
 	return nil, nil
 }

@@ -197,10 +197,25 @@ func TestRuleGen_NoPolicies_OnlyDNSAndWireGuardAndDrop(t *testing.T) {
 	checkCount(t, rules, "--sport 51820 -j ACCEPT", 2, "WG OUTPUT rules")
 	checkCount(t, rules, "--dport 51820 -j ACCEPT", 2, "WG INPUT rules")
 
-	// Default deny at the end
-	last := rules[len(rules)-1]
-	if last != "iptables -A FORWARD -j DROP" {
-		t.Errorf("last rule must be 'iptables -A FORWARD -j DROP', got %q", last)
+	// Default deny at the end — one per family.  The IPv6 DROP was added
+	// alongside dual-stack policy support (the IPv6 policy chain wouldn't
+	// terminate the way the IPv4 one did, allowing unmatched authenticated
+	// traffic to fall back into WIRETY6_JUMP and trip the unauthenticated
+	// REJECTs — see the policy/service.go FORWARD-DROP block).  Both
+	// drops are emitted at the very end; we don't constrain ordering between
+	// them, only that they are the final two.
+	if len(rules) < 2 {
+		t.Fatalf("expected at least 2 rules, got %d", len(rules))
+	}
+	tail := map[string]bool{
+		rules[len(rules)-1]: true,
+		rules[len(rules)-2]: true,
+	}
+	if !tail["iptables -A FORWARD -j DROP"] {
+		t.Errorf("expected 'iptables -A FORWARD -j DROP' at the tail, got %v", rules[len(rules)-2:])
+	}
+	if !tail["ip6tables -A FORWARD -j DROP"] {
+		t.Errorf("expected 'ip6tables -A FORWARD -j DROP' at the tail, got %v", rules[len(rules)-2:])
 	}
 }
 
@@ -361,12 +376,21 @@ func TestRuleGen_DefaultDenyAtEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(rules) == 0 {
-		t.Fatal("expected at least one rule")
+	if len(rules) < 2 {
+		t.Fatalf("expected at least 2 rules, got %d", len(rules))
 	}
-	last := rules[len(rules)-1]
-	if last != "iptables -A FORWARD -j DROP" {
-		t.Errorf("last rule must be forward drop, got %q", last)
+	// Both per-family FORWARD DROPs at the end (see comment on
+	// TestRuleGen_NoPolicies_OnlyDNSAndWireGuardAndDrop for why we now emit
+	// the IPv6 one too).
+	tail := map[string]bool{
+		rules[len(rules)-1]: true,
+		rules[len(rules)-2]: true,
+	}
+	if !tail["iptables -A FORWARD -j DROP"] {
+		t.Errorf("expected 'iptables -A FORWARD -j DROP' at the tail, got %v", rules[len(rules)-2:])
+	}
+	if !tail["ip6tables -A FORWARD -j DROP"] {
+		t.Errorf("expected 'ip6tables -A FORWARD -j DROP' at the tail, got %v", rules[len(rules)-2:])
 	}
 }
 

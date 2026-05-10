@@ -344,40 +344,75 @@ export default function PeersPage() {
                               green  — connected, OR agent up, OR authenticated
                               grey   — disconnected / no agent / no auth */}
                         {(() => {
+                          // Status-dot logic for a peer.  Priority order matches the
+                          // user-visible meaning of the colour:
+                          //
+                          //   red    — quarantined (peer is BLOCKED, auth failures
+                          //            exceeded threshold; admin reset required)
+                          //   orange — action needed by the user (a captive-portal
+                          //            sign-in is in progress, OR the WG tunnel is
+                          //            up but the peer hasn't authenticated yet so
+                          //            no actual network access is granted)
+                          //   green  — fully usable (connected AND authenticated,
+                          //            OR a jump peer for which captive-portal
+                          //            auth doesn't apply)
+                          //   grey   — offline / no active session
+                          //
+                          // The key change vs a naive "connected = green" is that a
+                          // non-jump peer with a fresh WG handshake but EMPTY
+                          // captive_portal_state is shown orange, not green.
+                          // Without captive-portal auth the iptables WIRETY_JUMP
+                          // chain drops all forwarded traffic from this peer — the
+                          // tunnel is up but the firewall blocks every actual
+                          // request.  Showing green there gives the user a false
+                          // sense that the device works.
+                          //
+                          // Visual cues:
+                          //   - The label appears on hover only (opacity transition,
+                          //     not display: none, so the row layout doesn't shift
+                          //     when the user moves the cursor across it).
+                          //   - The dot pulses ONLY for pending_auth — a sign-in
+                          //     that's actively in flight.  Static orange ("not
+                          //     authenticated") doesn't pulse: the user knows what
+                          //     to do, no need to draw the eye.
                           const portalState = peer.session_status?.captive_portal_state;
+                          const isOnline = isConnected || hasActiveAgent;
                           let color = 'bg-gray-400';
                           let label = 'Offline';
-                          let title = 'Disconnected';
+                          let pulse = false;
+
                           if (portalState === 'quarantined') {
                             color = 'bg-red-500';
                             label = 'Quarantined';
-                            title = 'Quarantined — too many auth failures, access blocked';
                           } else if (portalState === 'pending_auth') {
                             color = 'bg-orange-500';
                             label = 'Pending auth';
-                            title = 'Captive portal token issued — waiting for user to complete sign-in';
-                          } else if (portalState === 'authenticated' || isConnected || hasActiveAgent) {
+                            pulse = true;
+                          } else if (!isOnline) {
+                            color = 'bg-gray-400';
+                            label = peer.use_agent ? 'Agent offline' : 'Offline';
+                          } else if (peer.is_jump) {
+                            // Jump peers don't authenticate to themselves — being
+                            // online is sufficient.
                             color = 'bg-green-500';
-                            const parts: string[] = [];
-                            if (isConnected) parts.push('connected');
-                            if (peer.use_agent && hasActiveAgent) parts.push('agent up');
-                            if (portalState === 'authenticated') parts.push('authenticated');
-                            label = parts[0]
-                              ? parts[0].charAt(0).toUpperCase() + parts[0].slice(1)
-                              : 'Active';
-                            title = parts.length > 0
-                              ? parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' • ')
-                              : 'Active';
-                          } else if (peer.use_agent) {
-                            // agent peer with no signal at all
-                            title = 'Agent offline';
+                            label = 'Connected';
+                          } else if (portalState === 'authenticated') {
+                            color = 'bg-green-500';
+                            label = 'Connected';
                           } else {
-                            title = 'No active session';
+                            // Online + non-jump + no auth state = WG tunnel is up but
+                            // the peer hasn't completed captive-portal auth.  Network
+                            // access is blocked at the firewall.
+                            color = 'bg-orange-500';
+                            label = 'Not authenticated';
                           }
+
                           return (
-                            <div className="flex items-center gap-2" title={title}>
-                              <span className={`w-2.5 h-2.5 rounded-full ${color} ${portalState === 'pending_auth' ? 'animate-pulse' : ''}`} />
-                              <span className="text-xs text-gray-600 dark:text-gray-300">{label}</span>
+                            <div className="group flex items-center gap-2 cursor-default">
+                              <span className={`w-2.5 h-2.5 rounded-full ${color} ${pulse ? 'animate-pulse' : ''}`} />
+                              <span className="text-xs text-gray-600 dark:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity duration-150 whitespace-nowrap">
+                                {label}
+                              </span>
                             </div>
                           );
                         })()}

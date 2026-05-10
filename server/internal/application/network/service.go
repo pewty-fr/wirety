@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"strings"
@@ -954,9 +955,42 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 			s.wgLastSeenMu.Unlock()
 
 			// 2. Update session last_seen for non-agent peers and build active-IP set.
+			//
+			// IMPORTANT: We gate this on the SAME handshake-recency check as
+			// wgLastSeen above (185 s).  Without the gate, `wg show endpoints`
+			// makes us bump session.LastSeen to "now" every heartbeat for EVERY
+			// configured peer — even ones that disconnected hours ago — because
+			// WireGuard remembers each peer's last known endpoint indefinitely.
+			//
+			// That causes two bugs the user observes:
+			//   (a) Peer Detail shows "Authenticated" + recent Last Seen for a
+			//       peer whose handshake is hours stale → frontend's connectivity
+			//       fallback (session.LastSeen ≤ PeerConnectivityThreshold) trips.
+			//   (b) The dashboard's "needs sign-in" popup fires for stale peers
+			//       because the active-recency hook in useCaptivePortalCheck
+			//       reads session.LastSeen too.
+			//
+			// Legacy agents that don't send PeerHandshakes keep the old
+			// (endpoint-only) behaviour — we have nothing better to fall back on.
+			peerIsLive := func(p *network.Peer) bool {
+				if len(heartbeat.PeerHandshakes) == 0 {
+					return true // legacy agent — preserve old behaviour
+				}
+				ts, ok := heartbeat.PeerHandshakes[p.PublicKey]
+				if !ok {
+					return false
+				}
+				return now.Sub(time.Unix(ts, 0)) <= wgHandshakeStaleness
+			}
+
 			for _, p := range peers {
 				endpoint, seen := heartbeat.PeerEndpoints[p.PublicKey]
 				if !seen {
+					continue
+				}
+				// Skip peers whose WG handshake is stale — `wg show endpoints`
+				// reports them but they aren't currently connected.
+				if !peerIsLive(p) {
 					continue
 				}
 				// Agent peers send their own heartbeat directly; updating their session
@@ -1170,9 +1204,147 @@ func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpP
 	return token, nil
 }
 
+// CaptivePortalTokenPreview is the user-visible information shown by the
+// captive portal page BEFORE the user clicks Continue.  Lets the user
+// double-check the device and the public IP that's about to be granted access
+// — phishing defense via human verification.
+type CaptivePortalTokenPreview struct {
+	PeerID       string `json:"peer_id"`
+	PeerName     string `json:"peer_name"`
+	PeerWGIP     string `json:"peer_wg_ip"`
+	NetworkID    string `json:"network_id"`
+	NetworkName  string `json:"network_name"`
+	PeerEndpoint string `json:"peer_endpoint"` // public IP:port that requested the sign-in
+	EndpointIP   string `json:"endpoint_ip"`   // IP-only convenience extraction for display
+}
+
+// PreviewCaptivePortalToken returns peer + endpoint details for the captive
+// portal page to display.  Does NOT consume the token.  Enforces:
+//   - Token exists & not expired
+//   - Session is valid
+//   - Caller is the OWNER of the peer
+//
+// Looks up the same data points the actual auth check uses, so a "the preview
+// looks fine" outcome accurately predicts that the auth will succeed.
+func (s *Service) PreviewCaptivePortalToken(ctx context.Context, captiveToken, sessionHash string) (*CaptivePortalTokenPreview, error) {
+	cpt, err := s.repo.GetCaptivePortalToken(ctx, captiveToken)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token")
+	}
+	if !cpt.IsValid() {
+		return nil, fmt.Errorf("token expired")
+	}
+
+	session, err := s.authRepo.GetSession(sessionHash)
+	if err != nil || session == nil || !session.IsValid() {
+		return nil, fmt.Errorf("invalid session")
+	}
+	authUser, err := s.authRepo.GetUser(session.UserID)
+	if err != nil || authUser == nil {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	// Locate the peer in this network whose VPN address matches the token.
+	peers, err := s.repo.ListPeers(ctx, cpt.NetworkID)
+	if err != nil {
+		return nil, fmt.Errorf("look up peer: %w", err)
+	}
+	var matchedPeer *network.Peer
+	for _, p := range peers {
+		addr := p.Address
+		if idx := strings.Index(addr, "/"); idx != -1 {
+			addr = addr[:idx]
+		}
+		if addr == cpt.PeerIP {
+			matchedPeer = p
+			break
+		}
+	}
+	if matchedPeer == nil {
+		return nil, fmt.Errorf("peer not found in network")
+	}
+	if matchedPeer.OwnerID == "" {
+		return nil, fmt.Errorf("access denied: peer has no owner")
+	}
+	if matchedPeer.OwnerID != authUser.ID {
+		return nil, fmt.Errorf("access denied: this peer belongs to another user")
+	}
+
+	netObj, err := s.repo.GetNetwork(ctx, cpt.NetworkID)
+	if err != nil {
+		return nil, fmt.Errorf("get network: %w", err)
+	}
+
+	// Extract the IP portion of the endpoint for display.  Endpoints are
+	// "ip:port" or "[ipv6]:port"; net.SplitHostPort handles both.
+	endpointIP := cpt.PeerEndpoint
+	if h, _, err := net.SplitHostPort(cpt.PeerEndpoint); err == nil {
+		endpointIP = h
+	}
+
+	return &CaptivePortalTokenPreview{
+		PeerID:       matchedPeer.ID,
+		PeerName:     matchedPeer.Name,
+		PeerWGIP:     cpt.PeerIP,
+		NetworkID:    cpt.NetworkID,
+		NetworkName:  netObj.Name,
+		PeerEndpoint: cpt.PeerEndpoint,
+		EndpointIP:   endpointIP,
+	}, nil
+}
+
+// BindCaptivePortalTokenToBrowser is the server-side half of the
+// /captive-portal/start bouncer.  It generates a cryptographically random
+// consume_state, writes it to the token row, and returns it to the caller so
+// the HTTP handler can set it as a same-origin cookie on the browser that
+// landed on /start.
+//
+// The pair (token in URL, consume_state in cookie) implements browser-binding:
+// AuthenticateCaptivePortal will refuse to consume a token whose stored
+// consume_state doesn't match the cookie the request brings.  This blocks the
+// phishing attack where an attacker who has stolen a WG config generates a
+// token via the captive-portal HTTP server then phishes the legitimate owner
+// with the resulting URL — the owner's browser doesn't carry the cookie that
+// was set by /start, so authentication fails.
+//
+// Errors:
+//   - "token not found"       — no such token, or the token has already expired
+//   - any DB error            — propagated as fmt.Errorf wraps
+//
+// The returned state is a 32-character hex string (128 bits of entropy from
+// crypto/rand).
+func (s *Service) BindCaptivePortalTokenToBrowser(ctx context.Context, captiveToken string) (string, error) {
+	// Verify the token exists & is unexpired before issuing a state — there's
+	// no point binding a state to a token that can't be consumed anyway.
+	cpt, err := s.repo.GetCaptivePortalToken(ctx, captiveToken)
+	if err != nil {
+		return "", fmt.Errorf("invalid token")
+	}
+	if !cpt.IsValid() {
+		_ = s.repo.DeleteCaptivePortalToken(ctx, captiveToken)
+		return "", fmt.Errorf("token expired")
+	}
+
+	stateBytes := make([]byte, 16)
+	if _, err := rand.Read(stateBytes); err != nil {
+		return "", fmt.Errorf("generate state: %w", err)
+	}
+	state := hex.EncodeToString(stateBytes)
+
+	if err := s.repo.SetCaptivePortalTokenConsumeState(ctx, captiveToken, state); err != nil {
+		return "", fmt.Errorf("persist state: %w", err)
+	}
+	return state, nil
+}
+
 // AuthenticateCaptivePortal validates a captive portal token + session hash, then whitelists the peer.
 // Called by the frontend captive portal page after the user authenticates via OIDC/password.
-func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, sessionHash string) (*network.CaptivePortalToken, error) {
+//
+// browserState is the cp_state cookie the browser presented at /authenticate
+// time.  It MUST match the consume_state stored on the token row (set by
+// BindCaptivePortalTokenToBrowser via the /start bouncer).  An empty
+// browserState OR a mismatch is a hard reject — see migration 026 for why.
+func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, sessionHash, browserState string) (*network.CaptivePortalToken, error) {
 	cpt, err := s.repo.GetCaptivePortalToken(ctx, captiveToken)
 	if err != nil {
 		return nil, fmt.Errorf("invalid token")
@@ -1181,6 +1353,27 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	if !cpt.IsValid() {
 		_ = s.repo.DeleteCaptivePortalToken(ctx, captiveToken)
 		return nil, fmt.Errorf("token expired")
+	}
+
+	// Browser-binding (phishing defense — see migration 026 + comments on
+	// CaptivePortalToken.ConsumeState).  We require the cookie to match.
+	// Empty stored ConsumeState means the token never went through the /start
+	// bouncer — an attacker may have grabbed the URL straight from the agent
+	// redirect and shared it directly.  Either way we refuse to consume.
+	if cpt.ConsumeState == "" {
+		log.Warn().
+			Str("token", captiveToken).
+			Str("peer_ip", cpt.PeerIP).
+			Msg("captive portal: refusing to authenticate token with no consume_state — token did not go through /start")
+		return nil, fmt.Errorf("invalid token: not bound to a browser session")
+	}
+	if browserState == "" || browserState != cpt.ConsumeState {
+		log.Warn().
+			Str("token", captiveToken).
+			Str("peer_ip", cpt.PeerIP).
+			Bool("cookie_present", browserState != "").
+			Msg("captive portal: refusing to authenticate — browser cookie does not match token state (possible phishing)")
+		return nil, fmt.Errorf("session mismatch: please reopen the captive portal link in the browser that received it")
 	}
 
 	// Validate session (either OIDC or simple-auth session)

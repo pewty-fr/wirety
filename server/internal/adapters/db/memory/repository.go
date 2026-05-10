@@ -521,6 +521,20 @@ func (r *Repository) MarkCaptivePortalTokenConsumed(ctx context.Context, tokenSt
 	return nil
 }
 
+func (r *Repository) SetCaptivePortalTokenConsumeState(ctx context.Context, tokenStr, state string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.captiveTokens == nil {
+		return fmt.Errorf("token not found")
+	}
+	t, ok := r.captiveTokens[tokenStr]
+	if !ok || t.ExpiresAt.Before(time.Now()) {
+		return fmt.Errorf("token not found")
+	}
+	t.ConsumeState = state
+	return nil
+}
+
 func (r *Repository) ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*network.CaptivePortalToken, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
