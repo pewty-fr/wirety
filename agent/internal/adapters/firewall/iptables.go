@@ -387,17 +387,6 @@ func isPositiveInt(s string) bool {
 	return true
 }
 
-// parseRuleFamily classifies a rule string into the (iptables, ip6tables, unknown)
-// space.  Returns "ip6tables" if the rule starts with "ip6tables", otherwise
-// "iptables" (default — handles bare-options rules and explicit "iptables" prefix).
-func parseRuleFamily(rule string) string {
-	tokens := strings.Fields(rule)
-	if len(tokens) > 0 && tokens[0] == "ip6tables" {
-		return "ip6tables"
-	}
-	return "iptables"
-}
-
 // applyIPTablesRule parses and applies a single iptables / ip6tables rule to the
 // specified chain.  The rule string is in one of these forms:
 //   - "iptables -A CHAIN [options]"   → applied to iptables (IPv4)
@@ -419,9 +408,10 @@ func (a *Adapter) applyIPTablesRule(chain, rule, family string) error {
 	// Detect the rule's native family from its prefix.
 	ruleFamily := "iptables"
 	startIdx := 0
-	if tokens[0] == "iptables" {
+	switch tokens[0] {
+	case "iptables":
 		startIdx = 1
-	} else if tokens[0] == "ip6tables" {
+	case "ip6tables":
 		ruleFamily = "ip6tables"
 		startIdx = 1
 	}
