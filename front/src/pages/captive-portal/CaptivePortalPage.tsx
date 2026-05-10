@@ -168,29 +168,117 @@ export default function CaptivePortalPage() {
   }
 
   if (status === 'error') {
+    // Classify the error so we can render an appropriately-loud warning when
+    // the failure is a phishing-defense trip (browser binding mismatch).  Other
+    // failures (expired token, ownership mismatch, network errors) get a
+    // softer presentation.
+    //
+    // Strings here are matched against what the server returns from
+    // service.AuthenticateCaptivePortal — keep in sync if you change those.
+    const isPhishingSignal =
+      errorMessage.toLowerCase().includes('session mismatch') ||
+      errorMessage.toLowerCase().includes('not bound to a browser session');
+    const isOwnershipError = errorMessage.includes('belongs to another user');
+
     return (
-      <div className="min-h-screen bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center px-4">
+      <div className="min-h-screen bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center px-4 py-8">
         <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-2xl p-8">
-          <div className="text-center">
+          <div className="text-center mb-5">
             <FontAwesomeIcon icon={faExclamationTriangle} className="text-6xl text-red-500 mb-4" />
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Authentication Failed</h1>
-            <p className="text-gray-600 dark:text-gray-400 mb-4">{errorMessage}</p>
-            {errorMessage.includes('belongs to another user') ? (
-              <button
-                onClick={() => { logout(); window.location.reload(); }}
-                className="btn-brand"
-              >
-                Sign in with a different account
-              </button>
-            ) : (
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+              {isPhishingSignal ? 'Sign-in blocked for safety' : 'Authentication Failed'}
+            </h1>
+          </div>
+
+          {isPhishingSignal ? (
+            // Phishing-defense trip.  Make the security implication obvious
+            // and show the same endpoint details the user saw on the preview
+            // screen, so they can verify whether the request came from their
+            // own connection or someone else's.
+            <>
+              <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg p-4 mb-5">
+                <p className="text-sm text-red-800 dark:text-red-200 font-medium mb-2">
+                  This sign-in link was opened in a different browser than the one that requested it.
+                </p>
+                <p className="text-xs text-red-700 dark:text-red-300 leading-relaxed">
+                  This is the response we give when a captive-portal link is shared, forwarded, or
+                  pasted into another browser — usually one of two situations:
+                </p>
+                <ul className="text-xs text-red-700 dark:text-red-300 list-disc list-inside mt-2 space-y-1">
+                  <li>You legitimately copy-pasted the URL into another browser. In that case, just
+                    re-open the captive portal from the device that needs network access.</li>
+                  <li>Someone else is using your WireGuard config and tried to phish you into
+                    completing their sign-in. <strong>Verify the public IP below</strong>, and if it
+                    isn't yours, do <strong>not</strong> sign in here — instead go to the dashboard
+                    and click <em>Reset Auth</em> on the device.</li>
+                </ul>
+              </div>
+
+              {preview ? (
+                <dl className="bg-gray-50 dark:bg-gray-900 rounded-lg p-5 mb-5 text-sm space-y-3">
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-gray-500 dark:text-gray-400">Device</dt>
+                    <dd className="text-gray-900 dark:text-white font-medium text-right">
+                      {preview.peer_name}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-gray-500 dark:text-gray-400">Network</dt>
+                    <dd className="text-gray-900 dark:text-white font-medium text-right">
+                      {preview.network_name}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-gray-500 dark:text-gray-400">VPN address</dt>
+                    <dd className="text-gray-900 dark:text-white font-mono text-right">
+                      {preview.peer_wg_ip}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-4 pt-3 border-t border-gray-200 dark:border-gray-700">
+                    <dt className="text-gray-500 dark:text-gray-400">Public IP that requested sign-in</dt>
+                    <dd className="text-red-700 dark:text-red-400 font-mono font-semibold text-right break-all">
+                      {preview.endpoint_ip || '(unknown)'}
+                    </dd>
+                  </div>
+                </dl>
+              ) : (
+                <p className="text-xs text-gray-500 dark:text-gray-400 italic mb-5">
+                  Token preview unavailable — could not display the requesting endpoint IP.
+                </p>
+              )}
+
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-5 text-center">
+                Raw error: <code className="font-mono">{errorMessage}</code>
+              </p>
+
               <button
                 onClick={() => navigate('/dashboard')}
-                className="btn-brand"
+                className="btn-brand w-full"
               >
                 Go to Dashboard
               </button>
-            )}
-          </div>
+            </>
+          ) : (
+            // Generic auth failure (expired token, ownership mismatch, etc.).
+            <div className="text-center">
+              <p className="text-gray-600 dark:text-gray-400 mb-4">{errorMessage}</p>
+              {isOwnershipError ? (
+                <button
+                  onClick={() => { logout(); window.location.reload(); }}
+                  className="btn-brand"
+                >
+                  Sign in with a different account
+                </button>
+              ) : (
+                <button
+                  onClick={() => navigate('/dashboard')}
+                  className="btn-brand"
+                >
+                  Go to Dashboard
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
