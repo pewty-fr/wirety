@@ -669,7 +669,7 @@ func (r *GroupRepository) DetachRouteFromGroup(ctx context.Context, networkID, g
 // GetGroupRoutes retrieves all routes attached to a group
 func (r *GroupRepository) GetGroupRoutes(ctx context.Context, networkID, groupID string) ([]*network.Route, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT r.id, r.network_id, r.name, r.description, r.destination_cidr, r.jump_peer_id, r.domain_suffix, r.created_at, r.updated_at
+		SELECT r.id, r.network_id, r.name, r.description, r.destination_cidr, r.destination_cidr_v6, r.jump_peer_id, r.domain_suffix, r.created_at, r.updated_at
 		FROM routes r
 		INNER JOIN group_routes gr ON r.id = gr.route_id
 		WHERE gr.group_id = $1 AND r.network_id = $2
@@ -683,10 +683,13 @@ func (r *GroupRepository) GetGroupRoutes(ctx context.Context, networkID, groupID
 	routes := make([]*network.Route, 0)
 	for rows.Next() {
 		var r network.Route
-		err = rows.Scan(&r.ID, &r.NetworkID, &r.Name, &r.Description, &r.DestinationCIDR, &r.JumpPeerID, &r.DomainSuffix, &r.CreatedAt, &r.UpdatedAt)
+		var cidr, cidrV6 sql.NullString
+		err = rows.Scan(&r.ID, &r.NetworkID, &r.Name, &r.Description, &cidr, &cidrV6, &r.JumpPeerID, &r.DomainSuffix, &r.CreatedAt, &r.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan route: %w", err)
 		}
+		r.DestinationCIDR = strFromNull(cidr)
+		r.DestinationCIDRv6 = strFromNull(cidrV6)
 		routes = append(routes, &r)
 	}
 

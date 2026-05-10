@@ -144,7 +144,10 @@ export interface Route {
   network_name?: string; // Added for cross-network display
   name: string;
   description: string;
-  destination_cidr: string;
+  /** IPv4 destination CIDR (optional if destination_cidr_v6 is set) */
+  destination_cidr?: string;
+  /** IPv6 destination CIDR (optional if destination_cidr is set).  At least one of the two must be set. */
+  destination_cidr_v6?: string;
   jump_peer_id: string;
   domain_suffix: string;
   created_at: string;
@@ -176,7 +179,8 @@ export interface RuleAccess {
 export interface RouteAccess {
   route_id: string;
   route_name: string;
-  destination_cidr: string;
+  destination_cidr?: string;
+  destination_cidr_v6?: string;
   jump_peer_id: string;
   jump_peer_name: string;
   group_name: string;
@@ -196,7 +200,10 @@ export interface DNSMapping {
   id: string;
   route_id: string;
   name: string;
-  ip_address: string;
+  /** IPv4 address (optional if ip_address_v6 is set) */
+  ip_address?: string;
+  /** IPv6 address (optional if ip_address is set).  At least one of the two must be set. */
+  ip_address_v6?: string;
   created_at: string;
   updated_at: string;
 }

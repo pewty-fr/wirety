@@ -492,7 +492,10 @@ class ApiClient {
   async createRoute(networkId: string, data: {
     name: string;
     description?: string;
-    destination_cidr: string;
+    /** IPv4 destination CIDR (optional if destination_cidr_v6 is set) */
+    destination_cidr?: string;
+    /** IPv6 destination CIDR (optional if destination_cidr is set).  At least one is required. */
+    destination_cidr_v6?: string;
     jump_peer_id: string;
     domain_suffix?: string;
   }): Promise<Route> {
@@ -504,6 +507,7 @@ class ApiClient {
     name?: string;
     description?: string;
     destination_cidr?: string;
+    destination_cidr_v6?: string;
     jump_peer_id?: string;
     domain_suffix?: string;
   }): Promise<Route> {
@@ -523,7 +527,10 @@ class ApiClient {
 
   async createDNSMapping(networkId: string, routeId: string, data: {
     name: string;
-    ip_address: string;
+    /** IPv4 address (optional if ip_address_v6 is set) */
+    ip_address?: string;
+    /** IPv6 address (optional if ip_address is set).  At least one is required. */
+    ip_address_v6?: string;
   }): Promise<DNSMapping> {
     const response = await this.client.post(`/networks/${networkId}/routes/${routeId}/dns`, data);
     return response.data;
@@ -532,6 +539,7 @@ class ApiClient {
   async updateDNSMapping(networkId: string, routeId: string, dnsId: string, data: {
     name?: string;
     ip_address?: string;
+    ip_address_v6?: string;
   }): Promise<DNSMapping> {
     const response = await this.client.put(`/networks/${networkId}/routes/${routeId}/dns/${dnsId}`, data);
     return response.data;

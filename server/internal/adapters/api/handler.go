@@ -83,12 +83,15 @@ type RouteService interface {
 	GetPeerRoutes(ctx context.Context, networkID, peerID string) ([]*domain.Route, error)
 }
 
-// DNSRecord represents a combined DNS record (peer or route-based)
+// DNSRecord represents a combined DNS record (peer or route-based).
+// Dual-stack: IPAddress (IPv4) and IPv6Address are independent — at least one
+// is always populated.  See application/dns/service.go::DNSRecord for details.
 type DNSRecord struct {
-	Name      string `json:"name"`
-	IPAddress string `json:"ip_address"`
-	FQDN      string `json:"fqdn"`
-	Type      string `json:"type"` // "peer" or "route"
+	Name        string `json:"name"`
+	IPAddress   string `json:"ip_address,omitempty"`
+	IPv6Address string `json:"ip_address_v6,omitempty"`
+	FQDN        string `json:"fqdn"`
+	Type        string `json:"type"` // "peer" or "route"
 }
 
 // DNSService defines the interface for DNS mapping operations

@@ -39,7 +39,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     _groupName: string;
     _groupPriority: number;
   }>>([]);
-  const [routes, setRoutes] = useState<{ id: string; name: string; destination_cidr: string; description?: string }[]>([]);
+  const [routes, setRoutes] = useState<{ id: string; name: string; destination_cidr?: string; destination_cidr_v6?: string; description?: string }[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [reachability, setReachability] = useState<PeerReachability | null>(null);
   const [loadingReachability, setLoadingReachability] = useState(false);
@@ -697,8 +697,8 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                   {routes.map((route) => (
                     <div key={route.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
                       <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{route.name}</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        {route.destination_cidr}
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono">
+                        {[route.destination_cidr, route.destination_cidr_v6].filter(Boolean).join(' / ')}
                       </div>
                       {route.description && (
                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{route.description}</div>
@@ -836,7 +836,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                           <div className="flex items-center justify-between gap-2">
                             <div>
                               <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{route.route_name}</span>
-                              <span className="text-xs font-mono text-gray-500 dark:text-gray-400 ml-2">{route.destination_cidr}</span>
+                              <span className="text-xs font-mono text-gray-500 dark:text-gray-400 ml-2">{[route.destination_cidr, route.destination_cidr_v6].filter(Boolean).join(' / ')}</span>
                             </div>
                             <div className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
                               via <span className="font-medium text-gray-700 dark:text-gray-200">{route.jump_peer_name}</span>

@@ -746,19 +746,17 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 					// Format: name.route_name.domain_suffix
 					fqdn := fmt.Sprintf("%s.%s.%s", sanitizeDNSLabel(mapping.Name), sanitizeDNSLabel(route.Name), routeDomainSuffix)
 
-					// Place the address in the correct family slot.  DNSPeer has
-					// separate IP (IPv4) and IPv6 fields and the agent's DNS
-					// server returns them via lookupPeerAddresses(name) (ipv4,
-					// ipv6) — so an IPv6 mapping put into the IPv4 slot causes
-					// AAAA queries to return NODATA and A queries to return
-					// garbage.  Family detection: a colon means IPv6 (matches
-					// the same heuristic we use in isIPv6CIDR elsewhere; a
-					// validated IP literal cannot ambiguously contain a colon).
-					peer := DNSPeer{Name: fqdn}
-					if strings.Contains(mapping.IPAddress, ":") {
-						peer.IPv6 = mapping.IPAddress
-					} else {
-						peer.IP = mapping.IPAddress
+					// Place each address in the correct family slot.  DNSPeer
+					// has separate IP (IPv4) and IPv6 fields and the agent's
+					// DNS server returns them via lookupPeerAddresses(name)
+					// (ipv4, ipv6).  Since migration 027 a single mapping
+					// can carry BOTH families — when both are set, the agent
+					// returns the A record for IPv4 queries and the AAAA
+					// record for IPv6 queries on the same hostname.
+					peer := DNSPeer{
+						Name: fqdn,
+						IP:   mapping.IPAddress,   // empty when v4 not set
+						IPv6: mapping.IPv6Address, // empty when v6 not set
 					}
 					peerList = append(peerList, peer)
 				}

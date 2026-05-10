@@ -109,6 +109,22 @@ func peerHostPrefixes(p *domain.Peer) []string {
 	return out
 }
 
+// appendRouteCIDRs appends a route's destination CIDRs to allowedIPs,
+// handling the dual-stack case (route has BOTH v4 and v6 CIDRs set).  Each
+// non-empty CIDR family contributes one entry; if both are set, both go in.
+// This is what makes a single dual-stack "internet" route translate into
+// `0.0.0.0/0, ::/0` in a peer's AllowedIPs without the admin needing to
+// maintain two parallel route entities.
+func appendRouteCIDRs(allowedIPs []string, route *domain.Route) []string {
+	if route.DestinationCIDR != "" {
+		allowedIPs = append(allowedIPs, route.DestinationCIDR)
+	}
+	if route.DestinationCIDRv6 != "" {
+		allowedIPs = append(allowedIPs, route.DestinationCIDRv6)
+	}
+	return allowedIPs
+}
+
 // determineAllowedIPs determines the AllowedIPs for a peer connection
 // Implements policy-based routing with group routes
 func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network, routes []*domain.Route) []string {
@@ -118,9 +134,10 @@ func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network
 	if peer.IsJump {
 		allowedIPs = peerHostPrefixes(allowedPeer)
 
-		// Include all route destination CIDRs for external network access
+		// Include all route destination CIDRs (both families when dual-stack)
+		// for external network access.
 		for _, route := range routes {
-			allowedIPs = append(allowedIPs, route.DestinationCIDR)
+			allowedIPs = appendRouteCIDRs(allowedIPs, route)
 		}
 
 		// Include any additional allowed IPs configured for this peer
@@ -133,10 +150,11 @@ func determineAllowedIPs(peer, allowedPeer *domain.Peer, network *domain.Network
 	if allowedPeer.IsJump {
 		allowedIPs = peerHostPrefixes(allowedPeer)
 
-		// Include route CIDRs that use this jump peer as gateway
+		// Include route CIDRs (both families when dual-stack) that use this
+		// jump peer as gateway.
 		for _, route := range routes {
 			if route.JumpPeerID == allowedPeer.ID {
-				allowedIPs = append(allowedIPs, route.DestinationCIDR)
+				allowedIPs = appendRouteCIDRs(allowedIPs, route)
 			}
 		}
 

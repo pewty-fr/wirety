@@ -44,13 +44,15 @@ type RuleAccess struct {
 }
 
 // RouteAccess describes an external network route accessible by this peer.
+// Dual-stack routes carry both DestinationCIDR (IPv4) and DestinationCIDRv6.
 type RouteAccess struct {
-	RouteID         string `json:"route_id"`
-	RouteName       string `json:"route_name"`
-	DestinationCIDR string `json:"destination_cidr"`
-	JumpPeerID      string `json:"jump_peer_id"`
-	JumpPeerName    string `json:"jump_peer_name"`
-	GroupName       string `json:"group_name"`
+	RouteID           string `json:"route_id"`
+	RouteName         string `json:"route_name"`
+	DestinationCIDR   string `json:"destination_cidr,omitempty"`
+	DestinationCIDRv6 string `json:"destination_cidr_v6,omitempty"`
+	JumpPeerID        string `json:"jump_peer_id"`
+	JumpPeerName      string `json:"jump_peer_name"`
+	GroupName         string `json:"group_name"`
 }
 
 // GetPeerReachability godoc
@@ -193,12 +195,13 @@ func (h *Handler) GetPeerReachability(c *gin.Context) {
 						jumpName = jp.Name
 					}
 					routes = append(routes, RouteAccess{
-						RouteID:         route.ID,
-						RouteName:       route.Name,
-						DestinationCIDR: route.DestinationCIDR,
-						JumpPeerID:      route.JumpPeerID,
-						JumpPeerName:    jumpName,
-						GroupName:       group.Name,
+						RouteID:           route.ID,
+						RouteName:         route.Name,
+						DestinationCIDR:   route.DestinationCIDR,
+						DestinationCIDRv6: route.DestinationCIDRv6,
+						JumpPeerID:        route.JumpPeerID,
+						JumpPeerName:      jumpName,
+						GroupName:         group.Name,
 					})
 				}
 			}
