@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 	"wirety/agent/internal/adapters/captiveportal"
+	"wirety/agent/internal/adapters/ra"
 	dom "wirety/agent/internal/domain/dns"
 	pol "wirety/agent/internal/domain/policy"
 	"wirety/agent/internal/ports"
@@ -147,6 +148,13 @@ type Runner struct {
 	// Set once by startCaptivePortalServer; protected by captivePortalSrvMu.
 	captivePortalSrv   *captiveportal.Server
 	captivePortalSrvMu sync.Mutex
+	// raEmitter sends ICMPv6 Router Advertisements with the RFC 8910
+	// Captive-Portal option so RFC 8910-aware clients (Android 14+) can
+	// auto-discover our captive-portal API URL.  Started alongside the
+	// captive portal HTTP server (jump peer only) and only when wgIPv6
+	// is configured.
+	raEmitter   *ra.Emitter
+	raEmitterMu sync.Mutex
 	// ifaceMu protects wgInterface which can be updated by handlePeerNameChange
 	// while being read concurrently by the heartbeat and tunnel-monitor goroutines.
 	ifaceMu sync.RWMutex
@@ -1610,8 +1618,50 @@ func (r *Runner) startCaptivePortalServer() {
 		}()
 	}
 
+	// Start the RFC 8910 RA emitter so RFC 8908-aware clients (Android 14+)
+	// auto-discover our captive-portal API URL via Router Advertisement.
+	// Requires IPv6 to be configured on the WG interface.
+	r.startRAEmitter()
+
 	// Block forever (one of the goroutines holds the actual listener); this
 	// goroutine is intentionally kept alive so the caller's `go startCaptivePortalServer()`
 	// continues to "own" the lifecycle of the server.
 	select {}
+}
+
+// startRAEmitter spawns the IPv6 Router Advertisement emitter that includes
+// the Captive-Portal option (RFC 8910 type 37) pointing at our /api/captive-portal
+// endpoint.  Idempotent — calling again while already running is a no-op.
+//
+// The portal URL we advertise is constructed from the jump peer's WG IPv6 +
+// the captive-portal API path.  HTTPS is preferred per RFC 8908 §4 but the
+// agent serves a self-signed cert on 443 — Android Custom Tabs will reject
+// untrusted certs, so for testing the URL falls back to HTTP if the
+// HTTPS-only constraint can't be met.  The most pragmatic option for
+// production is to put a real cert on the captive portal HTTPS listener (via
+// VPN domain ACME or pinned-cert install) so RFC 8908 strict clients accept
+// the advertised URL.
+func (r *Runner) startRAEmitter() {
+	r.raEmitterMu.Lock()
+	defer r.raEmitterMu.Unlock()
+	if r.raEmitter != nil {
+		return // already running
+	}
+	if r.wgIPv6 == "" {
+		log.Debug().Msg("ra: no IPv6 on WG interface — RA emitter not started (IPv4-only network)")
+		return
+	}
+
+	// Build the portal URL.  Bracket the IPv6 literal per RFC 3986 §3.2.2.
+	// We default to HTTPS — clients that reject self-signed will fall back
+	// to other discovery mechanisms; clients that accept it (or where we
+	// later install a trusted cert) get the strict-RFC-8908 path.
+	portalURL := fmt.Sprintf("https://[%s]/api/captive-portal", r.wgIPv6)
+
+	emitter := ra.NewEmitter(r.getInterface(), portalURL)
+	if err := emitter.Start(); err != nil {
+		log.Warn().Err(err).Msg("ra: failed to start RA emitter — RFC 8910 advertisement disabled")
+		return
+	}
+	r.raEmitter = emitter
 }
