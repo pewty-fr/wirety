@@ -366,47 +366,53 @@ export default function PeersPage() {
                           // tunnel is up but the firewall blocks every actual
                           // request.  Showing green there gives the user a false
                           // sense that the device works.
+                          //
+                          // Visual cues:
+                          //   - The label appears on hover only (opacity transition,
+                          //     not display: none, so the row layout doesn't shift
+                          //     when the user moves the cursor across it).
+                          //   - The dot pulses ONLY for pending_auth — a sign-in
+                          //     that's actively in flight.  Static orange ("not
+                          //     authenticated") doesn't pulse: the user knows what
+                          //     to do, no need to draw the eye.
                           const portalState = peer.session_status?.captive_portal_state;
                           const isOnline = isConnected || hasActiveAgent;
                           let color = 'bg-gray-400';
-                          let title = 'No active session';
+                          let label = 'Offline';
                           let pulse = false;
 
                           if (portalState === 'quarantined') {
                             color = 'bg-red-500';
-                            title = 'Quarantined — too many auth failures, access blocked';
+                            label = 'Quarantined';
                           } else if (portalState === 'pending_auth') {
                             color = 'bg-orange-500';
-                            title = 'Captive portal sign-in in progress — waiting for user';
+                            label = 'Pending auth';
                             pulse = true;
                           } else if (!isOnline) {
                             color = 'bg-gray-400';
-                            title = peer.use_agent ? 'Agent offline' : 'Offline';
+                            label = peer.use_agent ? 'Agent offline' : 'Offline';
                           } else if (peer.is_jump) {
                             // Jump peers don't authenticate to themselves — being
                             // online is sufficient.
                             color = 'bg-green-500';
-                            title = 'Connected';
+                            label = 'Connected';
                           } else if (portalState === 'authenticated') {
                             color = 'bg-green-500';
-                            const parts: string[] = ['authenticated'];
-                            if (isConnected) parts.unshift('connected');
-                            if (peer.use_agent && hasActiveAgent) parts.push('agent up');
-                            title = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' • ');
+                            label = 'Connected';
                           } else {
                             // Online + non-jump + no auth state = WG tunnel is up but
                             // the peer hasn't completed captive-portal auth.  Network
-                            // access is blocked at the firewall.  Static orange (no
-                            // pulse) — the user knows what to do; we reserve the
-                            // pulse for pending_auth where a sign-in is actively in
-                            // flight and the dot draws the eye to "finish me".
+                            // access is blocked at the firewall.
                             color = 'bg-orange-500';
-                            title = 'WireGuard connected but not authenticated to captive portal';
+                            label = 'Not authenticated';
                           }
 
                           return (
-                            <div className="flex items-center gap-2" title={title}>
+                            <div className="group flex items-center gap-2 cursor-default">
                               <span className={`w-2.5 h-2.5 rounded-full ${color} ${pulse ? 'animate-pulse' : ''}`} />
+                              <span className="text-xs text-gray-600 dark:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity duration-150 whitespace-nowrap">
+                                {label}
+                              </span>
                             </div>
                           );
                         })()}
