@@ -362,8 +362,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	originalURL := fmt.Sprintf("http://%s%s", r.Host, r.RequestURI)
+
+	// Redirect through the central server's /start bouncer instead of going
+	// straight to the captive-portal page.  The bouncer sets a same-origin
+	// cookie binding the token to THIS browser session — the auth endpoint
+	// later requires the cookie to match, which prevents the phishing attack
+	// where an attacker on a stolen WG config generates a token URL and
+	// sends it to the legitimate owner.  See the server-side migration 026
+	// and api/captive_portal_handlers.go::CaptivePortalStart for details.
+	startURL := strings.TrimRight(s.serverURL, "/") + "/api/v1/captive-portal/start"
 	redirectTarget := fmt.Sprintf("%s?token=%s&redirect=%s",
-		s.portalURL,
+		startURL,
 		url.QueryEscape(token),
 		url.QueryEscape(originalURL),
 	)

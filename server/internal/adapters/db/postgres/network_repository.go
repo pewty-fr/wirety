@@ -557,12 +557,12 @@ func (r *NetworkRepository) CreateCaptivePortalToken(ctx context.Context, token 
 
 func (r *NetworkRepository) GetCaptivePortalToken(ctx context.Context, tokenStr string) (*network.CaptivePortalToken, error) {
 	var token network.CaptivePortalToken
-	var endpointIP sql.NullString
+	var endpointIP, consumeState sql.NullString
 	err := r.db.QueryRowContext(ctx, `
-		SELECT token, network_id, jump_peer_id, peer_ip, peer_endpoint, created_at, expires_at
+		SELECT token, network_id, jump_peer_id, peer_ip, peer_endpoint, created_at, expires_at, consume_state
 		FROM captive_portal_tokens
 		WHERE token=$1
-	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.PeerIP, &endpointIP, &token.CreatedAt, &token.ExpiresAt)
+	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.PeerIP, &endpointIP, &token.CreatedAt, &token.ExpiresAt, &consumeState)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("token not found")
@@ -572,7 +572,34 @@ func (r *NetworkRepository) GetCaptivePortalToken(ctx context.Context, tokenStr 
 	if endpointIP.Valid {
 		token.PeerEndpoint = endpointIP.String
 	}
+	if consumeState.Valid {
+		token.ConsumeState = consumeState.String
+	}
 	return &token, nil
+}
+
+// SetCaptivePortalTokenConsumeState assigns a per-token random state used by
+// the /captive-portal/start bouncer to bind a token to the browser session
+// that received its URL.  See migration 026 for the rationale.  Returns
+// fmt.Errorf("token not found") if no such token exists OR if it has already
+// expired (we don't want to allow late state-binding on a stale token).
+func (r *NetworkRepository) SetCaptivePortalTokenConsumeState(ctx context.Context, tokenStr, state string) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE captive_portal_tokens
+		SET consume_state = $2
+		WHERE token = $1 AND expires_at > NOW() AND consumed_at IS NULL
+	`, tokenStr, state)
+	if err != nil {
+		return fmt.Errorf("set consume state: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set consume state rows: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("token not found")
+	}
+	return nil
 }
 
 func (r *NetworkRepository) DeleteCaptivePortalToken(ctx context.Context, tokenStr string) error {

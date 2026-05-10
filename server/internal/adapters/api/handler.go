@@ -142,6 +142,15 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 		// authenticate is unauthenticated (uses captive_token + session_hash).
 		api.POST("/captive-portal/token", h.CreateCaptivePortalToken)
 		api.POST("/captive-portal/authenticate", h.AuthenticateCaptivePortal)
+		// /start is the browser-binding bouncer that the agent's redirect
+		// targets — sets the cp_state cookie and 302s to /captive-portal.
+		// Public: it must be reachable WITHOUT a session cookie, since the
+		// user might not be logged in yet when they first hit the redirect.
+		api.GET("/captive-portal/start", h.CaptivePortalStart)
+		// /preview returns peer details for the captive portal page to show
+		// before the user clicks Continue — phishing defense via user
+		// verification of the device + endpoint that's about to get whitelisted.
+		api.GET("/captive-portal/preview", h.CaptivePortalPreview)
 	}
 
 	// Protected routes (auth required)

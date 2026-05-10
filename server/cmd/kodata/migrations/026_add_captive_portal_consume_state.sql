@@ -1,0 +1,24 @@
+-- 026: per-token consume state for browser-binding (phishing defense)
+--
+-- The captive portal flow is vulnerable to a phishing attack: an attacker who
+-- has stolen a peer's WireGuard config can launch the tunnel, hit the captive
+-- portal HTTP server (which generates a token bound to the attacker's
+-- endpoint), then phish the legitimate owner with the resulting URL.  When the
+-- legitimate owner clicks, their session passes the existing owner check (it's
+-- their peer) and the token consumes successfully — granting whitelist access
+-- bound to the ATTACKER's endpoint.
+--
+-- Defense: bind every token to the browser session that the agent's redirect
+-- delivered it to.  The agent's redirect goes through a /captive-portal/start
+-- endpoint that:
+--   - verifies the token exists
+--   - generates a random consume_state
+--   - stores it on this row
+--   - sets a same-origin cookie cp_state=<state>
+--   - 302s to /captive-portal?token=...
+--
+-- The /authenticate endpoint then requires the cookie's value to match the
+-- consume_state on the token row.  A phisher's URL alone cannot satisfy this
+-- — they'd also need to set a cookie on the central server's domain, which
+-- they cannot (cookies are origin-scoped).
+ALTER TABLE captive_portal_tokens ADD COLUMN consume_state TEXT;

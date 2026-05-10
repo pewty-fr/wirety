@@ -71,6 +71,12 @@ type Repository interface {
 	// distinguish "token expired with success" from "token expired without auth".
 	MarkCaptivePortalTokenConsumed(ctx context.Context, token string) error
 
+	// SetCaptivePortalTokenConsumeState writes the per-token consume_state used
+	// for browser-binding (phishing defense — see migration 026).  Called by the
+	// /captive-portal/start bouncer when it sets the cp_state cookie.  Returns
+	// an error if the token doesn't exist or has already expired.
+	SetCaptivePortalTokenConsumeState(ctx context.Context, token, state string) error
+
 	// ListExpiredUnconsumedCaptivePortalTokens returns tokens that have expired
 	// without ever being consumed (no successful auth).  The cleanup loop reads
 	// this, records a strike per peer, and then deletes them.  Order is undefined.

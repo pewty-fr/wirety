@@ -76,6 +76,9 @@ func (m *mockPeerRepository) ListActiveCaptivePortalTokens(ctx context.Context, 
 func (m *mockPeerRepository) MarkCaptivePortalTokenConsumed(ctx context.Context, token string) error {
 	return nil
 }
+func (m *mockPeerRepository) SetCaptivePortalTokenConsumeState(ctx context.Context, token, state string) error {
+	return nil
+}
 func (m *mockPeerRepository) ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*network.CaptivePortalToken, error) {
 	return nil, nil
 }
