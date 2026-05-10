@@ -346,15 +346,12 @@ export default function PeersPage() {
                         {(() => {
                           const portalState = peer.session_status?.captive_portal_state;
                           let color = 'bg-gray-400';
-                          let label = 'Offline';
                           let title = 'Disconnected';
                           if (portalState === 'quarantined') {
                             color = 'bg-red-500';
-                            label = 'Quarantined';
                             title = 'Quarantined — too many auth failures, access blocked';
                           } else if (portalState === 'pending_auth') {
                             color = 'bg-orange-500';
-                            label = 'Pending auth';
                             title = 'Captive portal token issued — waiting for user to complete sign-in';
                           } else if (portalState === 'authenticated' || isConnected || hasActiveAgent) {
                             color = 'bg-green-500';
@@ -362,14 +359,10 @@ export default function PeersPage() {
                             if (isConnected) parts.push('connected');
                             if (peer.use_agent && hasActiveAgent) parts.push('agent up');
                             if (portalState === 'authenticated') parts.push('authenticated');
-                            label = parts[0]
-                              ? parts[0].charAt(0).toUpperCase() + parts[0].slice(1)
-                              : 'Active';
                             title = parts.length > 0
                               ? parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' • ')
                               : 'Active';
                           } else if (peer.use_agent) {
-                            // agent peer with no signal at all
                             title = 'Agent offline';
                           } else {
                             title = 'No active session';
@@ -377,7 +370,6 @@ export default function PeersPage() {
                           return (
                             <div className="flex items-center gap-2" title={title}>
                               <span className={`w-2.5 h-2.5 rounded-full ${color} ${portalState === 'pending_auth' ? 'animate-pulse' : ''}`} />
-                              {/* <span className="text-xs text-gray-600 dark:text-gray-300">{label}</span> */}
                             </div>
                           );
                         })()}

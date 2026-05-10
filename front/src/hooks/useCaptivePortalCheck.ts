@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNetworks, usePeers } from './useQueries';
 import { useAuth } from '../contexts/AuthContext';
 import type { Peer, Network } from '../types';
@@ -70,11 +70,21 @@ export function useCaptivePortalCheck(): CaptivePortalNetworkInfo[] {
 
   const peers = peersData?.peers || [];
 
+  // Tick-driven `now` so the active-peer filter re-evaluates as time passes,
+  // even between data refetches.  Without this, a peer that was "active 4 min
+  // ago" at fetch time stays in the modal forever (until the next refetch),
+  // because the useMemo below only recomputes when peers / networks change.
+  // 30 s matches the same cadence PeersPage uses for its connectivity badge.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
   return useMemo(() => {
     if (!user) return [];
 
     const recentlyActiveThresholdMs = 5 * 60 * 1000;
-    const now = Date.now();
 
     const myPeers = peers.filter(p => p.owner_id === user.id);
 
@@ -137,5 +147,5 @@ export function useCaptivePortalCheck(): CaptivePortalNetworkInfo[] {
     }
 
     return result;
-  }, [user, peers, networks]);
+  }, [user, peers, networks, now]);
 }
