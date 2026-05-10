@@ -43,14 +43,14 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' }:
       />
       
       {/* Modal */}
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div 
+      <div className="flex min-h-full items-center justify-center p-2 sm:p-4">
+        <div
           className={`relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full ${sizeClasses[size]} transform transition-all border-2 border-primary-300 dark:border-primary-700`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700">
-            <h2 className="text-xl font-semibold text-white">{ title}</h2>
+          <div className="flex items-center justify-between p-4 sm:p-6 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700">
+            <h2 className="text-lg sm:text-xl font-semibold text-white">{ title}</h2>
             <button
               onClick={onClose}
               className="text-white hover:text-gray-200 transition-colors"
@@ -62,7 +62,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' }:
           </div>
 
           {/* Content */}
-          <div className="p-6">
+          <div className="p-4 sm:p-6">
             {children}
           </div>
         </div>
