@@ -301,10 +301,20 @@ func generateSelfSignedCert(ip, vpnDomain string) (tls.Certificate, error) {
 //
 // Unauthenticated peers: create a short-lived captive portal token and redirect
 // the browser to the Wirety authentication page.
+//
+// Special path: /api/captive-portal returns a structured RFC 8908 JSON response
+// instead of HTML.  Used by RFC 8910-aware clients (Android 14+ Custom Tabs)
+// that learn this URL from the IPv6 RA option (type 37) we emit.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	peerIP, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		peerIP = r.RemoteAddr
+	}
+
+	// RFC 8908 API endpoint — short-circuit before any HTML/redirect logic.
+	if r.URL.Path == "/api/captive-portal" {
+		s.serveCaptivePortalAPI(w, r, peerIP)
+		return
 	}
 
 	// Only serve probe-success responses after the first policy sync.
@@ -579,4 +589,110 @@ func (s *Server) createToken(peerIP string) (string, error) {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 	return tokenResp.Token, nil
+}
+
+// captivePortalAPIResponse mirrors the JSON shape defined in RFC 8908.
+// Field names use the exact strings RFC 8908 specifies (with hyphens), even
+// though Go convention would prefer underscores.
+type captivePortalAPIResponse struct {
+	// Captive is true when the user must authenticate to access the network.
+	Captive bool `json:"captive"`
+	// UserPortalURL is the URL the OS opens (typically in a Custom Tab on
+	// Android, in CNA on iOS) to let the user authenticate.  May be omitted
+	// when Captive is false, but we always include it so re-auth is possible.
+	UserPortalURL string `json:"user-portal-url,omitempty"`
+	// VenueInfoURL points to a human-readable page about the network.
+	// Optional per RFC 8908; useful for branding / contact info.
+	VenueInfoURL string `json:"venue-info-url,omitempty"`
+	// CanExtendSession indicates whether the user can extend their session
+	// before it expires.  We return false — sessions are managed centrally
+	// and tied to the OIDC session lifetime.
+	CanExtendSession bool `json:"can-extend-session"`
+}
+
+// serveCaptivePortalAPI returns a JSON document conforming to RFC 8908,
+// "Captive Portal API".  This endpoint is the target of the URL advertised
+// in our IPv6 RA Captive-Portal option (RFC 8910 type 37).
+//
+// Behaviour by client state:
+//
+//   captive == false  →  the peer is in the captive-portal whitelist (already
+//                        authenticated).  The OS dismisses any captive-portal
+//                        notification on the network.
+//   captive == true   →  the peer is unauthenticated.  We include a
+//                        user-portal-url that the OS opens in a Custom Tab
+//                        (Android 14+) or CNA (iOS, partial RFC 8910 support).
+//
+// The user-portal-url embeds a freshly-minted captive-portal token bound to
+// this peer's WireGuard IP and current public endpoint, exactly as the HTML
+// redirect path does — so the same OIDC flow on the central server works
+// without modification.
+//
+// Per RFC 8908 §6, the response Content-Type MUST be "application/captive+json".
+// Per §4 the API SHOULD use HTTPS — the agent listens on both 80 and 443; the
+// HTTPS listener uses a self-signed cert which Android Custom Tabs may reject.
+// The HTTP listener exists for testing and falls back gracefully.
+func (s *Server) serveCaptivePortalAPI(w http.ResponseWriter, r *http.Request, peerIP string) {
+	// Per RFC 8908, the API responds to GET only.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	authenticated := s.isPolicyReceived() && s.isAuthenticated != nil && s.isAuthenticated(peerIP)
+
+	resp := captivePortalAPIResponse{
+		Captive:          !authenticated,
+		CanExtendSession: false,
+	}
+
+	// Even authenticated peers get a user-portal-url so they can re-auth or
+	// inspect their session.  Unauthenticated peers absolutely need it (it's
+	// where the OS sends them next).
+	if s.portalURL != "" {
+		// For unauthenticated peers we mint a token and bind it into the URL,
+		// matching the HTML-redirect codepath.  For already-authenticated peers
+		// the token isn't required — we still provide a generic portal link
+		// (no token) so the user-portal-url field is non-empty.
+		var portalURL string
+		if !authenticated {
+			token, ok := s.cache.get(peerIP)
+			if !ok {
+				t, err := s.createToken(peerIP)
+				if err != nil {
+					log.Warn().Err(err).Str("peer_ip", peerIP).Msg("captive portal API: failed to create token")
+					// Without a token the URL is useless; signal an error to the caller.
+					w.Header().Set("Content-Type", "application/captive+json")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = w.Write([]byte(`{"captive":true}`))
+					return
+				}
+				token = t
+				s.cache.set(peerIP, token)
+			}
+			portalURL = fmt.Sprintf("%s?token=%s", s.portalURL, url.QueryEscape(token))
+		} else {
+			portalURL = s.portalURL
+		}
+		resp.UserPortalURL = portalURL
+	}
+
+	body, _ := json.Marshal(resp)
+
+	// RFC 8908 §6.2 mandates this Content-Type.
+	w.Header().Set("Content-Type", "application/captive+json")
+	// Cache-Control: API responses are per-peer-state and must not be cached.
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	// CORS: in case the captive portal page itself uses fetch() against this
+	// endpoint, allow it to (this is on the same origin in practice but be safe).
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+
+	log.Debug().
+		Str("peer_ip", peerIP).
+		Bool("captive", resp.Captive).
+		Str("user_portal_url", resp.UserPortalURL).
+		Msg("captive portal API: served RFC 8908 response")
 }
