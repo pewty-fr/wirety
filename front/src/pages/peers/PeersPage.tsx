@@ -389,8 +389,13 @@ export default function PeersPage() {
                             label = 'Pending auth';
                             pulse = true;
                           } else if (!isOnline) {
-                            color = 'bg-gray-400';
-                            label = peer.use_agent ? 'Agent offline' : 'Offline';
+                            // color/label keep their defaults ('bg-gray-400' /
+                            // 'Offline'); only override the label when this peer
+                            // runs the agent so we can distinguish "agent offline"
+                            // from a peer with no agent at all.
+                            if (peer.use_agent) {
+                              label = 'Agent offline';
+                            }
                           } else if (peer.is_jump) {
                             // Jump peers don't authenticate to themselves — being
                             // online is sufficient.
