@@ -1062,11 +1062,30 @@ function AddRuleModal({
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 >
                   <option value="">Select a route...</option>
-                  {routes.map((route) => (
-                    <option key={route.id} value={route.destination_cidr}>
-                      {route.name} ({route.destination_cidr})
-                    </option>
-                  ))}
+                  {/* Each route's target_type:cidr policy entry binds to a
+                      specific CIDR.  Dual-stack routes have BOTH IPv4 and
+                      IPv6 destination CIDRs, so we surface each family as
+                      a separate option — the admin picks the family they
+                      want this rule to act on (or adds two rules for full
+                      coverage). */}
+                  {routes.flatMap((route) => {
+                    const opts = [];
+                    if (route.destination_cidr) {
+                      opts.push(
+                        <option key={route.id + ':v4'} value={route.destination_cidr}>
+                          {route.name} (IPv4 {route.destination_cidr})
+                        </option>
+                      );
+                    }
+                    if (route.destination_cidr_v6) {
+                      opts.push(
+                        <option key={route.id + ':v6'} value={route.destination_cidr_v6}>
+                          {route.name} (IPv6 {route.destination_cidr_v6})
+                        </option>
+                      );
+                    }
+                    return opts;
+                  })}
                 </select>
               ) : targetType === 'network' ? (
                 <input

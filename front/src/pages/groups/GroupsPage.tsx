@@ -1248,7 +1248,7 @@ function GroupModal({
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-gray-900 dark:text-white">{route.name}</span>
                     <span className="text-xs font-mono bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-2 py-0.5 rounded">
-                      {route.destination_cidr}
+                      {[route.destination_cidr, route.destination_cidr_v6].filter(Boolean).join(' / ')}
                     </span>
                   </div>
                   {route.description && (
@@ -1281,7 +1281,7 @@ function GroupModal({
                   <option value="">Attach route to group...</option>
                   {availableRoutes.map((route) => (
                     <option key={route.id} value={route.id}>
-                      {route.name} ({route.destination_cidr})
+                      {route.name} ({[route.destination_cidr, route.destination_cidr_v6].filter(Boolean).join(' / ')})
                     </option>
                   ))}
                 </select>

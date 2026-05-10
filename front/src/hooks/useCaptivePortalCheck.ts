@@ -68,7 +68,10 @@ export function useCaptivePortalCheck(): CaptivePortalNetworkInfo[] {
   // saves us from having to paginate inside the hook.
   const { data: peersData } = usePeers(1, 1000);
 
-  const peers = peersData?.peers || [];
+  // Wrap in useMemo so the array reference is stable across renders when the
+  // underlying data hasn't changed; otherwise the `|| []` fallback creates a
+  // brand-new empty array every render and invalidates the useMemo below.
+  const peers = useMemo(() => peersData?.peers || [], [peersData]);
 
   // Tick-driven `now` so the active-peer filter re-evaluates as time passes,
   // even between data refetches.  Without this, a peer that was "active 4 min

@@ -175,26 +175,23 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
           })
           api.attachPolicyToGroup(networkId, group.id, policy.id)
 
-          // Routes are per-CIDR (a single Route entity holds one destination_cidr),
-          // so dual-stack networks get TWO default routes — one IPv4 and one IPv6
-          // — both pointed at this jump peer.
-          if (net.cidr) {
-            const route4 : Route = await api.createRoute(selectedNetworkId, {
+          // Single dual-stack route covering both families when the network
+          // has both IPv4 and IPv6 CIDRs configured.  Replaces the previous
+          // two-routes (`<name>` IPv4 + `<name>-v6` IPv6) split — the route
+          // entity now natively supports both destination_cidr and
+          // destination_cidr_v6 since migration 027, and a single route
+          // generates BOTH AllowedIPs entries on attached peers.  This also
+          // means a DNS record on this route can carry both A and AAAA in
+          // one entity instead of needing two parallel rows.
+          if (net.cidr || net.cidr_v6) {
+            const defaultRoute: Route = await api.createRoute(selectedNetworkId, {
               name: net.name,
-              description: 'default IPv4 route for network',
-              destination_cidr: net.cidr,
-              jump_peer_id: jumpPeer.id
-            })
-            api.attachRouteToGroup(networkId, group.id, route4.id);
-          }
-          if (net.cidr_v6) {
-            const route6 : Route = await api.createRoute(selectedNetworkId, {
-              name: net.name + '-v6',
-              description: 'default IPv6 route for network',
-              destination_cidr: net.cidr_v6,
-              jump_peer_id: jumpPeer.id
-            })
-            api.attachRouteToGroup(networkId, group.id, route6.id);
+              description: 'default route for network',
+              destination_cidr: net.cidr || undefined,
+              destination_cidr_v6: net.cidr_v6 || undefined,
+              jump_peer_id: jumpPeer.id,
+            });
+            api.attachRouteToGroup(networkId, group.id, defaultRoute.id);
           }
 
           regularPeers.forEach(peer => api.addPeerToGroup(networkId, group.id, peer.id));

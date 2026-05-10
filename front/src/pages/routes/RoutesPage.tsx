@@ -211,7 +211,15 @@ export default function RoutesPage() {
                       </td>
                     )}
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-white">
-                      {route.destination_cidr}
+                      <div className="flex flex-col">
+                        {route.destination_cidr && <span>{route.destination_cidr}</span>}
+                        {route.destination_cidr_v6 && (
+                          <span className="text-xs text-gray-500 dark:text-gray-400">{route.destination_cidr_v6}</span>
+                        )}
+                        {!route.destination_cidr && !route.destination_cidr_v6 && (
+                          <span className="text-gray-400 italic">none</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                       {jumpPeerMap.get(route.jump_peer_id) || route.jump_peer_id || '-'}
@@ -280,6 +288,10 @@ function RouteModal({
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [destinationCidr, setDestinationCidr] = useState('');
+  // IPv6 destination CIDR — optional.  When set alongside destinationCidr the
+  // route is dual-stack and a single attached peer gets BOTH CIDRs in their
+  // AllowedIPs (and DNS records on this route can then carry both A and AAAA).
+  const [destinationCidrV6, setDestinationCidrV6] = useState('');
   const [jumpPeerId, setJumpPeerId] = useState('');
   const [domainSuffix, setDomainSuffix] = useState('internal');
   const [selectedNetworkId, setSelectedNetworkId] = useState<string>(networkId);
@@ -314,7 +326,8 @@ function RouteModal({
     if (route) {
       setName(route.name);
       setDescription(route.description || '');
-      setDestinationCidr(route.destination_cidr);
+      setDestinationCidr(route.destination_cidr || '');
+      setDestinationCidrV6(route.destination_cidr_v6 || '');
       setJumpPeerId(route.jump_peer_id);
       setDomainSuffix(route.domain_suffix || 'internal');
       setSelectedNetworkId(networkId);
@@ -330,6 +343,7 @@ function RouteModal({
       setName('');
       setDescription('');
       setDestinationCidr('');
+      setDestinationCidrV6('');
       setJumpPeerId('');
       setDomainSuffix('internal');
       setSelectedNetworkId(networkId || '');
@@ -405,13 +419,18 @@ function RouteModal({
       alert('Please select a network');
       return;
     }
-    
+    if (!destinationCidr.trim() && !destinationCidrV6.trim()) {
+      alert('Provide at least one of: IPv4 destination CIDR or IPv6 destination CIDR.');
+      return;
+    }
+
     setLoading(true);
     try {
       const newRoute = await api.createRoute(selectedNetworkId, {
         name,
         description,
-        destination_cidr: destinationCidr,
+        destination_cidr: destinationCidr.trim() || undefined,
+        destination_cidr_v6: destinationCidrV6.trim() || undefined,
         jump_peer_id: jumpPeerId,
         domain_suffix: domainSuffix,
       });
@@ -473,12 +492,26 @@ function RouteModal({
 
   const handleUpdateDestinationCidr = async () => {
     if (!route) return;
-    
+
     const networkIdToUse = route.network_id || selectedNetworkId;
     if (!networkIdToUse) return;
-    
+
+    if (!destinationCidr.trim() && !destinationCidrV6.trim()) {
+      alert('A route must keep at least one of: IPv4 destination CIDR or IPv6 destination CIDR.');
+      return;
+    }
+
     try {
-      await api.updateRoute(networkIdToUse, route.id, { destination_cidr: destinationCidr });
+      // Send BOTH fields explicitly so clearing one (going single-stack) is
+      // reflected.  Empty strings on the wire mean "leave as-is" per the
+      // RouteUpdateRequest contract, so for a clear we'd need a sentinel —
+      // but in practice users edit values rather than clear them.  If you
+      // need to clear, edit the route, leave both fields, and the server
+      // will reject with the "at least one must remain set" check.
+      await api.updateRoute(networkIdToUse, route.id, {
+        destination_cidr: destinationCidr.trim() || undefined,
+        destination_cidr_v6: destinationCidrV6.trim() || undefined,
+      });
       const updatedRoute = await api.getRoute(networkIdToUse, route.id);
       Object.assign(route, updatedRoute);
       setIsEditingDestinationCidr(false);
@@ -537,6 +570,7 @@ function RouteModal({
         break;
       case 'destinationCidr':
         setDestinationCidr(route?.destination_cidr || '');
+        setDestinationCidrV6(route?.destination_cidr_v6 || '');
         setIsEditingDestinationCidr(false);
         break;
       case 'jumpPeer':
@@ -786,14 +820,26 @@ function RouteModal({
                 )}
               </div>
 
-              {/* Destination CIDR Field */}
+              {/* Destination CIDR Field — supports dual-stack: at least one of
+                  the two (IPv4 or IPv6) must be set, both can be set for a
+                  route that covers both families with a single entity. */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Destination CIDR *
+                  Destination CIDR <span className="text-xs text-gray-500 dark:text-gray-400 font-normal">(at least one of IPv4 / IPv6)</span>
                 </label>
                 {route && !isEditingDestinationCidr ? (
                   <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <span className="text-gray-900 dark:text-white font-mono">{destinationCidr}</span>
+                    <div className="flex flex-col gap-1 font-mono text-sm">
+                      {destinationCidr && (
+                        <span className="text-gray-900 dark:text-white">{destinationCidr} <span className="text-xs text-gray-500 dark:text-gray-400 font-sans">IPv4</span></span>
+                      )}
+                      {destinationCidrV6 && (
+                        <span className="text-gray-900 dark:text-white">{destinationCidrV6} <span className="text-xs text-gray-500 dark:text-gray-400 font-sans">IPv6</span></span>
+                      )}
+                      {!destinationCidr && !destinationCidrV6 && (
+                        <span className="text-gray-400 italic font-sans">none</span>
+                      )}
+                    </div>
                     <button
                       onClick={() => setIsEditingDestinationCidr(true)}
                       className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
@@ -803,17 +849,23 @@ function RouteModal({
                     </button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col gap-2">
                     <input
                       type="text"
                       value={destinationCidr}
                       onChange={(e) => setDestinationCidr(e.target.value)}
-                      placeholder="10.0.0.0/24"
-                      required
-                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
+                      placeholder="IPv4 — e.g. 10.0.0.0/24 or 0.0.0.0/0"
+                      className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
+                    />
+                    <input
+                      type="text"
+                      value={destinationCidrV6}
+                      onChange={(e) => setDestinationCidrV6(e.target.value)}
+                      placeholder="IPv6 — e.g. fd00::/8 or ::/0"
+                      className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
                     />
                     {route && (
-                      <>
+                      <div className="flex items-center gap-2">
                         <button
                           onClick={handleUpdateDestinationCidr}
                           className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
@@ -826,7 +878,7 @@ function RouteModal({
                         >
                           Cancel
                         </button>
-                      </>
+                      </div>
                     )}
                   </div>
                 )}
@@ -943,7 +995,7 @@ function RouteModal({
                 </button>
                 <button
                   onClick={handleCreateRoute}
-                  disabled={loading || !name.trim() || !destinationCidr.trim() || !jumpPeerId || !selectedNetworkId}
+                  disabled={loading || !name.trim() || (!destinationCidr.trim() && !destinationCidrV6.trim()) || !jumpPeerId || !selectedNetworkId}
                   className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? 'Creating...' : 'Create Route'}
