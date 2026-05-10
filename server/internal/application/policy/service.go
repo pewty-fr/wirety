@@ -343,8 +343,13 @@ func (s *Service) GenerateIPTablesRules(ctx context.Context, networkID, jumpPeer
 		}
 	}
 
-	// Add default deny rule at the end for FORWARD chain
+	// Add default deny rule at the end of the policy chain — one per family.
+	// The agent rewrites these rules' chain references to WIRETY_POLICY /
+	// WIRETY6_POLICY, so an authenticated peer's traffic that doesn't match any
+	// allow rule in its policy gets dropped HERE, instead of falling back into
+	// WIRETY_JUMP / WIRETY6_JUMP and tripping the unauthenticated-peer REJECTs.
 	rules = append(rules, "iptables -A FORWARD -j DROP")
+	rules = append(rules, "ip6tables -A FORWARD -j DROP")
 
 	return rules, nil
 }

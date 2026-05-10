@@ -120,6 +120,19 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
               target_type: 'cidr',
               description: 'allow a peer to access network IPv4 CIDR resources'
             });
+            // Internet egress (IPv4): authenticated peers can reach anything.
+            // Without this, the policy chain ends with DROP for any destination
+            // outside the VPN CIDR — so peers can talk to each other but cannot
+            // browse the web after authenticating.  Admins can later remove this
+            // rule for a fully restrictive setup.
+            defaultRules.push({
+              id: crypto.randomUUID(),
+              direction: 'output',
+              action: 'allow',
+              target: '0.0.0.0/0',
+              target_type: 'cidr',
+              description: 'allow a peer to access the IPv4 internet'
+            });
           }
           if (net.cidr_v6) {
             defaultRules.push({
@@ -137,6 +150,15 @@ export default function JumpPeerModal({ isOpen, onClose, onSuccess, networkId, n
               target: net.cidr_v6,
               target_type: 'cidr',
               description: 'allow a peer to access network IPv6 CIDR resources'
+            });
+            // Internet egress (IPv6): see comment above for IPv4.
+            defaultRules.push({
+              id: crypto.randomUUID(),
+              direction: 'output',
+              action: 'allow',
+              target: '::/0',
+              target_type: 'cidr',
+              description: 'allow a peer to access the IPv6 internet'
             });
           }
 
