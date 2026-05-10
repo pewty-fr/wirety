@@ -22,7 +22,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
   const [activeTab, setActiveTab] = useState<'configuration' | 'access' | 'reachability'>('configuration');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [revoking, setRevoking] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
   const [configText, setConfigText] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -234,23 +234,27 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     }
   };
 
-  const handleRevoke = async () => {
+  const handleResetAuth = async () => {
     if (!confirm(
-      `Revoke captive-portal authentication for "${displayPeer.name}"?\n\n` +
-      `The peer will remain in the network, but the next request from it will be redirected to the captive portal for re-authentication via SSO. ` +
-      `Use this when you suspect a peer's WireGuard config is being shared or stolen.`
+      `Reset captive-portal authentication state for "${displayPeer.name}"?\n\n` +
+      `This will:\n` +
+      `  • Remove the peer from the captive-portal whitelist\n` +
+      `  • Cancel any pending sign-in tokens\n` +
+      `  • Clear strike counter and lift any active quarantine\n\n` +
+      `The peer remains in the network. The next request from it will be redirected to the captive portal for fresh authentication via SSO. ` +
+      `Use this to kick a peer that may have a leaked config (forces re-auth) OR to release a peer that got soft-locked into quarantine.`
     )) {
       return;
     }
-    setRevoking(true);
+    setResetting(true);
     try {
       await api.revokePeerAuthentication(displayPeer.network_id!, displayPeer.id);
       onUpdate();
     } catch (error) {
       const err = error as { response?: { data?: { error?: string } } };
-      alert(err.response?.data?.error || 'Failed to revoke authentication');
+      alert(err.response?.data?.error || 'Failed to reset authentication state');
     } finally {
-      setRevoking(false);
+      setResetting(false);
     }
   };
 
@@ -862,7 +866,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
               <div className="flex gap-2">
                 <button
                   onClick={handleDelete}
-                  disabled={deleting || revoking}
+                  disabled={deleting || resetting}
                   title="Delete Peer"
                   className="group px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
                 >
@@ -872,15 +876,15 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                   {deleting ? 'Deleting...' : 'Delete'}
                 </button>
                 <button
-                  onClick={handleRevoke}
-                  disabled={deleting || revoking}
-                  title="Force re-authentication: removes the peer from the captive-portal whitelist so the next request from it is redirected to SSO. Use if a config is suspected of being shared/stolen."
+                  onClick={handleResetAuth}
+                  disabled={deleting || resetting}
+                  title="Reset captive-portal auth state: clears whitelist, cancels pending sign-in tokens, lifts quarantine. Use this both to force re-auth on a suspected shared config AND to release a peer that got soft-locked from too many failed sign-ins."
                   className="group px-4 py-2.5 bg-gradient-to-r from-amber-600 to-orange-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
                 >
                   <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
-                  {revoking ? 'Revoking...' : 'Revoke Auth'}
+                  {resetting ? 'Resetting...' : 'Reset Auth'}
                 </button>
               </div>
             )}

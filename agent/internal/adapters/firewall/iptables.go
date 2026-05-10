@@ -255,16 +255,31 @@ func (a *Adapter) detectNATInterfacesIPv6() []string {
 				if iface == "lo" || iface == a.iface || seen[iface] {
 					continue
 				}
-				// Only include interfaces that have a global-scope IPv6 address
-				// (link-local only interfaces don't need MASQUERADE).
-				addrOut, addrErr := exec.Command("ip", "addr", "show", iface).Output() // #nosec G204
-				if addrErr == nil && strings.Contains(string(addrOut), "inet6 ") &&
-					!strings.Contains(string(addrOut), "inet6 fe80") {
+				// Only include interfaces that carry a global-scope IPv6 address.
+				//
+				// We use `ip -6 addr show scope global dev <iface>` which returns
+				// EMPTY output on link-local-only interfaces and at least one
+				// `inet6` line on globally addressed ones.  The previous heuristic
+				// — check for `inet6 ` AND absence of `inet6 fe80` — was broken
+				// because every IPv6-enabled interface carries BOTH a link-local
+				// fe80:: and (typically) a global address.  The negative check
+				// always tripped, no interface was ever picked, and IPv6
+				// MASQUERADE was silently never installed.  Result: forwarded
+				// IPv6 traffic from peers (ULA source) reached the egress NIC
+				// unmodified and was discarded upstream as un-routable.
+				addrOut, addrErr := exec.Command("ip", "-6", "addr", "show", "scope", "global", "dev", iface).Output() // #nosec G204
+				if addrErr == nil && strings.Contains(string(addrOut), "inet6 ") {
 					seen[iface] = true
 					ifaces = append(ifaces, iface)
 				}
 			}
 		}
+	}
+
+	if len(ifaces) > 0 {
+		log.Info().Strs("interfaces", ifaces).Msg("auto-detected IPv6 NAT interfaces")
+	} else {
+		log.Warn().Msg("no IPv6 NAT interfaces detected — IPv6 MASQUERADE not configured; ULA peers will have no IPv6 internet egress")
 	}
 
 	return ifaces

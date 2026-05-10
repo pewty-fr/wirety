@@ -279,12 +279,34 @@ func (r *Runner) SetWGIPv6(ip string) {
 	r.wgIPv6 = ip
 }
 
+// extractEndpointIP returns the host portion of an "ip:port" or "[ipv6]:port"
+// endpoint string, or the input unchanged if it doesn't parse.  Used to compare
+// peer endpoints at IP granularity only — NAT port rebinds shouldn't kick a
+// legitimate peer out of the whitelist, while a stolen config used from a
+// genuinely different network (different IP) still fails the check.
+func extractEndpointIP(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	return host
+}
+
 // isAuthenticated reports whether the given peer WireGuard IP has completed
 // captive portal authentication AND is connecting from the same public endpoint
 // IP that was recorded at authentication time.
 //
-// If no endpoint IP was stored (empty string — legacy entry or SSO disabled),
-// only the whitelist membership is checked for backward compatibility.
+// Comparison is at IP granularity, NOT IP:port.  A stolen WireGuard config used
+// from a different network has a different public IP and is rejected; a
+// legitimate peer whose NAT rebinds its source port (changing IP:port without
+// changing the IP) keeps its whitelist entry.  Oscillation between two devices
+// sharing the same key is handled separately by the takeover-detection denylist.
+//
+// If no endpoint constraint was stored (empty string — legacy entry or SSO
+// disabled), only whitelist membership is checked.
 func (r *Runner) isAuthenticated(peerIP string) bool {
 	r.whitelistMu.RLock()
 	expectedEndpoint, ok := r.whitelist[peerIP]
@@ -296,11 +318,13 @@ func (r *Runner) isAuthenticated(peerIP string) bool {
 		// No endpoint constraint stored — legacy / non-SSO entry.
 		return true
 	}
-	// Verify the peer's current public endpoint matches the one stored at
-	// authentication time.  A mismatch means the WireGuard config is being
-	// used from a different network — require re-authentication.
 	currentEndpoint := r.getCurrentEndpointForWgIP(peerIP)
-	return currentEndpoint != "" && currentEndpoint == expectedEndpoint
+	if currentEndpoint == "" {
+		return false
+	}
+	expectedIP := extractEndpointIP(expectedEndpoint)
+	currentIP := extractEndpointIP(currentEndpoint)
+	return expectedIP != "" && expectedIP == currentIP
 }
 
 // getCurrentEndpointForWgIP returns the most-recently-observed public endpoint
@@ -429,20 +453,28 @@ func (r *Runner) updateWhitelist(ips []string) {
 	}
 }
 
-// filterWhitelistByEndpoint returns the wgIPs whose live public endpoint matches
-// the endpoint stored at authentication time AND has been stable long enough.
+// filterWhitelistByEndpoint returns the wgIPs whose live public endpoint IP
+// matches the endpoint IP stored at authentication time AND has been stable
+// long enough.
 //
 // Two checks are applied in order:
-//  1. Endpoint match — the current endpoint from `wg show` must equal the IP:port
-//     recorded when the peer authenticated.  A mismatch means the WireGuard config
-//     is being used from a different network (e.g. stolen config).
-//  2. Stability window — even when the endpoint matches, the peer is excluded if
-//     its endpoint changed within the last endpointStabilityWindow.  This prevents
-//     two devices sharing the same WireGuard private key from getting intermittent
-//     iptables access: while they oscillate the jump-peer's recorded endpoint every
-//     ~25 s (WireGuard keepalive interval), neither device has a stable endpoint,
-//     so neither is whitelisted until the oscillation stops and one device clearly
-//     "wins" the session for at least endpointStabilityWindow.
+//  1. Endpoint-IP match — the IP portion of the current endpoint (from
+//     `wg show`) must equal the IP portion of the endpoint recorded at
+//     authentication time.  A mismatch means the WireGuard config is being
+//     used from a different network (e.g. stolen config).  The port is NOT
+//     compared: NAT rebinds change the source port frequently and a legitimate
+//     peer would otherwise lose its whitelist entry on every reconnect.
+//  2. Stability window — even when the IP matches, the peer is excluded if
+//     its endpoint (IP or port) changed within the last endpointStabilityWindow.
+//     This prevents two devices sharing the same WireGuard private key from
+//     getting intermittent iptables access: while they oscillate the jump
+//     peer's recorded endpoint every ~25 s (WireGuard keepalive interval),
+//     neither has a stable endpoint and neither is whitelisted.  Once one
+//     device "wins" for endpointStabilityWindow, it gets back in.
+//
+// Oscillation between two devices behind the same NAT (which would share the
+// same source IP and only differ in port) is caught by the takeover-detection
+// denylist instead — see queueTakeoverIfRogue.
 //
 // Entries without a stored endpoint (legacy / non-SSO) are passed through unchanged.
 func (r *Runner) filterWhitelistByEndpoint(entries []string) []string {
@@ -459,10 +491,15 @@ func (r *Runner) filterWhitelistByEndpoint(entries []string) []string {
 			continue
 		}
 
-		// Check 1: endpoint must match.
+		// Check 1: endpoint IP must match.
 		currentEP := r.getCurrentEndpointForWgIP(wgIP)
-		if currentEP == "" || currentEP != expectedEP {
-			// Endpoint mismatch or unknown — drop.
+		if currentEP == "" {
+			continue
+		}
+		expectedIP := extractEndpointIP(expectedEP)
+		currentIP := extractEndpointIP(currentEP)
+		if expectedIP == "" || expectedIP != currentIP {
+			// IP mismatch — config is being used from a different network.
 			continue
 		}
 
@@ -802,13 +839,17 @@ func (r *Runner) Start(stop <-chan struct{}) {
 
 				// Translate pending-auth, denylist, and quarantine into agent-side
 				// firewall types.  Pending-auth wgIPs are filtered the same way as
-				// the whitelist (endpoint match) so a stolen config can't hold a
-				// pending-auth grant either.
+				// the whitelist — IP-only match (NAT port rebinds OK, different
+				// IP rejected) so a stolen config from a different network can't
+				// hold a pending-auth grant either.
 				pendingWgIPs := make([]string, 0, len(payload.PendingAuth))
 				for _, e := range payload.PendingAuth {
 					if e.Endpoint != "" {
 						currentEP := r.getCurrentEndpointForWgIP(e.WgIP)
-						if currentEP == "" || currentEP != e.Endpoint {
+						if currentEP == "" {
+							continue
+						}
+						if extractEndpointIP(currentEP) != extractEndpointIP(e.Endpoint) {
 							continue
 						}
 					}

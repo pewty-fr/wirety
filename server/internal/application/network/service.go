@@ -1106,11 +1106,38 @@ func (s *Service) ListSessions(ctx context.Context, networkID string) ([]*networ
 // CreateCaptivePortalToken creates a short-lived token for the captive portal flow.
 // Called by the jump peer agent when a new peer connects and needs authentication.
 // peerEndpoint is the peer's current full public endpoint ("ip:port", strict);
-// it is stored in the token so that AddCaptivePortalWhitelist can bind the
-// whitelist entry to a specific source IP+port — any change (different network,
-// NAT port rebinding, tunnel restart) forces re-authentication.  May be empty
-// for legacy agents.
+// it is stored in the token so AddCaptivePortalWhitelist can record which source
+// IP authenticated.  May be empty for legacy agents.
+//
+// Before issuing the new token we mark any older outstanding (unconsumed,
+// non-expired) tokens for the SAME peer as consumed.  This prevents impatient
+// users from soft-locking themselves: every "Sign in" click previously created
+// another token, and any one that wasn't completed expired into a strike via
+// the cleanup sweep.  A user clicking sign-in three times before completing
+// OIDC would accumulate two strikes for nothing.  By invalidating older tokens
+// when a new one is issued, only the live token can ever expire-into-strike,
+// which matches the actual behavior we want to penalize ("user got the portal
+// page, walked away, never came back") and not retries.
 func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) (*network.CaptivePortalToken, error) {
+	// Invalidate any prior outstanding tokens for this peer.  Best-effort:
+	// failure here is logged but does not prevent the new token from being
+	// issued — the worst case is one extra strike the user might earn from a
+	// stale pending token.
+	if existing, err := s.repo.ListActiveCaptivePortalTokens(ctx, networkID, jumpPeerID); err == nil {
+		for _, t := range existing {
+			if t.PeerIP != peerIP {
+				continue
+			}
+			if err := s.repo.MarkCaptivePortalTokenConsumed(ctx, t.Token); err != nil {
+				log.Warn().
+					Err(err).
+					Str("token", t.Token).
+					Str("peer_ip", peerIP).
+					Msg("captive portal: failed to invalidate prior outstanding token before issuing new one")
+			}
+		}
+	}
+
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
@@ -1118,13 +1145,13 @@ func (s *Service) CreateCaptivePortalToken(ctx context.Context, networkID, jumpP
 
 	now := time.Now()
 	token := &network.CaptivePortalToken{
-		Token:          "cpt_" + base64.RawURLEncoding.EncodeToString(tokenBytes),
-		NetworkID:      networkID,
-		JumpPeerID:     jumpPeerID,
-		PeerIP:         peerIP,
+		Token:        "cpt_" + base64.RawURLEncoding.EncodeToString(tokenBytes),
+		NetworkID:    networkID,
+		JumpPeerID:   jumpPeerID,
+		PeerIP:       peerIP,
 		PeerEndpoint: peerEndpoint,
-		CreatedAt:      now,
-		ExpiresAt:      now.Add(10 * time.Minute),
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(10 * time.Minute),
 	}
 
 	if err := s.repo.CreateCaptivePortalToken(ctx, token); err != nil {
@@ -1586,11 +1613,21 @@ func (s *Service) CleanupExpiredEndpointDenylist(ctx context.Context) error {
 	return s.repo.CleanupExpiredEndpointDenylist(ctx)
 }
 
-// RevokePeerAuthentication forcibly removes a peer from the captive portal
-// whitelist across all jump peers in the network and clears any pending tokens
-// for that peer.  Used by the dashboard "revoke connection" button — the next
-// HTTP request from the peer will hit the captive portal and be redirected to
-// SSO.
+// RevokePeerAuthentication is the dashboard "Reset Auth" action.  It performs
+// a full reset of every captive-portal state piece for a peer:
+//
+//   1. Whitelist — removes all whitelist rows for the peer's WG IP across all
+//      jump peers.  Forces the peer to re-authenticate on its next request.
+//   2. Pending tokens — marks any unconsumed captive-portal tokens for the
+//      peer as consumed (so they won't expire-into-strikes via the cleanup
+//      sweep).
+//   3. Quarantine / strikes — clears the strike counter and any active
+//      quarantine.  An admin action is implicit trust: the peer should not
+//      inherit "guilt" from a previous bad-actor episode.
+//
+// After this returns, the peer is in the same state as a brand-new peer that
+// has never authenticated.  The next HTTP request hits the captive portal,
+// the peer goes through the OIDC flow, and accumulated history is gone.
 func (s *Service) RevokePeerAuthentication(ctx context.Context, networkID, peerID string) error {
 	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
 	if err != nil {
@@ -1600,14 +1637,47 @@ func (s *Service) RevokePeerAuthentication(ctx context.Context, networkID, peerI
 	if idx := strings.IndexByte(wgIP, '/'); idx != -1 {
 		wgIP = wgIP[:idx]
 	}
+
+	// 1. Whitelist — remove from all jump peers in this network.
 	if err := s.repo.RemoveCaptivePortalWhitelistByPeerIP(ctx, networkID, wgIP); err != nil {
 		return fmt.Errorf("remove whitelist: %w", err)
 	}
+
+	// 2. Pending tokens — invalidate so they can't expire-into-strikes.  We
+	// list ALL active tokens for ALL jump peers in this network and mark any
+	// belonging to this peer as consumed.  Failure here is logged but not
+	// fatal — the worst case is one strike's worth of stale tokens.
+	if peers, err := s.repo.ListPeers(ctx, networkID); err == nil {
+		for _, jp := range peers {
+			if !jp.IsJump {
+				continue
+			}
+			tokens, err := s.repo.ListActiveCaptivePortalTokens(ctx, networkID, jp.ID)
+			if err != nil {
+				continue
+			}
+			for _, t := range tokens {
+				if t.PeerIP != wgIP {
+					continue
+				}
+				if err := s.repo.MarkCaptivePortalTokenConsumed(ctx, t.Token); err != nil {
+					log.Warn().Err(err).Str("token", t.Token).Msg("reset auth: failed to invalidate pending token")
+				}
+			}
+		}
+	}
+
+	// 3. Quarantine / strikes — clear so the peer starts fresh.  Failure here
+	// is also non-fatal: worst case the peer keeps existing strikes.
+	if err := s.repo.ClearQuarantine(ctx, networkID, peerID); err != nil {
+		log.Warn().Err(err).Str("peer_id", peerID).Msg("reset auth: failed to clear quarantine")
+	}
+
 	log.Info().
 		Str("network_id", networkID).
 		Str("peer_id", peerID).
 		Str("wg_ip", wgIP).
-		Msg("captive portal: peer authentication revoked by admin")
+		Msg("captive portal: peer auth state reset by admin (whitelist + tokens + quarantine cleared)")
 	if s.wsNotifier != nil {
 		s.wsNotifier.NotifyNetworkPeers(networkID)
 	}

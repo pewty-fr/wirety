@@ -9,6 +9,29 @@ import type { Network, Route, DNSMapping } from '../../types';
 interface DNSRow extends DNSMapping {
   route_name?: string;
   route_destination_cidr?: string;
+  route_domain_suffix?: string;
+}
+
+// sanitizeDNSLabel mirrors server-side sanitizeDNSLabel:
+// lowercase + replace any non-alphanumeric / non-hyphen char with '-'.
+// Used so the FQDN we display in the UI matches exactly what the agent's
+// DNS server actually serves.
+function sanitizeDNSLabel(s: string): string {
+  if (!s) return 'peer';
+  const out = s
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-');
+  return out || 'peer';
+}
+
+// buildFQDN constructs the full DNS name a peer would query to resolve this
+// record: <name>.<route_name>.<route_domain_suffix or "internal">.
+function buildFQDN(row: DNSRow): string {
+  const label = sanitizeDNSLabel(row.name);
+  const route = sanitizeDNSLabel(row.route_name || '');
+  const suffix = (row.route_domain_suffix && row.route_domain_suffix.trim()) || 'internal';
+  if (!route) return `${label}.${suffix}`;
+  return `${label}.${route}.${suffix}`;
 }
 
 export default function DNSRecordsPage() {
@@ -63,6 +86,7 @@ export default function DNSRecordsPage() {
         ...m,
         route_name: routeById.get(m.route_id)?.name,
         route_destination_cidr: routeById.get(m.route_id)?.destination_cidr,
+        route_domain_suffix: routeById.get(m.route_id)?.domain_suffix,
       }));
       setRecords(allMappings);
     } finally {
@@ -106,7 +130,7 @@ export default function DNSRecordsPage() {
 
   const deleteRecord = async (row: DNSRow) => {
     if (!selectedNetworkId) return;
-    if (!window.confirm(`Delete DNS record "${row.name}" → ${row.ip_address}?`)) return;
+    if (!window.confirm(`Delete DNS record "${buildFQDN(row)}" → ${row.ip_address}?`)) return;
     try {
       await api.deleteDNSMapping(selectedNetworkId, row.route_id, row.id);
       await loadData(selectedNetworkId);
@@ -194,7 +218,7 @@ export default function DNSRecordsPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name (hostname)</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name (hostname label)</label>
                 <input
                   type="text"
                   value={newName}
@@ -202,6 +226,16 @@ export default function DNSRecordsPage() {
                   placeholder="e.g. nas"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
+                {newRouteId && newName.trim() && (() => {
+                  const route = routes.find(r => r.id === newRouteId);
+                  if (!route) return null;
+                  const fqdn = `${sanitizeDNSLabel(newName)}.${sanitizeDNSLabel(route.name)}.${(route.domain_suffix && route.domain_suffix.trim()) || 'internal'}`;
+                  return (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-1">
+                      → resolves as <span className="text-gray-700 dark:text-gray-200">{fqdn}</span>
+                    </div>
+                  );
+                })()}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">IP address</label>
@@ -259,19 +293,33 @@ export default function DNSRecordsPage() {
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {records.map(row => {
                   const editing = editingId === row.id;
+                  const fqdn = buildFQDN(row);
                   return (
                     <tr key={row.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                       <td className="px-6 py-4 whitespace-nowrap">
                         {editing ? (
-                          <input
-                            autoFocus
-                            type="text"
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            className="w-full px-2 py-1 border border-primary-500 rounded text-sm bg-white dark:bg-gray-800"
-                          />
+                          <div>
+                            <input
+                              autoFocus
+                              type="text"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              className="w-full px-2 py-1 border border-primary-500 rounded text-sm bg-white dark:bg-gray-800"
+                              placeholder="hostname label only"
+                            />
+                            <div className="text-xs text-gray-400 dark:text-gray-500 font-mono mt-1">
+                              FQDN: {sanitizeDNSLabel(editName || row.name)}.{sanitizeDNSLabel(row.route_name || '')}.{(row.route_domain_suffix && row.route_domain_suffix.trim()) || 'internal'}
+                            </div>
+                          </div>
                         ) : (
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{row.name}</span>
+                          <div>
+                            <div className="text-sm font-mono font-medium text-gray-900 dark:text-gray-100">{fqdn}</div>
+                            {row.name !== fqdn && (
+                              <div className="text-xs text-gray-400 dark:text-gray-500">
+                                label: {row.name}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">
