@@ -388,8 +388,21 @@ func (w *Writer) getCurrentPeerRoutes() (map[string]bool, error) {
 		return routes, fmt.Errorf("failed to get current peer allowed-ips: %w", err)
 	}
 
-	// Parse output to extract peer routes
-	// Format: <public_key>\t<allowed_ip1>,<allowed_ip2>,...
+	// Parse output to extract peer routes.
+	//
+	// Format reported by `wg show <iface> allowed-ips`:
+	//   <public_key>\t<allowed_ip1> <allowed_ip2> ...
+	//
+	// Note: this is **whitespace-separated**, NOT comma-separated.  An earlier
+	// version of this parser split on "," which produced a single garbled
+	// string like "10.0.0.5/32 fd00::5/128" for every dual-stack peer.  That
+	// string was then passed verbatim to `ip route add`, which rejected it,
+	// and the route was silently never installed.  The result was that any
+	// peer added AFTER the initial `wg-quick up` (which parses the config
+	// file, not `wg show`) had no kernel route — replies from the jump peer
+	// to that peer fell through to the default route and got lost upstream.
+	//
+	// Use strings.Fields() so any combination of tabs/spaces parses correctly.
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -397,17 +410,16 @@ func (w *Writer) getCurrentPeerRoutes() (map[string]bool, error) {
 			continue
 		}
 
-		parts := strings.Split(line, "\t")
-		if len(parts) != 2 {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
 			continue
 		}
-
-		allowedIPs := strings.Split(parts[1], ",")
-		for _, ip := range allowedIPs {
-			ip = strings.TrimSpace(ip)
-			if ip != "" {
-				routes[ip] = true
+		// fields[0] is the public key; fields[1:] are the allowed IPs.
+		for _, ip := range fields[1:] {
+			if ip == "" || ip == "(none)" {
+				continue
 			}
+			routes[ip] = true
 		}
 	}
 
@@ -447,45 +459,68 @@ func (w *Writer) updatePeerRoutes(oldRoutes map[string]bool) error {
 	return nil
 }
 
-// addRoute adds a route for a peer's allowed IP through the WireGuard interface
+// addRoute adds a route for a peer's allowed IP through the WireGuard interface.
+//
+// Uses `ip route` for IPv4 and `ip -6 route` for IPv6 (the kernel routing tables
+// are family-specific).  We capture stderr so the idempotency check works:
+// `cmd.Run()` returns `"exit status 2"` on failure, NOT the stderr text — so an
+// earlier version that did `strings.Contains(err.Error(), "File exists")` never
+// matched and produced a "failed to add route" warning on every sync once the
+// route was actually installed.
 func (w *Writer) addRoute(allowedIP string) error {
-	// Skip routes that are not single host routes (e.g., 0.0.0.0/0)
-	if strings.Contains(allowedIP, "/0") {
+	// Skip routes that are not single host routes (e.g., 0.0.0.0/0, ::/0)
+	if strings.HasSuffix(allowedIP, "/0") {
 		log.Debug().Str("allowed_ip", allowedIP).Msg("skipping default route")
 		return nil
 	}
 
-	// Add route: ip route add <allowed_ip> dev <interface>
-	cmd := exec.Command("ip", "route", "add", allowedIP, "dev", w.Interface) // #nosec G204 - parameters are controlled
+	args := []string{"route", "add", allowedIP, "dev", w.Interface}
+	if strings.Contains(allowedIP, ":") {
+		args = append([]string{"-6"}, args...) // IPv6
+	}
+
+	cmd := exec.Command("ip", args...) // #nosec G204 - parameters are controlled
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		// Check if route already exists (not an error)
-		if strings.Contains(err.Error(), "File exists") {
+		// "File exists" / "RTNETLINK answers: File exists" → already there, fine.
+		if strings.Contains(stderr.String(), "File exists") {
 			log.Debug().Str("route", allowedIP).Str("interface", w.Interface).Msg("route already exists")
 			return nil
 		}
-		return fmt.Errorf("failed to add route %s: %w", allowedIP, err)
+		return fmt.Errorf("failed to add route %s: %v stderr=%s", allowedIP, err, strings.TrimSpace(stderr.String()))
 	}
 
 	return nil
 }
 
-// removeRoute removes a route for a peer's allowed IP
+// removeRoute removes a route for a peer's allowed IP.  Same family-aware
+// dispatch and stderr-based idempotency check as addRoute.
 func (w *Writer) removeRoute(allowedIP string) error {
-	// Skip routes that are not single host routes (e.g., 0.0.0.0/0)
-	if strings.Contains(allowedIP, "/0") {
+	if strings.HasSuffix(allowedIP, "/0") {
 		log.Debug().Str("allowed_ip", allowedIP).Msg("skipping default route removal")
 		return nil
 	}
 
-	// Remove route: ip route del <allowed_ip> dev <interface>
-	cmd := exec.Command("ip", "route", "del", allowedIP, "dev", w.Interface) // #nosec G204 - parameters are controlled
+	args := []string{"route", "del", allowedIP, "dev", w.Interface}
+	if strings.Contains(allowedIP, ":") {
+		args = append([]string{"-6"}, args...) // IPv6
+	}
+
+	cmd := exec.Command("ip", args...) // #nosec G204 - parameters are controlled
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		// Check if route doesn't exist (not an error)
-		if strings.Contains(err.Error(), "No such process") || strings.Contains(err.Error(), "not found") {
+		s := stderr.String()
+		// "No such process" / "RTNETLINK answers: No such file or directory"
+		// / "not found" → already gone, fine.
+		if strings.Contains(s, "No such process") ||
+			strings.Contains(s, "No such file or directory") ||
+			strings.Contains(s, "not found") {
 			log.Debug().Str("route", allowedIP).Str("interface", w.Interface).Msg("route does not exist")
 			return nil
 		}
-		return fmt.Errorf("failed to remove route %s: %w", allowedIP, err)
+		return fmt.Errorf("failed to remove route %s: %v stderr=%s", allowedIP, err, strings.TrimSpace(s))
 	}
 
 	return nil

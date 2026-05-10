@@ -9,11 +9,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// IPAMAllocation represents an IP allocation with network and peer information
+// IPAMAllocation represents an IP allocation with network and peer information.
+// For dual-stack networks each peer produces TWO allocations — one IPv4, one
+// IPv6 — both pointing at the same peer.  The Family field discriminates them
+// so the UI can group / filter / colour-code per family.
 type IPAMAllocation struct {
 	NetworkID   string `json:"network_id"`
 	NetworkName string `json:"network_name"`
 	NetworkCIDR string `json:"network_cidr"`
+	Family      string `json:"family"` // "ipv4" or "ipv6"
 	IP          string `json:"ip"`
 	PeerID      string `json:"peer_id,omitempty"`
 	PeerName    string `json:"peer_name,omitempty"`
@@ -122,25 +126,39 @@ func (h *Handler) ListIPAMAllocations(c *gin.Context) {
 				continue
 			}
 
-			allocation := IPAMAllocation{
-				NetworkID:   net.ID,
-				NetworkName: net.Name,
-				NetworkCIDR: net.CIDR,
-				IP:          peer.Address,
-				PeerID:      peer.ID,
-				PeerName:    peer.Name,
-				Allocated:   true,
-			}
-
-			if filter != "" {
-				if !contains(allocation.NetworkName, filter) &&
-					!contains(allocation.IP, filter) &&
-					!contains(allocation.PeerName, filter) {
-					continue
+			// Emit one allocation per family the peer has assigned.  Networks
+			// configured for dual-stack produce two rows per peer; IPv4-only
+			// or IPv6-only peers produce one.
+			if peer.Address != "" {
+				a := IPAMAllocation{
+					NetworkID:   net.ID,
+					NetworkName: net.Name,
+					NetworkCIDR: net.CIDR,
+					Family:      "ipv4",
+					IP:          peer.Address,
+					PeerID:      peer.ID,
+					PeerName:    peer.Name,
+					Allocated:   true,
+				}
+				if filter == "" || contains(a.NetworkName, filter) || contains(a.IP, filter) || contains(a.PeerName, filter) {
+					allAllocations = append(allAllocations, a)
 				}
 			}
-
-			allAllocations = append(allAllocations, allocation)
+			if peer.AddressV6 != "" {
+				a := IPAMAllocation{
+					NetworkID:   net.ID,
+					NetworkName: net.Name,
+					NetworkCIDR: net.CIDRv6,
+					Family:      "ipv6",
+					IP:          peer.AddressV6,
+					PeerID:      peer.ID,
+					PeerName:    peer.Name,
+					Allocated:   true,
+				}
+				if filter == "" || contains(a.NetworkName, filter) || contains(a.IP, filter) || contains(a.PeerName, filter) {
+					allAllocations = append(allAllocations, a)
+				}
+			}
 		}
 	}
 
@@ -191,15 +209,30 @@ func (h *Handler) GetNetworkIPAM(c *gin.Context) {
 
 	var allocations []IPAMAllocation
 	for _, peer := range peers {
-		allocations = append(allocations, IPAMAllocation{
-			NetworkID:   net.ID,
-			NetworkName: net.Name,
-			NetworkCIDR: net.CIDR,
-			IP:          peer.Address,
-			PeerID:      peer.ID,
-			PeerName:    peer.Name,
-			Allocated:   true,
-		})
+		if peer.Address != "" {
+			allocations = append(allocations, IPAMAllocation{
+				NetworkID:   net.ID,
+				NetworkName: net.Name,
+				NetworkCIDR: net.CIDR,
+				Family:      "ipv4",
+				IP:          peer.Address,
+				PeerID:      peer.ID,
+				PeerName:    peer.Name,
+				Allocated:   true,
+			})
+		}
+		if peer.AddressV6 != "" {
+			allocations = append(allocations, IPAMAllocation{
+				NetworkID:   net.ID,
+				NetworkName: net.Name,
+				NetworkCIDR: net.CIDRv6,
+				Family:      "ipv6",
+				IP:          peer.AddressV6,
+				PeerID:      peer.ID,
+				PeerName:    peer.Name,
+				Allocated:   true,
+			})
+		}
 	}
 
 	c.JSON(http.StatusOK, allocations)

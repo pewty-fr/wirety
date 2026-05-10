@@ -169,7 +169,6 @@ export default function PoliciesPage() {
                   )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Rules</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Created</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
@@ -198,9 +197,6 @@ export default function PoliciesPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                       {policy.rules?.length || 0}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                      {new Date(policy.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex items-center gap-2">
@@ -331,16 +327,23 @@ function PolicyModal({
   };
 
   const loadAttachments = async () => {
-    if (!policy || !selectedNetworkId) return;
+    if (!policy) return;
+    // Prefer the policy's own network_id over selectedNetworkId — the latter
+    // is set via setSelectedNetworkId(...) in a sibling useEffect that hasn't
+    // necessarily flushed by the time this function runs (queued state update),
+    // so reading selectedNetworkId here would see the stale empty value and
+    // bail out, leaving attachedGroups always empty.
+    const networkIdToUse = policy.network_id || selectedNetworkId;
+    if (!networkIdToUse) return;
 
     try {
       // Load all groups in the network
-      const allGroups = await api.getGroups(selectedNetworkId);
-      
+      const allGroups = await api.getGroups(networkIdToUse);
+
       // Filter groups that have this policy attached
       const groupsWithPolicy = allGroups.filter(g => g.policy_ids?.includes(policy.id));
       setAttachedGroups(groupsWithPolicy);
-      
+
       // Available groups are those without this policy
       const groupsWithoutPolicy = allGroups.filter(g => !g.policy_ids?.includes(policy.id));
       setAvailableGroups(groupsWithoutPolicy);
@@ -1059,11 +1062,30 @@ function AddRuleModal({
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 >
                   <option value="">Select a route...</option>
-                  {routes.map((route) => (
-                    <option key={route.id} value={route.destination_cidr}>
-                      {route.name} ({route.destination_cidr})
-                    </option>
-                  ))}
+                  {/* Each route's target_type:cidr policy entry binds to a
+                      specific CIDR.  Dual-stack routes have BOTH IPv4 and
+                      IPv6 destination CIDRs, so we surface each family as
+                      a separate option — the admin picks the family they
+                      want this rule to act on (or adds two rules for full
+                      coverage). */}
+                  {routes.flatMap((route) => {
+                    const opts = [];
+                    if (route.destination_cidr) {
+                      opts.push(
+                        <option key={route.id + ':v4'} value={route.destination_cidr}>
+                          {route.name} (IPv4 {route.destination_cidr})
+                        </option>
+                      );
+                    }
+                    if (route.destination_cidr_v6) {
+                      opts.push(
+                        <option key={route.id + ':v6'} value={route.destination_cidr_v6}>
+                          {route.name} (IPv6 {route.destination_cidr_v6})
+                        </option>
+                      );
+                    }
+                    return opts;
+                  })}
                 </select>
               ) : targetType === 'network' ? (
                 <input

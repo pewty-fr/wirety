@@ -43,9 +43,13 @@ func (h *Handler) CreatePeer(c *gin.Context) {
 		return
 	}
 
-	ownerID := ""
+	var ownerID string
 	if user != nil && !user.IsAdministrator() {
+		// Non-admins always own their own peers; they cannot set arbitrary owners.
 		ownerID = user.ID
+	} else {
+		// Admins may assign any owner (or none) via owner_id in the request body.
+		ownerID = req.OwnerID
 	}
 
 	peer, err := h.service.AddPeer(c.Request.Context(), networkID, &req, ownerID)
@@ -276,6 +280,50 @@ func (h *Handler) DeletePeer(c *gin.Context) {
 	id, email := actor(c)
 	audit.Server(id, email, c.ClientIP()).
 		Str("action", "peer.delete").
+		Str("network_id", networkID).
+		Str("peer_id", peerID).
+		Msg("audit")
+
+	c.Status(http.StatusNoContent)
+}
+
+// RevokePeerAuthentication godoc
+//
+//	@Summary		Revoke a peer's captive-portal authentication
+//	@Description	Removes the peer from the captive-portal whitelist across all jump peers in the network. The next request from the peer will hit the captive portal and be redirected to SSO. Useful when a peer's session is suspected of being shared/stolen, or when rotating credentials.
+//	@Tags			peers
+//	@Param			networkId	path	string	true	"Network ID"
+//	@Param			peerId		path	string	true	"Peer ID"
+//	@Success		204
+//	@Failure		403	{object}	map[string]string
+//	@Failure		404	{object}	map[string]string
+//	@Router			/networks/{networkId}/peers/{peerId}/revoke-auth [post]
+//	@Security		BearerAuth
+func (h *Handler) RevokePeerAuthentication(c *gin.Context) {
+	networkID := c.Param("networkId")
+	peerID := c.Param("peerId")
+	user := middleware.GetUserFromContext(c)
+
+	peer, err := h.service.GetPeer(c.Request.Context(), networkID, peerID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "peer not found"})
+		return
+	}
+
+	// Same authorisation as peer management: the peer's owner OR an admin.
+	if user != nil && !user.CanManagePeer(networkID, peer.OwnerID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you can only manage your own peers"})
+		return
+	}
+
+	if err := h.service.RevokePeerAuthentication(c.Request.Context(), networkID, peerID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	id, email := actor(c)
+	audit.Server(id, email, c.ClientIP()).
+		Str("action", "peer.revoke_auth").
 		Str("network_id", networkID).
 		Str("peer_id", peerID).
 		Msg("audit")

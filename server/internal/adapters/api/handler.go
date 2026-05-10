@@ -83,12 +83,15 @@ type RouteService interface {
 	GetPeerRoutes(ctx context.Context, networkID, peerID string) ([]*domain.Route, error)
 }
 
-// DNSRecord represents a combined DNS record (peer or route-based)
+// DNSRecord represents a combined DNS record (peer or route-based).
+// Dual-stack: IPAddress (IPv4) and IPv6Address are independent — at least one
+// is always populated.  See application/dns/service.go::DNSRecord for details.
 type DNSRecord struct {
-	Name      string `json:"name"`
-	IPAddress string `json:"ip_address"`
-	FQDN      string `json:"fqdn"`
-	Type      string `json:"type"` // "peer" or "route"
+	Name        string `json:"name"`
+	IPAddress   string `json:"ip_address,omitempty"`
+	IPv6Address string `json:"ip_address_v6,omitempty"`
+	FQDN        string `json:"fqdn"`
+	Type        string `json:"type"` // "peer" or "route"
 }
 
 // DNSService defines the interface for DNS mapping operations
@@ -142,6 +145,15 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 		// authenticate is unauthenticated (uses captive_token + session_hash).
 		api.POST("/captive-portal/token", h.CreateCaptivePortalToken)
 		api.POST("/captive-portal/authenticate", h.AuthenticateCaptivePortal)
+		// /start is the browser-binding bouncer that the agent's redirect
+		// targets — sets the cp_state cookie and 302s to /captive-portal.
+		// Public: it must be reachable WITHOUT a session cookie, since the
+		// user might not be logged in yet when they first hit the redirect.
+		api.GET("/captive-portal/start", h.CaptivePortalStart)
+		// /preview returns peer details for the captive portal page to show
+		// before the user clicks Continue — phishing defense via user
+		// verification of the device + endpoint that's about to get whitelisted.
+		api.GET("/captive-portal/preview", h.CaptivePortalPreview)
 	}
 
 	// Protected routes (auth required)
@@ -192,6 +204,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 					peers.GET("/:peerId/config", h.GetPeerConfig)
 					peers.GET("/:peerId/session", h.GetPeerConnectivityStatus)
 					peers.GET("/:peerId/reachability", h.GetPeerReachability)
+					peers.POST("/:peerId/revoke-auth", h.RevokePeerAuthentication)
 				}
 
 				networkOps.GET("/sessions", h.ListNetworkSessions)

@@ -187,9 +187,10 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	}
 
 	if oidcTokenResp.RefreshToken == "" {
-		// Some providers (e.g. Slack) do not issue refresh tokens.
-		// Wirety will keep the session alive until the access token expires,
-		// at which point the user will be prompted to log in again.
+		// No refresh token: session will not auto-renew once the id_token expires.
+		// Note: providers like Slack DO issue refresh tokens when token rotation is
+		// enabled in the app settings (xoxe-1-... format). If you get logged out
+		// frequently, enable token rotation in your Slack app configuration.
 		log.Debug().Msg("ExchangeToken: no refresh token received; session will not auto-renew")
 	}
 
@@ -303,10 +304,17 @@ func (h *Handler) createSession(userID, accessToken, refreshToken string, expire
 	sessionHash := hex.EncodeToString(hash[:])
 
 	var accessTokenExpiresAt time.Time
-	if expiresIn > 0 {
+	if exp, ok := h.authService.ParseTokenExpiry(accessToken); ok {
+		// Prefer the JWT's own exp claim. Some providers (e.g. Slack) return
+		// expires_in for the OAuth access token, which can be much longer than
+		// the id_token JWT's actual lifetime. Using exp prevents the mismatch
+		// that causes every JWT validation to fail between token_expires_at (DB)
+		// and the real JWT exp, which in turn triggers a refresh race on every request.
+		accessTokenExpiresAt = exp
+	} else if expiresIn > 0 {
 		accessTokenExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
 	} else {
-		// Simple auth: access token never expires (no OIDC token to refresh)
+		// Simple auth / GitHub: access token never expires (no OIDC token to refresh)
 		accessTokenExpiresAt = time.Now().Add(100 * 365 * 24 * time.Hour)
 	}
 

@@ -66,15 +66,16 @@ func (s *Service) CreateRoute(ctx context.Context, networkID string, req *networ
 	}
 
 	route := &network.Route{
-		ID:              uuid.New().String(),
-		NetworkID:       networkID,
-		Name:            req.Name,
-		Description:     req.Description,
-		DestinationCIDR: req.DestinationCIDR,
-		JumpPeerID:      req.JumpPeerID,
-		DomainSuffix:    domainSuffix,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:                uuid.New().String(),
+		NetworkID:         networkID,
+		Name:              req.Name,
+		Description:       req.Description,
+		DestinationCIDR:   req.DestinationCIDR,
+		DestinationCIDRv6: req.DestinationCIDRv6,
+		JumpPeerID:        req.JumpPeerID,
+		DomainSuffix:      domainSuffix,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 
 	if err := s.routeRepo.CreateRoute(ctx, networkID, route); err != nil {
@@ -115,6 +116,15 @@ func (s *Service) UpdateRoute(ctx context.Context, networkID, routeID string, re
 	}
 	if req.DestinationCIDR != "" {
 		route.DestinationCIDR = req.DestinationCIDR
+	}
+	if req.DestinationCIDRv6 != "" {
+		route.DestinationCIDRv6 = req.DestinationCIDRv6
+	}
+	// Post-merge invariant: at least one family must remain set.  Without
+	// this check a user could clear-then-update down to "no destination" if
+	// the field-level Validate didn't see both being clear at request time.
+	if route.DestinationCIDR == "" && route.DestinationCIDRv6 == "" {
+		return nil, fmt.Errorf("validation failed: at least one of destination_cidr or destination_cidr_v6 must remain set")
 	}
 	if req.JumpPeerID != "" {
 		// Verify new jump peer exists and is a jump peer

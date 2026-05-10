@@ -5,6 +5,14 @@ import type { Network, Peer, IPAMAllocation, User, PaginatedResponse, PeerConnec
 class ApiClient {
   private client: AxiosInstance;
 
+  // Singleton promise for the session-verify call.
+  // When multiple concurrent requests all receive a 401 at the same time (e.g.
+  // after an OIDC token refresh), they must NOT each independently fire a
+  // /users/me verify request — that creates a "thundering herd" that floods the
+  // server.  Instead they all await the same promise; whichever goroutine settles
+  // first determines whether everyone retries or redirects to login.
+  private sessionVerifyPromise: Promise<boolean> | null = null;
+
   constructor() {
     const apiBaseUrl = '/api/v1';
     this.client = axios.create({
@@ -36,9 +44,17 @@ class ApiClient {
           }
 
           try {
-            // Use native fetch to bypass this Axios interceptor
-            const verifyResp = await fetch('/api/v1/users/me', { credentials: 'include' });
-            if (verifyResp.ok) {
+            // Deduplicate concurrent session-verify calls: if one is already in
+            // flight, all concurrent 401s share that single promise rather than
+            // each firing their own /users/me request (thundering herd).
+            if (!this.sessionVerifyPromise) {
+              this.sessionVerifyPromise = fetch('/api/v1/users/me', { credentials: 'include' })
+                .then(r => r.ok)
+                .catch(() => false)
+                .finally(() => { this.sessionVerifyPromise = null; });
+            }
+            const sessionOk = await this.sessionVerifyPromise;
+            if (sessionOk) {
               // Session is valid (server refreshed the token) — retry original request once
               error.config._retry = true;
               return this.client.request(error.config);
@@ -67,12 +83,12 @@ class ApiClient {
     return response.data;
   }
 
-  async createNetwork(data: { name: string; cidr: string; dns?: string[]; domain_suffix?: string; default_group_ids?: string[] }): Promise<Network> {
+  async createNetwork(data: { name: string; cidr?: string; cidr_v6?: string; dns?: string[]; domain_suffix?: string; default_group_ids?: string[] }): Promise<Network> {
     const response = await this.client.post('/networks', data);
     return response.data;
   }
 
-  async updateNetwork(id: string, data: { name?: string; cidr?: string; dns?: string[]; domain_suffix?: string; default_group_ids?: string[] }): Promise<Network> {
+  async updateNetwork(id: string, data: { name?: string; cidr?: string; cidr_v6?: string; dns?: string[]; domain_suffix?: string; default_group_ids?: string[] }): Promise<Network> {
     const response = await this.client.put(`/networks/${id}`, data);
     return response.data;
   }
@@ -157,6 +173,7 @@ class ApiClient {
     listen_port?: number;
     is_jump: boolean;
     use_agent: boolean;
+    owner_id?: string;
     additional_allowed_ips?: string[];
   }): Promise<Peer> {
     const response = await this.client.post(`/networks/${networkId}/peers`, data);
@@ -167,6 +184,7 @@ class ApiClient {
     name?: string;
     endpoint?: string;
     listen_port?: number;
+    owner_id?: string;
     additional_allowed_ips?: string[];
   }): Promise<Peer> {
     const response = await this.client.put(`/networks/${networkId}/peers/${peerId}`, data);
@@ -175,6 +193,15 @@ class ApiClient {
 
   async deletePeer(networkId: string, peerId: string): Promise<void> {
     await this.client.delete(`/networks/${networkId}/peers/${peerId}`);
+  }
+
+  /**
+   * Revokes a peer's captive-portal authentication.  The peer remains in the
+   * network — only its authenticated session is cleared.  The next request
+   * from the peer will hit the captive portal and be redirected to SSO.
+   */
+  async revokePeerAuthentication(networkId: string, peerId: string): Promise<void> {
+    await this.client.post(`/networks/${networkId}/peers/${peerId}/revoke-auth`);
   }
 
   async getPeerReachability(networkId: string, peerId: string): Promise<PeerReachability> {
@@ -465,7 +492,10 @@ class ApiClient {
   async createRoute(networkId: string, data: {
     name: string;
     description?: string;
-    destination_cidr: string;
+    /** IPv4 destination CIDR (optional if destination_cidr_v6 is set) */
+    destination_cidr?: string;
+    /** IPv6 destination CIDR (optional if destination_cidr is set).  At least one is required. */
+    destination_cidr_v6?: string;
     jump_peer_id: string;
     domain_suffix?: string;
   }): Promise<Route> {
@@ -477,6 +507,7 @@ class ApiClient {
     name?: string;
     description?: string;
     destination_cidr?: string;
+    destination_cidr_v6?: string;
     jump_peer_id?: string;
     domain_suffix?: string;
   }): Promise<Route> {
@@ -496,7 +527,10 @@ class ApiClient {
 
   async createDNSMapping(networkId: string, routeId: string, data: {
     name: string;
-    ip_address: string;
+    /** IPv4 address (optional if ip_address_v6 is set) */
+    ip_address?: string;
+    /** IPv6 address (optional if ip_address is set).  At least one is required. */
+    ip_address_v6?: string;
   }): Promise<DNSMapping> {
     const response = await this.client.post(`/networks/${networkId}/routes/${routeId}/dns`, data);
     return response.data;
@@ -505,6 +539,7 @@ class ApiClient {
   async updateDNSMapping(networkId: string, routeId: string, dnsId: string, data: {
     name?: string;
     ip_address?: string;
+    ip_address_v6?: string;
   }): Promise<DNSMapping> {
     const response = await this.client.put(`/networks/${networkId}/routes/${routeId}/dns/${dnsId}`, data);
     return response.data;

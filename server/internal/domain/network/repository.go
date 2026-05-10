@@ -59,4 +59,46 @@ type Repository interface {
 	GetCaptivePortalToken(ctx context.Context, token string) (*CaptivePortalToken, error)
 	DeleteCaptivePortalToken(ctx context.Context, token string) error
 	CleanupExpiredCaptivePortalTokens(ctx context.Context) error
+
+	// ListActiveCaptivePortalTokens returns all unexpired tokens for a jump peer.
+	// Used to populate the "pending auth" tier of the firewall: peers that have
+	// been issued a token but have not yet completed SSO get a temporary HTTPS
+	// allow rule for the OIDC redirect to work.
+	ListActiveCaptivePortalTokens(ctx context.Context, networkID, jumpPeerID string) ([]*CaptivePortalToken, error)
+
+	// MarkCaptivePortalTokenConsumed records the successful conversion of a token
+	// into a whitelist entry.  Used by the strike-tracking cleanup loop to
+	// distinguish "token expired with success" from "token expired without auth".
+	MarkCaptivePortalTokenConsumed(ctx context.Context, token string) error
+
+	// SetCaptivePortalTokenConsumeState writes the per-token consume_state used
+	// for browser-binding (phishing defense — see migration 026).  Called by the
+	// /captive-portal/start bouncer when it sets the cp_state cookie.  Returns
+	// an error if the token doesn't exist or has already expired.
+	SetCaptivePortalTokenConsumeState(ctx context.Context, token, state string) error
+
+	// ListExpiredUnconsumedCaptivePortalTokens returns tokens that have expired
+	// without ever being consumed (no successful auth).  The cleanup loop reads
+	// this, records a strike per peer, and then deletes them.  Order is undefined.
+	ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*CaptivePortalToken, error)
+
+	// Captive portal endpoint denylist (per-peer rogue source blocking).
+	AddEndpointDenylist(ctx context.Context, entry *EndpointDenylistEntry) error
+	GetEndpointDenylist(ctx context.Context, networkID, jumpPeerID string) ([]*EndpointDenylistEntry, error)
+	ClearEndpointDenylistForPeer(ctx context.Context, networkID, wgIP string) error
+	CleanupExpiredEndpointDenylist(ctx context.Context) error
+
+	// Captive portal quarantine (per-peer auth-failure tracking).
+	GetQuarantine(ctx context.Context, networkID, peerID string) (*CaptivePortalQuarantine, error)
+	UpsertQuarantine(ctx context.Context, q *CaptivePortalQuarantine) error
+	ListQuarantinedPeers(ctx context.Context, networkID string) ([]*CaptivePortalQuarantine, error)
+	ClearQuarantine(ctx context.Context, networkID, peerID string) error
+
+	// Per-peer local routes (the peer's own AllowedIPs, reported via heartbeat).
+	// Used by the jump peer's DNS server to decide whether to redirect external
+	// queries for unauthenticated peers (full-tunnel) or leave them alone
+	// (split-tunnel).
+	UpsertPeerLocalRoutes(ctx context.Context, networkID, peerID string, allowedIPs []string) error
+	GetPeerLocalRoutes(ctx context.Context, networkID, peerID string) ([]string, error)
+	ListPeerLocalRoutes(ctx context.Context, networkID string) (map[string][]string, error) // peerID -> CIDRs
 }

@@ -15,12 +15,18 @@ type WebSocketNotifier interface {
 	NotifyNetworkPeers(networkID string)
 }
 
-// DNSRecord represents a combined DNS record (peer or route-based)
+// DNSRecord represents a combined DNS record (peer or route-based).
+//
+// Dual-stack: a single record can carry both an IPv4 (IPAddress) and an IPv6
+// (IPv6Address) value.  At least one is always non-empty.  For peer records
+// IPv4 = peer.Address, IPv6 = peer.AddressV6.  For route-based records both
+// fields come from the underlying DNSMapping (since migration 027).
 type DNSRecord struct {
-	Name      string `json:"name"`
-	IPAddress string `json:"ip_address"`
-	FQDN      string `json:"fqdn"`
-	Type      string `json:"type"` // "peer" or "route"
+	Name        string `json:"name"`
+	IPAddress   string `json:"ip_address,omitempty"`
+	IPv6Address string `json:"ip_address_v6,omitempty"`
+	FQDN        string `json:"fqdn"`
+	Type        string `json:"type"` // "peer" or "route"
 }
 
 // Service implements the business logic for DNS mapping management
@@ -45,7 +51,10 @@ func (s *Service) SetWebSocketNotifier(notifier WebSocketNotifier) {
 	s.wsNotifier = notifier
 }
 
-// CreateDNSMapping creates a new DNS mapping with IP validation within route CIDR
+// CreateDNSMapping creates a new DNS mapping with IP validation within route CIDR.
+// Dual-stack: each address is validated against the SAME-FAMILY CIDR on the
+// route.  Submitting an IPv6 address on a route that has no IPv6 destination
+// CIDR is a hard reject — there's no way that address could ever be reached.
 func (s *Service) CreateDNSMapping(ctx context.Context, networkID, routeID string, req *network.DNSMappingCreateRequest) (*network.DNSMapping, error) {
 	// Validate request
 	if err := req.Validate(); err != nil {
@@ -58,19 +67,32 @@ func (s *Service) CreateDNSMapping(ctx context.Context, networkID, routeID strin
 		return nil, fmt.Errorf("route not found: %w", err)
 	}
 
-	// Validate IP is within route's CIDR
-	if err := network.ValidateIPInCIDR(req.IPAddress, route.DestinationCIDR); err != nil {
-		return nil, fmt.Errorf("IP validation failed: %w", err)
+	if req.IPAddress != "" {
+		if route.DestinationCIDR == "" {
+			return nil, fmt.Errorf("ip_address: route has no IPv4 destination CIDR")
+		}
+		if err := network.ValidateIPInCIDR(req.IPAddress, route.DestinationCIDR); err != nil {
+			return nil, fmt.Errorf("ip_address validation failed: %w", err)
+		}
+	}
+	if req.IPv6Address != "" {
+		if route.DestinationCIDRv6 == "" {
+			return nil, fmt.Errorf("ip_address_v6: route has no IPv6 destination CIDR")
+		}
+		if err := network.ValidateIPInCIDR(req.IPv6Address, route.DestinationCIDRv6); err != nil {
+			return nil, fmt.Errorf("ip_address_v6 validation failed: %w", err)
+		}
 	}
 
 	now := time.Now()
 	mapping := &network.DNSMapping{
-		ID:        uuid.New().String(),
-		RouteID:   routeID,
-		Name:      req.Name,
-		IPAddress: req.IPAddress,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          uuid.New().String(),
+		RouteID:     routeID,
+		Name:        req.Name,
+		IPAddress:   req.IPAddress,
+		IPv6Address: req.IPv6Address,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	if err := s.dnsRepo.CreateDNSMapping(ctx, routeID, mapping); err != nil {
@@ -118,11 +140,26 @@ func (s *Service) UpdateDNSMapping(ctx context.Context, networkID, routeID, mapp
 		mapping.Name = req.Name
 	}
 	if req.IPAddress != "" {
-		// Validate new IP is within route's CIDR
+		if route.DestinationCIDR == "" {
+			return nil, fmt.Errorf("ip_address: route has no IPv4 destination CIDR")
+		}
 		if err := network.ValidateIPInCIDR(req.IPAddress, route.DestinationCIDR); err != nil {
-			return nil, fmt.Errorf("IP validation failed: %w", err)
+			return nil, fmt.Errorf("ip_address validation failed: %w", err)
 		}
 		mapping.IPAddress = req.IPAddress
+	}
+	if req.IPv6Address != "" {
+		if route.DestinationCIDRv6 == "" {
+			return nil, fmt.Errorf("ip_address_v6: route has no IPv6 destination CIDR")
+		}
+		if err := network.ValidateIPInCIDR(req.IPv6Address, route.DestinationCIDRv6); err != nil {
+			return nil, fmt.Errorf("ip_address_v6 validation failed: %w", err)
+		}
+		mapping.IPv6Address = req.IPv6Address
+	}
+	// Post-merge invariant: at least one family must remain set.
+	if mapping.IPAddress == "" && mapping.IPv6Address == "" {
+		return nil, fmt.Errorf("validation failed: at least one of ip_address or ip_address_v6 must remain set")
 	}
 	mapping.UpdatedAt = time.Now()
 
@@ -204,10 +241,11 @@ func (s *Service) GetNetworkDNSRecords(ctx context.Context, networkID string) ([
 	for _, peer := range peers {
 		fqdn := fmt.Sprintf("%s.%s.%s", peer.Name, net.Name, domainSuffix)
 		records = append(records, DNSRecord{
-			Name:      peer.Name,
-			IPAddress: peer.Address,
-			FQDN:      fqdn,
-			Type:      "peer",
+			Name:        peer.Name,
+			IPAddress:   peer.Address,
+			IPv6Address: peer.AddressV6,
+			FQDN:        fqdn,
+			Type:        "peer",
 		})
 	}
 
@@ -227,10 +265,11 @@ func (s *Service) GetNetworkDNSRecords(ctx context.Context, networkID string) ([
 
 		fqdn := mapping.GetFQDN(route)
 		records = append(records, DNSRecord{
-			Name:      mapping.Name,
-			IPAddress: mapping.IPAddress,
-			FQDN:      fqdn,
-			Type:      "route",
+			Name:        mapping.Name,
+			IPAddress:   mapping.IPAddress,
+			IPv6Address: mapping.IPv6Address,
+			FQDN:        fqdn,
+			Type:        "route",
 		})
 	}
 

@@ -666,6 +666,25 @@ Computes which peers, policy rules, and external routes are reachable from a giv
 | `blocked` | Peer is in the blocked list |
 | `default_allow` | No rule matched — default is allow |
 
+### Revoke Captive-Portal Authentication
+
+**`POST /networks/:networkId/peers/:peerId/revoke-auth`**
+
+Removes the peer from the captive-portal whitelist across all jump peers in the network. The peer record itself is unchanged — only the authenticated session state is cleared. The next request from the peer will hit the captive portal and SSO is required to regain access.
+
+Authorisation: same as peer management — the peer's owner OR an administrator.
+
+Use cases:
+- A peer's WireGuard config is suspected of being shared or stolen.
+- Forcing a session to refresh after group/policy changes.
+- Rotating credentials.
+
+**Response `204`** — no content.
+
+**Response `403`** — caller is neither the peer's owner nor an administrator.
+
+**Response `404`** — peer not found.
+
 ---
 
 ## Groups

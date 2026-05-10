@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Modal from './Modal';
 import api from '../api/client';
 import type { Network } from '../types';
-import { isValidCIDR, getCIDRError } from '../utils/validation';
+import { isValidCIDR, getCIDRError, suggestIPv6ULACIDRs } from '../utils/validation';
 
 interface NetworkModalProps {
   isOpen: boolean;
@@ -15,6 +15,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
   const [formData, setFormData] = useState({
     name: '',
     cidr: '',
+    cidr_v6: '',
     dns: [] as string[],
     domain_suffix: 'internal',
     default_group_ids: [] as string[],
@@ -23,10 +24,13 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cidrError, setCidrError] = useState<string | null>(null);
+  const [cidrV6Error, setCidrV6Error] = useState<string | null>(null);
   const [maxPeers, setMaxPeers] = useState<number>(100);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [ipv6Suggestions, setIpv6Suggestions] = useState<string[]>([]);
+  const [showIpv6Suggestions, setShowIpv6Suggestions] = useState(false);
 
   const isEditMode = !!network;
 
@@ -35,6 +39,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
       setFormData({
         name: network.name,
         cidr: network.cidr,
+        cidr_v6: network.cidr_v6 || '',
         dns: network.dns,
         domain_suffix: network.domain_suffix || 'internal',
         default_group_ids: network.default_group_ids || [],
@@ -43,6 +48,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
       setFormData({
         name: '',
         cidr: '',
+        cidr_v6: '',
         dns: [],
         domain_suffix: 'internal',
         default_group_ids: [],
@@ -50,9 +56,17 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
     }
     setError(null);
     setCidrError(null);
+    setCidrV6Error(null);
     setSuggestions([]);
     setShowSuggestions(false);
+    setIpv6Suggestions([]);
+    setShowIpv6Suggestions(false);
   }, [network, isOpen]);
+
+  const generateIPv6Suggestions = () => {
+    setIpv6Suggestions(suggestIPv6ULACIDRs(5));
+    setShowIpv6Suggestions(true);
+  };
 
   const fetchSuggestions = async () => {
     setLoadingSuggestions(true);
@@ -72,20 +86,41 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
     setLoading(true);
     setError(null);
 
-    // Validate CIDR
-    if (!isValidCIDR(formData.cidr)) {
-      const error = getCIDRError(formData.cidr);
-      setCidrError(error || 'Invalid CIDR format');
+    // At least one of cidr or cidr_v6 is required
+    if (!formData.cidr && !formData.cidr_v6) {
+      setCidrError('At least one of IPv4 CIDR or IPv6 CIDR is required');
       setLoading(false);
       return;
     }
+
+    // Validate IPv4 CIDR if provided
+    if (formData.cidr) {
+      if (!isValidCIDR(formData.cidr)) {
+        const err = getCIDRError(formData.cidr);
+        setCidrError(err || 'Invalid CIDR format');
+        setLoading(false);
+        return;
+      }
+    }
     setCidrError(null);
+
+    // Validate IPv6 CIDR if provided
+    if (formData.cidr_v6) {
+      if (!isValidCIDR(formData.cidr_v6)) {
+        const err = getCIDRError(formData.cidr_v6);
+        setCidrV6Error(err || 'Invalid IPv6 CIDR format');
+        setLoading(false);
+        return;
+      }
+    }
+    setCidrV6Error(null);
 
     try {
       if (isEditMode && network) {
         await api.updateNetwork(network.id, {
           name: formData.name,
-          cidr: formData.cidr,
+          cidr: formData.cidr || undefined,
+          cidr_v6: formData.cidr_v6 || undefined,
           dns: formData.dns,
           domain_suffix: formData.domain_suffix,
           default_group_ids: formData.default_group_ids,
@@ -93,7 +128,8 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
       } else {
         await api.createNetwork({
           name: formData.name,
-          cidr: formData.cidr,
+          cidr: formData.cidr || undefined,
+          cidr_v6: formData.cidr_v6 || undefined,
           dns: formData.dns.length > 0 ? formData.dns : undefined,
           domain_suffix: formData.domain_suffix,
           default_group_ids: formData.default_group_ids.length > 0 ? formData.default_group_ids : undefined,
@@ -153,7 +189,7 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
         {/* CIDR */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            CIDR <span className="text-red-500">*</span>
+            IPv4 CIDR <span className="text-gray-400 font-normal">(optional if IPv6 provided)</span>
           </label>
           
           {/* Max Peers Input (only for create) */}
@@ -210,7 +246,6 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
 
           <input
             type="text"
-            required
             value={formData.cidr}
             onChange={(e) => {
               const value = e.target.value;
@@ -229,7 +264,80 @@ export default function NetworkModal({ isOpen, onClose, onSuccess, network }: Ne
           {cidrError && (
             <p className="mt-1 text-sm text-red-600">{cidrError}</p>
           )}
-          <p className="mt-1 text-sm text-gray-500">Network address range in CIDR notation</p>
+          <p className="mt-1 text-sm text-gray-500">IPv4 network address range in CIDR notation</p>
+        </div>
+
+        {/* IPv6 CIDR */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            IPv6 CIDR <span className="text-gray-400 font-normal">(optional)</span>
+          </label>
+
+          {/* IPv6 ULA Suggestion button (only for create) */}
+          {!isEditMode && (
+            <div className="mb-2 flex justify-end">
+              <button
+                type="button"
+                onClick={generateIPv6Suggestions}
+                className="px-3 py-1.5 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                title="Generate random Unique Local Address (RFC 4193) prefixes — the IPv6 equivalent of RFC 1918 private addresses"
+              >
+                Suggest ULA prefixes
+              </button>
+            </div>
+          )}
+
+          {/* IPv6 CIDR Suggestions */}
+          {showIpv6Suggestions && ipv6Suggestions.length > 0 && (
+            <div className="mb-2 p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
+              <p className="text-xs font-medium text-purple-800 dark:text-purple-300 mb-2">
+                Suggested IPv6 ULA prefixes (RFC 4193, click to use):
+              </p>
+              <div className="grid grid-cols-1 gap-2">
+                {ipv6Suggestions.map((cidr) => (
+                  <button
+                    key={cidr}
+                    type="button"
+                    onClick={() => {
+                      setFormData((prev) => ({ ...prev, cidr_v6: cidr }));
+                      setCidrV6Error(null);
+                      setShowIpv6Suggestions(false);
+                    }}
+                    className="text-left px-2 py-1 text-sm font-mono bg-white dark:bg-gray-700 border border-purple-300 dark:border-purple-700 rounded hover:bg-purple-100 dark:hover:bg-purple-800 text-gray-900 dark:text-white transition-colors"
+                  >
+                    {cidr}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-purple-700 dark:text-purple-300">
+                Each prefix uses a freshly randomised 40-bit Global ID per RFC 4193 §3.2.2 — non-routable on the public internet, safe for private use.
+              </p>
+            </div>
+          )}
+
+          <input
+            type="text"
+            value={formData.cidr_v6}
+            onChange={(e) => {
+              const value = e.target.value;
+              setFormData({ ...formData, cidr_v6: value });
+              if (value) {
+                setCidrV6Error(getCIDRError(value));
+              } else {
+                setCidrV6Error(null);
+              }
+            }}
+            className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+              cidrV6Error ? 'border-red-300 dark:border-red-600' : 'border-gray-300 dark:border-gray-600'
+            }`}
+            placeholder="e.g., fd00::/64"
+          />
+          {cidrV6Error && (
+            <p className="mt-1 text-sm text-red-600">{cidrV6Error}</p>
+          )}
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            IPv6 network address range for dual-stack support. Use a Unique Local Address (<code className="font-mono">fd00::/8</code>) — the IPv6 equivalent of RFC 1918 — never a globally-routable prefix.
+          </p>
         </div>
 
         {/* DNS Servers */}

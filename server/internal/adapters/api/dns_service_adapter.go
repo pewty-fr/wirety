@@ -53,10 +53,11 @@ func (a *DNSServiceAdapter) GetNetworkDNSRecords(ctx context.Context, networkID 
 	apiRecords := make([]DNSRecord, len(records))
 	for i, record := range records {
 		apiRecords[i] = DNSRecord{
-			Name:      record.Name,
-			IPAddress: record.IPAddress,
-			FQDN:      record.FQDN,
-			Type:      record.Type,
+			Name:        record.Name,
+			IPAddress:   record.IPAddress,
+			IPv6Address: record.IPv6Address,
+			FQDN:        record.FQDN,
+			Type:        record.Type,
 		}
 	}
 

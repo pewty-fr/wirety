@@ -285,8 +285,7 @@ export default function PeersPage() {
                   {isAdmin && (
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
                   )}
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Connected</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Agent</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
                 </tr>
@@ -327,7 +326,10 @@ export default function PeersPage() {
                         {peer.network_name || peer.network_id}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-white">
-                        {peer.address}
+                        <div>{peer.address}</div>
+                        {peer.address_v6 && (
+                          <div className="text-xs text-gray-500 dark:text-gray-400">{peer.address_v6}</div>
+                        )}
                       </td>
                       {isAdmin && (
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
@@ -335,26 +337,90 @@ export default function PeersPage() {
                         </td>
                       )}
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {/* Connected column: badge based on last_seen freshness (3-min window) */}
-                        {isConnected ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                            Connected
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
-                            <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
-                            Offline
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {/* Agent column: shows whether peer runs the wirety agent */}
-                        <div className="flex items-center">
-                          <span className={`w-3 h-3 rounded-full ${
-                            !peer.use_agent ? 'bg-gray-400' : (hasActiveAgent ? 'bg-green-500' : 'bg-red-500')
-                          }`} title={!peer.use_agent ? 'No agent (static config)' : hasActiveAgent ? 'Agent online' : 'Agent offline'}></span>
-                        </div>
+                        {/* Status column: a single dot summarising the peer's overall state.
+                            Priority (highest first): quarantined > pending_auth > connected/agent/auth > offline.
+                              red    — quarantined (auth blocked)
+                              orange — pending captive-portal auth (token outstanding)
+                              green  — connected, OR agent up, OR authenticated
+                              grey   — disconnected / no agent / no auth */}
+                        {(() => {
+                          // Status-dot logic for a peer.  Priority order matches the
+                          // user-visible meaning of the colour:
+                          //
+                          //   red    — quarantined (peer is BLOCKED, auth failures
+                          //            exceeded threshold; admin reset required)
+                          //   orange — action needed by the user (a captive-portal
+                          //            sign-in is in progress, OR the WG tunnel is
+                          //            up but the peer hasn't authenticated yet so
+                          //            no actual network access is granted)
+                          //   green  — fully usable (connected AND authenticated,
+                          //            OR a jump peer for which captive-portal
+                          //            auth doesn't apply)
+                          //   grey   — offline / no active session
+                          //
+                          // The key change vs a naive "connected = green" is that a
+                          // non-jump peer with a fresh WG handshake but EMPTY
+                          // captive_portal_state is shown orange, not green.
+                          // Without captive-portal auth the iptables WIRETY_JUMP
+                          // chain drops all forwarded traffic from this peer — the
+                          // tunnel is up but the firewall blocks every actual
+                          // request.  Showing green there gives the user a false
+                          // sense that the device works.
+                          //
+                          // Visual cues:
+                          //   - The label appears on hover only (opacity transition,
+                          //     not display: none, so the row layout doesn't shift
+                          //     when the user moves the cursor across it).
+                          //   - The dot pulses ONLY for pending_auth — a sign-in
+                          //     that's actively in flight.  Static orange ("not
+                          //     authenticated") doesn't pulse: the user knows what
+                          //     to do, no need to draw the eye.
+                          const portalState = peer.session_status?.captive_portal_state;
+                          const isOnline = isConnected || hasActiveAgent;
+                          let color = 'bg-gray-400';
+                          let label = 'Offline';
+                          let pulse = false;
+
+                          if (portalState === 'quarantined') {
+                            color = 'bg-red-500';
+                            label = 'Quarantined';
+                          } else if (portalState === 'pending_auth') {
+                            color = 'bg-orange-500';
+                            label = 'Pending auth';
+                            pulse = true;
+                          } else if (!isOnline) {
+                            // color/label keep their defaults ('bg-gray-400' /
+                            // 'Offline'); only override the label when this peer
+                            // runs the agent so we can distinguish "agent offline"
+                            // from a peer with no agent at all.
+                            if (peer.use_agent) {
+                              label = 'Agent offline';
+                            }
+                          } else if (peer.is_jump) {
+                            // Jump peers don't authenticate to themselves — being
+                            // online is sufficient.
+                            color = 'bg-green-500';
+                            label = 'Connected';
+                          } else if (portalState === 'authenticated') {
+                            color = 'bg-green-500';
+                            label = 'Connected';
+                          } else {
+                            // Online + non-jump + no auth state = WG tunnel is up but
+                            // the peer hasn't completed captive-portal auth.  Network
+                            // access is blocked at the firewall.
+                            color = 'bg-orange-500';
+                            label = 'Not authenticated';
+                          }
+
+                          return (
+                            <div className="group flex items-center gap-2 cursor-default">
+                              <span className={`w-2.5 h-2.5 rounded-full ${color} ${pulse ? 'animate-pulse' : ''}`} />
+                              <span className="text-xs text-gray-600 dark:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity duration-150 whitespace-nowrap">
+                                {label}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {/* Type column at end: Jump or Regular */}

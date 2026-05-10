@@ -9,6 +9,29 @@ import type { Network, Route, DNSMapping } from '../../types';
 interface DNSRow extends DNSMapping {
   route_name?: string;
   route_destination_cidr?: string;
+  route_domain_suffix?: string;
+}
+
+// sanitizeDNSLabel mirrors server-side sanitizeDNSLabel:
+// lowercase + replace any non-alphanumeric / non-hyphen char with '-'.
+// Used so the FQDN we display in the UI matches exactly what the agent's
+// DNS server actually serves.
+function sanitizeDNSLabel(s: string): string {
+  if (!s) return 'peer';
+  const out = s
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-');
+  return out || 'peer';
+}
+
+// buildFQDN constructs the full DNS name a peer would query to resolve this
+// record: <name>.<route_name>.<route_domain_suffix or "internal">.
+function buildFQDN(row: DNSRow): string {
+  const label = sanitizeDNSLabel(row.name);
+  const route = sanitizeDNSLabel(row.route_name || '');
+  const suffix = (row.route_domain_suffix && row.route_domain_suffix.trim()) || 'internal';
+  if (!route) return `${label}.${suffix}`;
+  return `${label}.${route}.${suffix}`;
 }
 
 export default function DNSRecordsPage() {
@@ -22,13 +45,17 @@ export default function DNSRecordsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editIP, setEditIP] = useState('');
+  const [editIPv6, setEditIPv6] = useState('');
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  // New record form
+  // New record form — both ip_address and ip_address_v6 are independent.
+  // At least one must be provided; the route must carry the matching family
+  // CIDR (an IPv6 address on an IPv4-only route is rejected server-side).
   const [showNewForm, setShowNewForm] = useState(false);
   const [newRouteId, setNewRouteId] = useState('');
   const [newName, setNewName] = useState('');
   const [newIP, setNewIP] = useState('');
+  const [newIPv6, setNewIPv6] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -63,6 +90,7 @@ export default function DNSRecordsPage() {
         ...m,
         route_name: routeById.get(m.route_id)?.name,
         route_destination_cidr: routeById.get(m.route_id)?.destination_cidr,
+        route_domain_suffix: routeById.get(m.route_id)?.domain_suffix,
       }));
       setRecords(allMappings);
     } finally {
@@ -77,22 +105,29 @@ export default function DNSRecordsPage() {
   const startEdit = (row: DNSRow) => {
     setEditingId(row.id);
     setEditName(row.name);
-    setEditIP(row.ip_address);
+    setEditIP(row.ip_address || '');
+    setEditIPv6(row.ip_address_v6 || '');
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setEditName('');
     setEditIP('');
+    setEditIPv6('');
   };
 
   const saveEdit = async (row: DNSRow) => {
     if (!selectedNetworkId) return;
+    if (!editIP.trim() && !editIPv6.trim()) {
+      alert('A DNS record must have at least one address (IPv4 or IPv6).');
+      return;
+    }
     setSavingId(row.id);
     try {
       await api.updateDNSMapping(selectedNetworkId, row.route_id, row.id, {
         name: editName,
-        ip_address: editIP,
+        ip_address: editIP.trim() || undefined,
+        ip_address_v6: editIPv6.trim() || undefined,
       });
       await loadData(selectedNetworkId);
       cancelEdit();
@@ -106,7 +141,8 @@ export default function DNSRecordsPage() {
 
   const deleteRecord = async (row: DNSRow) => {
     if (!selectedNetworkId) return;
-    if (!window.confirm(`Delete DNS record "${row.name}" → ${row.ip_address}?`)) return;
+    const addrSummary = [row.ip_address, row.ip_address_v6].filter(Boolean).join(' / ');
+    if (!window.confirm(`Delete DNS record "${buildFQDN(row)}" → ${addrSummary || '(no address)'}?`)) return;
     try {
       await api.deleteDNSMapping(selectedNetworkId, row.route_id, row.id);
       await loadData(selectedNetworkId);
@@ -119,20 +155,26 @@ export default function DNSRecordsPage() {
   const submitNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateError('');
-    if (!selectedNetworkId || !newRouteId || !newName.trim() || !newIP.trim()) {
-      setCreateError('All fields are required');
+    if (!selectedNetworkId || !newRouteId || !newName.trim()) {
+      setCreateError('Network, route and name are required');
+      return;
+    }
+    if (!newIP.trim() && !newIPv6.trim()) {
+      setCreateError('Provide at least one address (IPv4 or IPv6).');
       return;
     }
     setCreating(true);
     try {
       await api.createDNSMapping(selectedNetworkId, newRouteId, {
         name: newName.trim(),
-        ip_address: newIP.trim(),
+        ip_address: newIP.trim() || undefined,
+        ip_address_v6: newIPv6.trim() || undefined,
       });
       setShowNewForm(false);
       setNewRouteId('');
       setNewName('');
       setNewIP('');
+      setNewIPv6('');
       await loadData(selectedNetworkId);
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } }; message?: string };
@@ -143,7 +185,15 @@ export default function DNSRecordsPage() {
   };
 
   const networkOptions = useMemo(() => networks.map(n => ({ value: n.id, label: `${n.name} (${n.cidr})` })), [networks]);
-  const routeOptions = useMemo(() => routes.map(r => ({ value: r.id, label: `${r.name} — ${r.destination_cidr}` })), [routes]);
+  const routeOptions = useMemo(
+    () =>
+      routes.map(r => {
+        // Dual-stack routes carry both CIDRs; show whichever are set.
+        const cidrs = [r.destination_cidr, r.destination_cidr_v6].filter(Boolean).join(' / ');
+        return { value: r.id, label: cidrs ? `${r.name} — ${cidrs}` : r.name };
+      }),
+    [routes]
+  );
 
   return (
     <div>
@@ -194,7 +244,7 @@ export default function DNSRecordsPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name (hostname)</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name (hostname label)</label>
                 <input
                   type="text"
                   value={newName}
@@ -202,16 +252,37 @@ export default function DNSRecordsPage() {
                   placeholder="e.g. nas"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
+                {newRouteId && newName.trim() && (() => {
+                  const route = routes.find(r => r.id === newRouteId);
+                  if (!route) return null;
+                  const fqdn = `${sanitizeDNSLabel(newName)}.${sanitizeDNSLabel(route.name)}.${(route.domain_suffix && route.domain_suffix.trim()) || 'internal'}`;
+                  return (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-1">
+                      → resolves as <span className="text-gray-700 dark:text-gray-200">{fqdn}</span>
+                    </div>
+                  );
+                })()}
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">IP address</label>
-                <input
-                  type="text"
-                  value={newIP}
-                  onChange={(e) => setNewIP(e.target.value)}
-                  placeholder="e.g. 10.0.0.50"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-                />
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                  IP address <span className="text-gray-400 font-normal">(at least one of v4 / v6)</span>
+                </label>
+                <div className="flex flex-col gap-2">
+                  <input
+                    type="text"
+                    value={newIP}
+                    onChange={(e) => setNewIP(e.target.value)}
+                    placeholder="IPv4 — e.g. 10.0.0.50"
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                  <input
+                    type="text"
+                    value={newIPv6}
+                    onChange={(e) => setNewIPv6(e.target.value)}
+                    placeholder="IPv6 — e.g. fd00::50"
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                </div>
               </div>
             </div>
             {createError && <p className="text-sm text-red-500 mt-2">{createError}</p>}
@@ -259,31 +330,60 @@ export default function DNSRecordsPage() {
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {records.map(row => {
                   const editing = editingId === row.id;
+                  const fqdn = buildFQDN(row);
                   return (
                     <tr key={row.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                       <td className="px-6 py-4 whitespace-nowrap">
                         {editing ? (
-                          <input
-                            autoFocus
-                            type="text"
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            className="w-full px-2 py-1 border border-primary-500 rounded text-sm bg-white dark:bg-gray-800"
-                          />
+                          <div>
+                            <input
+                              autoFocus
+                              type="text"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              className="w-full px-2 py-1 border border-primary-500 rounded text-sm bg-white dark:bg-gray-800"
+                              placeholder="hostname label only"
+                            />
+                            <div className="text-xs text-gray-400 dark:text-gray-500 font-mono mt-1">
+                              FQDN: {sanitizeDNSLabel(editName || row.name)}.{sanitizeDNSLabel(row.route_name || '')}.{(row.route_domain_suffix && row.route_domain_suffix.trim()) || 'internal'}
+                            </div>
+                          </div>
                         ) : (
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{row.name}</span>
+                          <div>
+                            <div className="text-sm font-mono font-medium text-gray-900 dark:text-gray-100">{fqdn}</div>
+                            {row.name !== fqdn && (
+                              <div className="text-xs text-gray-400 dark:text-gray-500">
+                                label: {row.name}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">
                         {editing ? (
-                          <input
-                            type="text"
-                            value={editIP}
-                            onChange={(e) => setEditIP(e.target.value)}
-                            className="w-full px-2 py-1 border border-primary-500 rounded text-sm bg-white dark:bg-gray-800 font-mono"
-                          />
+                          <div className="flex flex-col gap-1">
+                            <input
+                              type="text"
+                              value={editIP}
+                              onChange={(e) => setEditIP(e.target.value)}
+                              placeholder="IPv4"
+                              className="w-full px-2 py-1 border border-primary-500 rounded text-sm bg-white dark:bg-gray-800 font-mono"
+                            />
+                            <input
+                              type="text"
+                              value={editIPv6}
+                              onChange={(e) => setEditIPv6(e.target.value)}
+                              placeholder="IPv6"
+                              className="w-full px-2 py-1 border border-primary-500 rounded text-sm bg-white dark:bg-gray-800 font-mono"
+                            />
+                          </div>
                         ) : (
-                          <span className="text-gray-900 dark:text-gray-100">{row.ip_address}</span>
+                          <div className="flex flex-col">
+                            {row.ip_address && <span className="text-gray-900 dark:text-gray-100">{row.ip_address}</span>}
+                            {row.ip_address_v6 && (
+                              <span className="text-gray-500 dark:text-gray-400 text-xs">{row.ip_address_v6}</span>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">

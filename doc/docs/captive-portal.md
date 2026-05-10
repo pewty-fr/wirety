@@ -129,7 +129,7 @@ AAAA queries for all probe domains return NODATA to force IPv4, preventing peers
 
 For unauthenticated peers, all DNS queries for **internal VPN domain names** (peer hostnames, route FQDNs) are resolved to the captive portal IP instead of the real peer IP. This means any attempt to reach a private resource redirects the peer to the authentication page.
 
-External DNS (internet) is unaffected — unauthenticated peers can still browse the web normally.
+For **full-tunnel peers** the agent is more aggressive: every external A/AAAA query from an unauthenticated full-tunnel peer is also redirected to the captive portal IP. This is necessary because full-tunnel peers route every external connection through the jump peer — without DNS interception their browser would resolve real IPs and have its connections dropped silently by the FORWARD chain, with no captive-portal redirect ever firing. The agent learns each peer's `AllowedIPs` from the heartbeat (`local_allowed_ips`) so it can apply this redirection only to the peers that need it. Split-tunnel peers continue to use external DNS normally — their external traffic doesn't cross the jump peer anyway.
 
 ```
 Unauthenticated peer resolves server1.wg.example.com
@@ -240,29 +240,99 @@ Already-authenticated peers do not need to re-authenticate after an agent restar
 If a peer is reassigned a new VPN IP (e.g. after a long absence and IPAM recycles the address), the old whitelist entry no longer matches and the peer must re-authenticate.
 :::
 
-## Security
+## Security: Three-Tier Authentication Gate
 
-### Stolen WireGuard config
-If a user's WireGuard config (private key) is stolen, the attacker connects with the same VPN IP and would normally inherit the whitelist entry. Two defences limit the damage:
+The `WIRETY_JUMP` chain on the jump peer enforces a strict three-tier model for every peer:
 
-**Whitelist TTL (24 hours):** Whitelist entries expire after 24 hours. The attacker's access ends when the entry expires, even if the theft is undetected.
+| Tier | Who | What they can reach |
+|------|-----|---------------------|
+| **Authenticated** | Peers in the captive-portal whitelist whose live WireGuard endpoint matches the IP:port recorded at authentication time | Full network access (subject to the policy chain) |
+| **Pending Auth** | Peers that have been issued a captive-portal token in the last 10 minutes but have not yet completed SSO | External HTTPS only — enough for the OIDC redirect chain (Slack/GitHub/Google), nothing else |
+| **Quarantined** | Peers that abandoned 3 consecutive token issuances without completing SSO | Nothing. Even the captive portal redirect is suppressed until quarantine expires (1 h) or an admin clears it |
+| **Default** (no token, not quarantined) | New peer that just connected | Only DNS to the jump peer and the captive-portal HTTP/HTTPS server on the jump peer's WG IP — enough to trigger the redirect |
 
-**Strict endpoint binding:** Each whitelist entry is bound to the peer's full public endpoint (`ip:port`) at authentication time. The jump peer agent compares the live endpoint reported by `wg show endpoints` against the stored one on every captive portal request and on every 300 ms firewall re-sync. Any mismatch — different IP, different NAT-rebound port, or even a fresh tunnel handshake from the legitimate user — drops the iptables `ACCEPT` rule and forces re-authentication via the captive portal. A stolen config used from a different network therefore fails the check immediately, without waiting for the TTL.
+This replaces the previous design where unauthenticated peers had unrestricted external HTTPS access (intended for the OIDC redirect, but also a usable internet bypass). The grant is now per-peer and time-bounded.
 
-### Shared WireGuard config (intentional)
-If a user shares their WireGuard config with another person, that person will connect with the same VPN IP but will not be able to pass the captive portal: authentication checks that the Wirety session belongs to the peer's owner. Attempting to authenticate as a different user — even an administrator — results in an ownership error.
+### Endpoint stability window
 
-## Whitelist Management
+When a whitelisted peer's WireGuard endpoint changes (different `ip:port` from `wg show endpoints`), the peer is held out of the iptables whitelist for **10 seconds** of stability before being re-admitted. This prevents the oscillation that occurs when two devices share the same WireGuard private key — each keepalive overrides the recorded endpoint, and without the stability window the legitimate peer would gain and lose access every ~25 s.
 
-The whitelist is per-jump-peer and stored in the `captive_portal_whitelist` table.
+### Stolen / shared WireGuard config — three layers of defence
 
-| Operation | When |
-|-----------|------|
-| `AddCaptivePortalWhitelist` | Peer completes captive portal authentication (upserts with 24h TTL) |
-| `GetCaptivePortalWhitelist` | Agent requests policy sync — filters out expired entries |
-| `RemoveCaptivePortalWhitelistByPeerIP` | Security incident detected (quarantine) |
-| `ClearCaptivePortalWhitelist` | Jump peer deregistration |
-| `CleanupExpiredCaptivePortalWhitelist` | Hourly background job |
+Wirety distinguishes carefully between **legitimate single endpoint changes** (NAT rebinding, mobile network handover, fresh tunnel) and **rogue takeovers** (a second device with the same private key competing for the peer slot). Conflating the two would be catastrophic — denylisting a rogue is right; denylisting the legitimate user after a NAT rebind would lock them out for 24 h with no recovery path.
+
+The three layers fire in order, escalating only when there's clear evidence the previous layer is insufficient:
+
+**Layer 1 — Endpoint binding (whitelist requires endpoint match).** Each whitelist entry stores the peer's full public endpoint (`ip:port`) at authentication time. The 300 ms firewall re-sync compares the live endpoint from `wg show endpoints` against the stored one and drops the peer from the iptables whitelist on any mismatch. Cost to a legitimate user who roamed: a brief loss of access until they re-authenticate via the captive portal (which they CAN reach, because the captive portal is on the jump peer's WG IP and only the iptables FORWARD chain is affected). Cost to a rogue: same thing — they need to authenticate, but they fail the SSO ownership check, so they get nothing.
+
+**Layer 2 — Endpoint stability window (10 s).** When any endpoint change is observed, the peer is held out of the iptables whitelist for 10 s of stability before being re-admitted. *Symmetric* — doesn't decide who's "rogue", just refuses to commit during turbulence. Catches both NAT rebinds (they flip once and stabilise) and oscillations (they keep flipping, so the timer never expires and nobody gets access).
+
+**Layer 3 — Physical-interface denylist — only on confirmed oscillation.** This is the heavy hammer: an iptables `-p udp --dport <wg-port> -s <rogue-ip> --sport <rogue-port> -j DROP` rule on the egress interface, BEFORE WireGuard decapsulates. The rogue source can no longer complete WireGuard handshakes at all. **It only fires when the agent observes the endpoint flip stored→foreign at least twice within 60 seconds** — the unambiguous signature of two devices simultaneously sending handshakes. A single endpoint change (NAT rebind, roam, etc.) never trips this layer; layers 1+2 handle it gracefully.
+
+#### Why "oscillation" is the only safe trigger for the denylist
+
+| Pattern observed by `wg show endpoints` | What it really is | What we do |
+|---|---|---|
+| `A` → `B`, then stable at `B` | NAT rebound, user roamed, fresh tunnel | Drop peer from whitelist (Layer 1+2). User re-auths via captive portal. **No denylist.** |
+| `A` → `B` → `A` → `B` (oscillating) | Two devices competing for the slot | Denylist `B` (Layer 3). Legitimate user stops being interrupted. |
+| `A` → `B` → `A`, then stable at `A` | Brief blip (single rogue handshake that didn't repeat, or a transient mis-route) | One flip counted, but the second flip never comes. Counter resets after 60 s. **No denylist.** |
+
+The trade-off: the rogue gets a brief window of disruption before they're identified. Layer 2 (the stability window) prevents either side from having stable access during that window, so the rogue cannot exploit it to do useful work — and the moment they earn their second flip, Layer 3 cuts them off completely.
+
+#### After a denylist fires
+
+Once a foreign endpoint is denylisted on the physical interface:
+- The rogue's WireGuard handshakes are dropped before reaching the kernel.
+- WireGuard's recorded endpoint stops oscillating and settles back on the legitimate user's value.
+- The legitimate user's iptables whitelist rule reappears after the 10 s stability window.
+- Normal service resumes, with the rogue locked out for 24 h.
+
+When the legitimate peer next authenticates via the captive portal (from any source — including a future genuine roam), the server clears the entire endpoint denylist for that peer's wgIP. SSO ownership is the cryptographic ground truth; if the user proved it, prior "rogue" attribution is overridden.
+
+### Quarantine after repeated abandonments
+
+The strike counter `captive_portal_quarantine.strikes` increments by 1 every time a captive-portal token expires without a successful SSO conversion. After **3 strikes** the peer enters quarantine for 1 hour. While quarantined:
+
+- No new tokens are issued (the agent's `/api/v1/captive-portal/token` request is rejected — although the `cleanup` loop is the actual strike trigger)
+- No "pending auth" HTTPS grant is given
+- The peer is in tier 0 (explicit DROP) — even the captive portal redirect doesn't fire
+
+A successful SSO authentication clears all strikes. An admin can clear the quarantine state manually from the database (`DELETE FROM captive_portal_quarantine WHERE peer_id = '…'`).
+
+### Shared config — intentional sharing
+If a user *intentionally* shares their WireGuard config with someone else, the shared device cannot complete SSO unless that person uses the original owner's credentials — captive-portal auth checks that the Wirety session's user ID matches the peer's owner. Attempting to authenticate as a different user (even an admin) returns an ownership error.
+
+## Forcing Re-authentication: Revoke Connection
+
+Administrators and peer owners can force a peer to re-authenticate from the dashboard. In the **Peer Detail** modal, a **"Revoke Auth"** button removes the peer from the captive-portal whitelist across all jump peers in the network. The next request from the peer is redirected to the captive portal and SSO is required to regain access.
+
+Use this when:
+- You suspect a peer's WireGuard config has leaked.
+- You are rotating credentials.
+- You want to force a stale session to refresh (e.g. after group/policy changes).
+
+The peer record itself is untouched — only the authenticated session state is cleared. The peer can re-authenticate immediately by hitting the captive portal.
+
+The corresponding API endpoint is `POST /networks/{networkId}/peers/{peerId}/revoke-auth` — see [API Reference](api-reference).
+
+## Database Tables
+
+| Table | Purpose | TTL |
+|-------|---------|-----|
+| `captive_portal_whitelist` | Authenticated peers (full access tier). Each row binds a peer's WireGuard IP to the public endpoint observed at SSO time. | 24 h |
+| `captive_portal_tokens` | In-flight auth tokens (pending tier).  `consumed_at IS NULL` after expiry counts as 1 strike. | 10 min |
+| `captive_portal_endpoint_denylist` | Rogue WireGuard sources to drop at the jump peer's physical interface. Populated from agent-reported takeovers. Cleared automatically when the targeted peer next re-authenticates from any source. | 24 h |
+| `captive_portal_quarantine` | Per-peer auth-failure strike count and quarantine end time. | 1 h after 3rd strike; cleared on successful auth |
+| `peer_local_routes` | Each peer's locally-configured `AllowedIPs`, reported via heartbeat. Used by the jump peer's DNS to decide route-aware redirection for unauthenticated peers. | Latest heartbeat wins |
+
+Background cleanup tasks (server):
+
+| Operation | Cadence |
+|-----------|---------|
+| `CleanupExpiredCaptivePortalWhitelist` | Hourly |
+| `CleanupExpiredCaptivePortalTokens` (also records strikes for unconsumed tokens) | Every 2 minutes |
+| `CleanupExpiredEndpointDenylist` | Every 2 minutes |
+| `CleanupExpiredSessions` | Hourly |
 
 ## Troubleshooting
 
@@ -271,7 +341,10 @@ The whitelist is per-jump-peer and stored in the `captive_portal_whitelist` tabl
 | Captive portal page says "not available" | `AUTH_ENABLED=false` — enable OIDC to use captive portal. |
 | "access denied: this peer belongs to another user" | Logged in as the wrong Wirety user. Click "Sign in with a different account" and log in as the peer's owner. |
 | "access denied: this peer has no owner" | The peer was created by an admin without assigning an owner. Assign an owner in the Wirety dashboard. |
+| Peer can't reach the captive portal at all (browser shows "site unreachable") | Either the peer is **quarantined** (3 abandoned auth attempts in the last hour) or the peer's traffic isn't going through the jump peer at all. Check `captive_portal_quarantine` for the peer ID; clear the row to release. |
 | Authenticated peer loses access after 24 hours | Expected — the whitelist TTL expired. The peer must re-authenticate. |
+| Authenticated peer loses access after a sudden endpoint change | Expected — the WireGuard endpoint stability window holds peers out of the iptables whitelist for 10 s after any endpoint change to prevent oscillation between two devices using the same key. Wait 10 s; the legitimate peer regains access automatically. |
+| Authenticated peer loses access permanently after the legitimate user moves networks | The new public source might have been denylisted as a "rogue takeover". Use the dashboard's **Revoke Auth** button to clear the whitelist entry; the next captive-portal auth from the new endpoint will succeed and clear the denylist as a side effect. |
 | Authenticated peer loses access after agent restart | Whitelist was not restored — check WebSocket connectivity between agent and server. |
 | OS captive portal popup does not appear (split-tunnel) | Peer's WireGuard config may not set `DNS = <jump-peer-wg-ip>`. Without this, probe domains and internal domain queries bypass the tunnel DNS. Check the peer's WireGuard config. |
 | OS captive portal popup does not appear (full-tunnel) | CNA/NCSI fires automatically for full-tunnel peers. If it does not trigger, try disconnecting and reconnecting to WireGuard. |

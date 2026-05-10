@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	dom "wirety/agent/internal/domain/policy"
+	"wirety/agent/internal/ports"
 )
 
 func TestNewAdapter(t *testing.T) {
@@ -142,7 +143,7 @@ func TestApplyIPTablesRule(t *testing.T) {
 				t.Skip("Test skipped")
 			}
 
-			err := adapter.applyIPTablesRule(tt.chain, tt.rule)
+			err := adapter.applyIPTablesRule(tt.chain, tt.rule, "")
 			if (err != nil) != tt.wantErr {
 				t.Errorf("applyIPTablesRule() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -154,7 +155,7 @@ func TestSyncWithNilPolicy(t *testing.T) {
 	adapter := NewAdapter("wg0", []string{"eth0"})
 
 	// Test with nil policy - should not panic
-	err := adapter.Sync(nil, "10.0.0.1", []string{})
+	err := adapter.Sync(ports.SyncRequest{Policy: nil, SelfIP: "10.0.0.1"})
 	if err != nil {
 		t.Errorf("Sync with nil policy should not error, got: %v", err)
 	}
@@ -169,7 +170,7 @@ func TestSyncWithEmptyPolicy(t *testing.T) {
 	}
 
 	// This will likely fail due to permissions, but we test that it doesn't panic
-	err := adapter.Sync(policy, "10.0.0.1", []string{})
+	err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.0.0.1"})
 
 	// We expect this to fail in test environment due to permissions
 	// The important thing is that it doesn't panic
@@ -190,7 +191,7 @@ func TestSyncWithPolicyRules(t *testing.T) {
 	whitelistedIPs := []string{"10.0.0.2", "10.0.0.3"}
 
 	// This will likely fail due to permissions, but we test that it doesn't panic
-	err := adapter.Sync(policy, "10.0.0.1", whitelistedIPs)
+	err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.0.0.1", AuthenticatedIPs: whitelistedIPs})
 
 	// We expect this to fail in test environment due to permissions
 	// The important thing is that it doesn't panic and handles the rules
@@ -263,7 +264,7 @@ func TestSyncIntegration(t *testing.T) {
 	}
 
 	// This will likely fail due to permissions, but we test the integration
-	err := adapter.Sync(policy, "10.0.0.1", []string{"10.0.0.2"})
+	err := adapter.Sync(ports.SyncRequest{Policy: policy, SelfIP: "10.0.0.1", AuthenticatedIPs: []string{"10.0.0.2"}})
 
 	// We expect this to fail in test environment due to permissions
 	// The important thing is that it doesn't panic and handles the rules properly

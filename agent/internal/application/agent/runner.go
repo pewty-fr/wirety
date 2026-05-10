@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -32,8 +33,32 @@ type WSMessage struct {
 	Policy      *pol.JumpPolicy `json:"policy,omitempty"`
 	PeerID      string          `json:"peer_id,omitempty"`
 	PeerName    string          `json:"peer_name,omitempty"`
-	Whitelist   []string        `json:"whitelist,omitempty"`    // IPs of authenticated non-agent peers
+	Whitelist   []string        `json:"whitelist,omitempty"`    // authenticated peers ("wgIP@endpoint" format)
 	OAuthIssuer string          `json:"oauth_issuer,omitempty"` // OAuth issuer URL for TLS-SNI gateway
+
+	// New fields (3-tier captive portal gate, jump peer only):
+	PendingAuth      []PendingAuthEntry      `json:"pending_auth,omitempty"`
+	EndpointDenylist []EndpointDenylistEntry `json:"endpoint_denylist,omitempty"`
+	Quarantined      []string                `json:"quarantined,omitempty"`
+	PeerRoutes       map[string][]string     `json:"peer_routes,omitempty"` // wgIP -> AllowedIPs
+}
+
+// PendingAuthEntry mirrors the server-side type: a peer that has been issued a
+// captive portal token (active OIDC flow) but has not yet completed SSO.  The
+// jump peer adds a temporary HTTPS-only iptables ACCEPT rule for these wgIPs
+// so the OIDC redirect chain can reach external providers.
+type PendingAuthEntry struct {
+	WgIP      string `json:"wg_ip"`
+	Endpoint  string `json:"endpoint,omitempty"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// EndpointDenylistEntry is a rogue WireGuard UDP source that the jump peer
+// must drop at the physical interface to prevent it from completing further
+// WireGuard handshakes for any peer in the network.
+type EndpointDenylistEntry struct {
+	BlockedIP   string `json:"blocked_ip"`
+	BlockedPort int    `json:"blocked_port"`
 }
 
 // tunnelActive is the threshold below which a peer is considered connected.
@@ -42,6 +67,26 @@ const tunnelActiveThreshold = 180 * time.Second
 
 // tunnelPollInterval is how often the runner checks for handshake changes.
 const tunnelPollInterval = 15 * time.Second
+
+// endpointStabilityWindow is how long a peer's WireGuard endpoint must remain
+// unchanged before it is (re-)added to the iptables whitelist after a change.
+//
+// When two devices share the same WireGuard private key (config sharing / theft),
+// they compete for the same WireGuard peer slot on the jump peer.  Each device's
+// keepalive overrides the peer's endpoint in `wg show`, causing the endpoint to
+// oscillate between the two public IP:port combinations every ~25 s.  Without this
+// stability check, the legitimate device could regain iptables access during the
+// brief window when `wg show` happens to report its endpoint — giving both devices
+// intermittent access.
+//
+// With the stability window:
+//   • When an endpoint changes, a timer starts.
+//   • Even if the current endpoint matches the stored (authenticated) one, the
+//     peer is excluded from the iptables whitelist until the endpoint has been
+//     stable for endpointStabilityWindow seconds.
+//   • Two competing devices therefore get NO iptables access during the oscillation
+//     phase, forcing both to re-authenticate via the captive portal.
+const endpointStabilityWindow = 10 * time.Second
 
 type Runner struct {
 	wsClient          ports.WebSocketClientPort
@@ -52,7 +97,8 @@ type Runner struct {
 	wsURL             string
 	wsHeaders         http.Header
 	wgInterface       string
-	wgIP              string // WireGuard interface IP of this peer
+	wgIP              string // WireGuard interface IPv4 of this peer
+	wgIPv6            string // WireGuard interface IPv6 of this peer (optional, dual-stack)
 	currentPeerName   string // Track current peer name to detect changes
 	peerID            string // for audit logging
 	networkID         string // for audit logging
@@ -76,6 +122,11 @@ type Runner struct {
 	// can return OS probe success responses for already-authenticated peers.
 	whitelist   map[string]string
 	whitelistMu sync.RWMutex
+	// ipv4ToIPv6 maps each peer's IPv4 WireGuard address to its IPv6 WireGuard address.
+	// Built from DNS peer config and used to extend the ip6tables whitelist when an
+	// IPv4 address is authenticated via the captive portal.
+	ipv4ToIPv6   map[string]string
+	ipv4ToIPv6Mu sync.RWMutex
 	// wgIPToEndpoint maps each peer's WireGuard private IP to its current public
 	// endpoint as reported by `wg show endpoints` ("ip:port", no stripping).
 	// Refreshed every 300 ms by the heartbeat goroutine so that isAuthenticated
@@ -83,6 +134,15 @@ type Runner struct {
 	// every HTTP request.
 	wgIPToEndpoint   map[string]string
 	wgIPToEndpointMu sync.RWMutex
+	// endpointChangedAt records the last time each peer's WireGuard endpoint
+	// changed (keyed by WireGuard private IP).  Used by filterWhitelistByEndpoint
+	// to enforce the endpointStabilityWindow: a peer is not re-added to the
+	// iptables whitelist until its endpoint has been stable long enough.  This
+	// prevents two devices sharing the same WireGuard config from getting
+	// intermittent access by oscillating the WireGuard endpoint between their
+	// respective public IP:port combinations.
+	endpointChangedAt   map[string]time.Time
+	endpointChangedMu   sync.RWMutex
 	// captivePortalSrv is the running captive portal HTTP server (jump peer only).
 	// Set once by startCaptivePortalServer; protected by captivePortalSrvMu.
 	captivePortalSrv   *captiveportal.Server
@@ -100,6 +160,86 @@ type Runner struct {
 	lastWhitelistRaw []string
 	lastFwState      []string
 	lastSyncMu       sync.Mutex
+	// Latest pending-auth / quarantine / denylist state from the server (jump
+	// peer only).  Reapplied alongside the whitelist by resyncFirewall().
+	lastPendingAuthIPs   []string
+	lastQuarantinedIPs   []string
+	lastEndpointDenylist []ports.DenylistEntry
+	lastWGListenPort     int
+
+	// Pending takeover reports — populated by detectEndpointTakeovers() when
+	// an authenticated peer's WireGuard endpoint flips to a foreign source.
+	// Drained on the next heartbeat into AgentHeartbeat.EndpointTakeovers.
+	pendingTakeovers   []endpointTakeoverReport
+	pendingTakeoversMu sync.Mutex
+	// reportedTakeovers prevents the same (wgIP, observedEndpoint) pair from
+	// being reported on every poll cycle.  Cleared when the endpoint changes
+	// to something else, or after takeoverReportCooldown.
+	reportedTakeovers   map[string]time.Time // key = wgIP+"|"+observedEP
+	reportedTakeoversMu sync.Mutex
+	// takeoverFlips tracks per-peer endpoint history to distinguish a single
+	// legitimate endpoint change (NAT rebind / roam) from an oscillating
+	// takeover (two devices competing for the same WireGuard peer slot).
+	// See takeoverFlipState comment for details.
+	takeoverFlips   map[string]*takeoverFlipState
+	takeoverFlipsMu sync.Mutex
+	// localAllowedIPs is THIS peer's WireGuard AllowedIPs as parsed from the
+	// applied wg config.  Reported in every heartbeat so the jump peer's DNS
+	// server can decide whether to redirect external queries from this peer.
+	localAllowedIPs   []string
+	localAllowedIPsMu sync.RWMutex
+}
+
+// endpointTakeoverReport is the agent-internal mirror of
+// network.EndpointTakeoverReport (server domain).  Kept lightweight to avoid
+// cross-package import.
+type endpointTakeoverReport struct {
+	WgIP            string
+	AuthenticatedAt string
+	ObservedAt      string
+}
+
+// takeoverReportCooldown prevents flooding the server with duplicate takeover
+// reports for the same rogue source within a short window.  300 ms ticker × 60
+// = 18 s of spam suppression for the same observation; after that we re-arm.
+const takeoverReportCooldown = 60 * time.Second
+
+// flipDetectionWindow is how long the per-peer flip counter is retained.
+// Flips older than this are forgotten — a single endpoint change followed by
+// stability is treated as a legitimate roam (NAT rebind, network handover,
+// fresh tunnel), not as a takeover.
+const flipDetectionWindow = 60 * time.Second
+
+// flipsRequiredForDenylist is how many independent "flip TO foreign" events
+// the agent must observe within flipDetectionWindow before denylisting the
+// foreign source.  A single flip is indistinguishable from a NAT rebind, so
+// we never denylist on the first one — we wait for the second.  Two flips
+// implies the endpoint has bounced back to the authenticated value at least
+// once in between, which is the signature of two devices competing.
+const flipsRequiredForDenylist = 2
+
+// takeoverFlipState tracks per-peer endpoint history so the agent can
+// distinguish a single legitimate endpoint change from an oscillating
+// takeover.  Conceptually:
+//
+//   • lastWasStored — was the most recent observation the authenticated
+//                     endpoint?  Used to detect transitions FROM stored
+//                     TO foreign (which is what we count).
+//   • flipsToForeign — count of stored→foreign transitions inside the
+//                      detection window.  ≥ flipsRequiredForDenylist means
+//                      the endpoint has bounced back at least once: an
+//                      unambiguous signature of two simultaneously-active
+//                      devices.
+//   • firstFlipAt   — timestamp of the first counted flip; the counter
+//                     resets if we go past flipDetectionWindow without
+//                     reaching the threshold.
+//   • lastForeignEP — the most recent foreign endpoint (this is the one we
+//                     denylist when the threshold trips).
+type takeoverFlipState struct {
+	lastWasStored  bool
+	flipsToForeign int
+	firstFlipAt    time.Time
+	lastForeignEP  string
 }
 
 func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort, dnsServer ports.DNSStarterPort, fwAdapter ports.FirewallPort, wsURL string, wgInterface string, peerID string, networkID string) *Runner {
@@ -115,7 +255,11 @@ func NewRunner(wsClient ports.WebSocketClientPort, writer ports.ConfigWriterPort
 		networkID:         networkID,
 		peerNames:         make(map[string]string),
 		whitelist:         make(map[string]string),
+		ipv4ToIPv6:        make(map[string]string),
 		wgIPToEndpoint:    make(map[string]string),
+		endpointChangedAt: make(map[string]time.Time),
+		reportedTakeovers: make(map[string]time.Time),
+		takeoverFlips:     make(map[string]*takeoverFlipState),
 		backoffBase:       time.Second,
 		backoffMax:        30 * time.Second,
 		heartbeatInterval: 30 * time.Second,
@@ -128,12 +272,41 @@ func (r *Runner) SetWGIP(ip string) {
 	r.wgIP = ip
 }
 
+// SetWGIPv6 sets the WireGuard interface IPv6 address of this peer (when the
+// network is dual-stack).  Captive portal HTTP/HTTPS listeners are spawned for
+// both families so IPv6 peers can reach the portal too.
+func (r *Runner) SetWGIPv6(ip string) {
+	r.wgIPv6 = ip
+}
+
+// extractEndpointIP returns the host portion of an "ip:port" or "[ipv6]:port"
+// endpoint string, or the input unchanged if it doesn't parse.  Used to compare
+// peer endpoints at IP granularity only — NAT port rebinds shouldn't kick a
+// legitimate peer out of the whitelist, while a stolen config used from a
+// genuinely different network (different IP) still fails the check.
+func extractEndpointIP(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	return host
+}
+
 // isAuthenticated reports whether the given peer WireGuard IP has completed
 // captive portal authentication AND is connecting from the same public endpoint
 // IP that was recorded at authentication time.
 //
-// If no endpoint IP was stored (empty string — legacy entry or SSO disabled),
-// only the whitelist membership is checked for backward compatibility.
+// Comparison is at IP granularity, NOT IP:port.  A stolen WireGuard config used
+// from a different network has a different public IP and is rejected; a
+// legitimate peer whose NAT rebinds its source port (changing IP:port without
+// changing the IP) keeps its whitelist entry.  Oscillation between two devices
+// sharing the same key is handled separately by the takeover-detection denylist.
+//
+// If no endpoint constraint was stored (empty string — legacy entry or SSO
+// disabled), only whitelist membership is checked.
 func (r *Runner) isAuthenticated(peerIP string) bool {
 	r.whitelistMu.RLock()
 	expectedEndpoint, ok := r.whitelist[peerIP]
@@ -145,11 +318,13 @@ func (r *Runner) isAuthenticated(peerIP string) bool {
 		// No endpoint constraint stored — legacy / non-SSO entry.
 		return true
 	}
-	// Verify the peer's current public endpoint matches the one stored at
-	// authentication time.  A mismatch means the WireGuard config is being
-	// used from a different network — require re-authentication.
 	currentEndpoint := r.getCurrentEndpointForWgIP(peerIP)
-	return currentEndpoint != "" && currentEndpoint == expectedEndpoint
+	if currentEndpoint == "" {
+		return false
+	}
+	expectedIP := extractEndpointIP(expectedEndpoint)
+	currentIP := extractEndpointIP(currentEndpoint)
+	return expectedIP != "" && expectedIP == currentIP
 }
 
 // getCurrentEndpointForWgIP returns the most-recently-observed public endpoint
@@ -166,14 +341,16 @@ func (r *Runner) getCurrentEndpointForWgIP(wgIP string) string {
 //
 // We deliberately keep the port: any change to the public source port (e.g. a
 // fresh WireGuard handshake after a tunnel restart, or NAT rebinding) counts
-// as an endpoint change and forces re-authentication via the captive portal.
-// This is the strictest possible check.
+// as an endpoint change and triggers the endpointStabilityWindow before the peer
+// is re-admitted to the iptables whitelist.  This prevents two devices sharing
+// the same WireGuard private key from getting intermittent access by oscillating
+// the jump-peer's recorded endpoint between their two public IP:port pairs.
 func (r *Runner) updateWGIPEndpointMap() {
 	iface := r.getInterface()
 	allowedIPs := GetWireGuardAllowedIPs(iface) // pubkey → []CIDR
 	endpoints := getWireGuardEndpoints(iface)    // pubkey → "ip:port"
 
-	m := make(map[string]string, len(allowedIPs))
+	newMap := make(map[string]string, len(allowedIPs))
 	for pubkey, cidrs := range allowedIPs {
 		ep, ok := endpoints[pubkey]
 		if !ok || ep == "" || ep == "(none)" {
@@ -187,14 +364,77 @@ func (r *Runner) updateWGIPEndpointMap() {
 			}
 			ip := cidr[:strings.IndexByte(cidr, '/')]
 			if ip != "" {
-				m[ip] = ep // full "ip:port" — strict match
+				newMap[ip] = ep // full "ip:port" — strict match
 			}
 		}
 	}
 
+	// Snapshot the current map before replacing it so we can detect changes.
+	r.wgIPToEndpointMu.RLock()
+	oldMap := r.wgIPToEndpoint
+	r.wgIPToEndpointMu.RUnlock()
+
+	// Record the timestamp for any WireGuard IP whose endpoint just changed.
+	// This is used by filterWhitelistByEndpoint to enforce the stability window.
+	now := time.Now()
+	r.endpointChangedMu.Lock()
+	for ip, newEP := range newMap {
+		if oldEP, existed := oldMap[ip]; existed && oldEP != newEP {
+			r.endpointChangedAt[ip] = now
+			log.Warn().
+				Str("wg_ip", ip).
+				Str("old_endpoint", oldEP).
+				Str("new_endpoint", newEP).
+				Dur("stability_window", endpointStabilityWindow).
+				Msg("WireGuard endpoint changed — stability window started; peer temporarily removed from iptables whitelist")
+
+			// If this wgIP is currently authenticated AND the new endpoint is
+			// NOT the one recorded at authentication time, this is a "takeover"
+			// — a rogue source completing WireGuard handshakes for a peer that
+			// has already authenticated through someone else.  Queue a report
+			// so the next heartbeat asks the server to denylist the rogue source.
+			r.queueTakeoverIfRogue(ip, newEP)
+		}
+	}
+	r.endpointChangedMu.Unlock()
+
 	r.wgIPToEndpointMu.Lock()
-	r.wgIPToEndpoint = m
+	r.wgIPToEndpoint = newMap
 	r.wgIPToEndpointMu.Unlock()
+}
+
+// updateIPv4ToIPv6Map rebuilds the IPv4 WireGuard IP → IPv6 WireGuard IP lookup
+// from the DNS peer list. Called whenever a DNS config update is received.
+func (r *Runner) updateIPv4ToIPv6Map(peers []dom.DNSPeer) {
+	m := make(map[string]string, len(peers))
+	for _, p := range peers {
+		if p.IP != "" && p.IPv6 != "" {
+			m[p.IP] = p.IPv6
+		}
+	}
+	r.ipv4ToIPv6Mu.Lock()
+	r.ipv4ToIPv6 = m
+	r.ipv4ToIPv6Mu.Unlock()
+}
+
+// extendWhitelistWithIPv6 appends IPv6 WireGuard addresses for each whitelisted
+// IPv4 address. This is how authenticated peers get their IPv6 address whitelisted
+// in ip6tables without requiring a separate captive portal authentication flow.
+func (r *Runner) extendWhitelistWithIPv6(wgIPs []string) []string {
+	r.ipv4ToIPv6Mu.RLock()
+	mapping := r.ipv4ToIPv6
+	r.ipv4ToIPv6Mu.RUnlock()
+	if len(mapping) == 0 {
+		return wgIPs
+	}
+	out := make([]string, len(wgIPs), len(wgIPs)+len(mapping))
+	copy(out, wgIPs)
+	for _, ipv4 := range wgIPs {
+		if ipv6, ok := mapping[ipv4]; ok {
+			out = append(out, ipv6)
+		}
+	}
+	return out
 }
 
 // updateWhitelist replaces the in-memory whitelist with the given entries.
@@ -213,14 +453,33 @@ func (r *Runner) updateWhitelist(ips []string) {
 	}
 }
 
-// filterWhitelistByEndpoint returns the wgIPs whose live public endpoint matches
-// the endpoint stored at authentication time.  Entries without a stored endpoint
-// (legacy / non-SSO) are passed through unchanged.  Entries whose live endpoint
-// is unknown OR differs from the stored endpoint are dropped — this is what
-// causes the firewall to revoke access when a stolen WireGuard config tries to
-// connect from a different network.
+// filterWhitelistByEndpoint returns the wgIPs whose live public endpoint IP
+// matches the endpoint IP stored at authentication time AND has been stable
+// long enough.
+//
+// Two checks are applied in order:
+//  1. Endpoint-IP match — the IP portion of the current endpoint (from
+//     `wg show`) must equal the IP portion of the endpoint recorded at
+//     authentication time.  A mismatch means the WireGuard config is being
+//     used from a different network (e.g. stolen config).  The port is NOT
+//     compared: NAT rebinds change the source port frequently and a legitimate
+//     peer would otherwise lose its whitelist entry on every reconnect.
+//  2. Stability window — even when the IP matches, the peer is excluded if
+//     its endpoint (IP or port) changed within the last endpointStabilityWindow.
+//     This prevents two devices sharing the same WireGuard private key from
+//     getting intermittent iptables access: while they oscillate the jump
+//     peer's recorded endpoint every ~25 s (WireGuard keepalive interval),
+//     neither has a stable endpoint and neither is whitelisted.  Once one
+//     device "wins" for endpointStabilityWindow, it gets back in.
+//
+// Oscillation between two devices behind the same NAT (which would share the
+// same source IP and only differ in port) is caught by the takeover-detection
+// denylist instead — see queueTakeoverIfRogue.
+//
+// Entries without a stored endpoint (legacy / non-SSO) are passed through unchanged.
 func (r *Runner) filterWhitelistByEndpoint(entries []string) []string {
 	out := make([]string, 0, len(entries))
+	now := time.Now()
 	for _, entry := range entries {
 		wgIP, expectedEP := entry, ""
 		if idx := strings.IndexByte(entry, '@'); idx != -1 {
@@ -231,10 +490,34 @@ func (r *Runner) filterWhitelistByEndpoint(entries []string) []string {
 			out = append(out, wgIP) // legacy entry — no constraint
 			continue
 		}
-		if currentEP := r.getCurrentEndpointForWgIP(wgIP); currentEP != "" && currentEP == expectedEP {
-			out = append(out, wgIP)
+
+		// Check 1: endpoint IP must match.
+		currentEP := r.getCurrentEndpointForWgIP(wgIP)
+		if currentEP == "" {
+			continue
 		}
-		// else: drop — endpoint mismatch or unknown
+		expectedIP := extractEndpointIP(expectedEP)
+		currentIP := extractEndpointIP(currentEP)
+		if expectedIP == "" || expectedIP != currentIP {
+			// IP mismatch — config is being used from a different network.
+			continue
+		}
+
+		// Check 2: endpoint must have been stable for at least endpointStabilityWindow.
+		r.endpointChangedMu.RLock()
+		changedAt, hasRecentChange := r.endpointChangedAt[wgIP]
+		r.endpointChangedMu.RUnlock()
+		if hasRecentChange && now.Sub(changedAt) < endpointStabilityWindow {
+			log.Debug().
+				Str("wg_ip", wgIP).
+				Str("endpoint", currentEP).
+				Dur("stable_for", now.Sub(changedAt)).
+				Dur("required", endpointStabilityWindow).
+				Msg("endpoint recently changed — holding peer out of iptables whitelist until stable")
+			continue
+		}
+
+		out = append(out, wgIP)
 	}
 	return out
 }
@@ -250,12 +533,18 @@ func (r *Runner) resyncFirewall() {
 	r.lastSyncMu.Lock()
 	policy := r.lastPolicy
 	whitelist := r.lastWhitelistRaw
+	pendingAuth := append([]string(nil), r.lastPendingAuthIPs...)
+	quarantined := append([]string(nil), r.lastQuarantinedIPs...)
+	denylist := append([]ports.DenylistEntry(nil), r.lastEndpointDenylist...)
+	wgListenPort := r.lastWGListenPort
 	r.lastSyncMu.Unlock()
 	if policy == nil {
 		return
 	}
 
 	filtered := r.filterWhitelistByEndpoint(whitelist)
+	filteredWithIPv6 := r.extendWhitelistWithIPv6(filtered)
+	pendingWithIPv6 := r.extendWhitelistWithIPv6(pendingAuth)
 
 	r.lastSyncMu.Lock()
 	if stringSliceEqual(r.lastFwState, filtered) {
@@ -265,7 +554,15 @@ func (r *Runner) resyncFirewall() {
 	r.lastFwState = filtered
 	r.lastSyncMu.Unlock()
 
-	if err := r.fwAdapter.Sync(policy, policy.IP, filtered); err != nil {
+	if err := r.fwAdapter.Sync(ports.SyncRequest{
+		Policy:              policy,
+		SelfIP:              policy.IP,
+		AuthenticatedIPs:    filteredWithIPv6,
+		PendingAuthIPs:      pendingWithIPv6,
+		QuarantinedIPs:      quarantined,
+		EndpointDenylist:    denylist,
+		WireGuardListenPort: wgListenPort,
+	}); err != nil {
 		log.Error().Err(err).Msg("firewall re-sync after endpoint change failed")
 	} else {
 		log.Info().Strs("whitelist", filtered).Msg("firewall re-synced after endpoint change")
@@ -465,15 +762,21 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				}
 			}
 
-			// Update pubkey → name map used by the tunnel monitor
+			// Update pubkey → name map and IPv4→IPv6 address mapping from DNS peers.
 			if payload.DNS != nil {
 				r.updatePeerNames(payload.Config, payload.DNS.Peers)
+				r.updateIPv4ToIPv6Map(payload.DNS.Peers)
 			}
 
 			if err := r.cfgWriter.WriteAndApply(payload.Config); err != nil {
 				log.Error().Err(err).Msg("failed applying config")
 			} else {
 				log.Debug().Msg("config applied")
+				// Refresh the local AllowedIPs cache so the next heartbeat
+				// reports them to the server (used by the jump peer's DNS to
+				// decide route-aware whether to redirect external queries from
+				// this peer when it is unauthenticated).
+				r.SetLocalAllowedIPs(parseLocalAllowedIPsFromConfig(payload.Config))
 				audit.Agent(r.peerID, r.networkID).
 					Str("action", "config.sync").
 					Msg("audit")
@@ -518,6 +821,9 @@ func (r *Runner) Start(stop <-chan struct{}) {
 			if payload.Policy != nil && r.fwAdapter != nil {
 				log.Info().
 					Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
+					Int("pending_auth", len(payload.PendingAuth)).
+					Int("denylist", len(payload.EndpointDenylist)).
+					Int("quarantined", len(payload.Quarantined)).
 					Msg("applying firewall policy update")
 
 				// Whitelist entries arrive in "wgIP@endpointIP" format (or plain
@@ -531,12 +837,45 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				// can return OS probe success responses for authenticated peers.
 				r.updateWhitelist(whitelistedIPs)
 
+				// Translate pending-auth, denylist, and quarantine into agent-side
+				// firewall types.  Pending-auth wgIPs are filtered the same way as
+				// the whitelist — IP-only match (NAT port rebinds OK, different
+				// IP rejected) so a stolen config from a different network can't
+				// hold a pending-auth grant either.
+				pendingWgIPs := make([]string, 0, len(payload.PendingAuth))
+				for _, e := range payload.PendingAuth {
+					if e.Endpoint != "" {
+						currentEP := r.getCurrentEndpointForWgIP(e.WgIP)
+						if currentEP == "" {
+							continue
+						}
+						if extractEndpointIP(currentEP) != extractEndpointIP(e.Endpoint) {
+							continue
+						}
+					}
+					pendingWgIPs = append(pendingWgIPs, e.WgIP)
+				}
+				denylistEntries := make([]ports.DenylistEntry, 0, len(payload.EndpointDenylist))
+				for _, e := range payload.EndpointDenylist {
+					denylistEntries = append(denylistEntries, ports.DenylistEntry{
+						BlockedIP:   e.BlockedIP,
+						BlockedPort: e.BlockedPort,
+					})
+				}
+				quarantinedIPs := append([]string(nil), payload.Quarantined...)
+
+				wgListenPort := getWireGuardListenPort(r.getInterface())
+
 				// Cache the policy + raw whitelist so resyncFirewall() (called from
 				// the 300 ms ticker) can re-apply iptables when a peer's endpoint
 				// changes between server pushes.
 				r.lastSyncMu.Lock()
 				r.lastPolicy = payload.Policy
 				r.lastWhitelistRaw = whitelistedIPs
+				r.lastPendingAuthIPs = pendingWgIPs
+				r.lastQuarantinedIPs = quarantinedIPs
+				r.lastEndpointDenylist = denylistEntries
+				r.lastWGListenPort = wgListenPort
 				r.lastSyncMu.Unlock()
 
 				// Notify the captive portal server that at least one policy has been
@@ -549,22 +888,43 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					cpSrv.NotifyPolicyReceived()
 				}
 
+				// Push per-peer routes to the DNS server so it can decide route-aware
+				// whether to redirect external queries from unauthenticated peers
+				// (full-tunnel = redirect everything; split-tunnel = leave external alone).
+				r.applyPeerRoutesToDNS(payload.PeerRoutes)
+
 				// Filter the whitelist by live endpoint match before handing it to
 				// the firewall adapter.  A wgIP whose current public endpoint does
 				// not match the IP recorded at authentication time (i.e. stolen
 				// config from a different network) is dropped from iptables, so
 				// non-HTTP traffic is also denied — not just captive-portal HTTP.
 				filtered := r.filterWhitelistByEndpoint(whitelistedIPs)
+				// For dual-stack networks, also whitelist each peer's IPv6 WireGuard
+				// address when their IPv4 is authenticated. This avoids a separate
+				// captive portal flow for IPv6 traffic from the same peer.
+				filteredWithIPv6 := r.extendWhitelistWithIPv6(filtered)
+				pendingWithIPv6 := r.extendWhitelistWithIPv6(pendingWgIPs)
 				r.lastSyncMu.Lock()
 				r.lastFwState = filtered
 				r.lastSyncMu.Unlock()
 
-				if err := r.fwAdapter.Sync(payload.Policy, payload.Policy.IP, filtered); err != nil {
+				if err := r.fwAdapter.Sync(ports.SyncRequest{
+					Policy:              payload.Policy,
+					SelfIP:              payload.Policy.IP,
+					AuthenticatedIPs:    filteredWithIPv6,
+					PendingAuthIPs:      pendingWithIPv6,
+					QuarantinedIPs:      quarantinedIPs,
+					EndpointDenylist:    denylistEntries,
+					WireGuardListenPort: wgListenPort,
+				}); err != nil {
 					log.Error().Err(err).Msg("failed applying firewall policy update")
 				} else {
 					log.Info().
 						Int("iptables_rule_count", len(payload.Policy.IPTablesRules)).
-						Int("whitelisted_peers", len(filtered)).
+						Int("authenticated_peers", len(filtered)).
+						Int("pending_auth_peers", len(pendingWgIPs)).
+						Int("quarantined_peers", len(quarantinedIPs)).
+						Int("denylist_entries", len(denylistEntries)).
 						Msg("firewall policy update applied successfully")
 					audit.Agent(r.peerID, r.networkID).
 						Str("action", "firewall.sync").
@@ -583,6 +943,219 @@ func (r *Runner) Start(stop <-chan struct{}) {
 	}
 }
 
+// queueTakeoverIfRogue inspects an endpoint change for an authenticated peer
+// and decides whether it represents a *rogue takeover* (which should be
+// denylisted) or a *legitimate single roam* (which should be left to the
+// captive-portal flow to re-authenticate).
+//
+// The distinction is made by counting OSCILLATIONS, not endpoint changes:
+//
+//   • A single change (stored=A, then live=B forever) is a legitimate roam:
+//     NAT port rebinding, mobile network handover, fresh tunnel handshake from
+//     the legitimate user, etc.  Denylisting B in this case would lock the
+//     legitimate user out of the network for 24 h with no recovery path
+//     (their UDP packets get DROPed before reaching WireGuard, so they can't
+//     even reach the captive portal to re-authenticate).
+//
+//   • Multiple A→foreign flips within flipDetectionWindow is the unambiguous
+//     signature of TWO simultaneously-active devices: each device's keepalive
+//     overrides the other's recorded endpoint, so we see the live endpoint
+//     bounce repeatedly between two values.  Only at this point do we have
+//     high confidence one of the values is rogue.
+//
+// We track per-peer endpoint history (lastWasStored, flipsToForeign) to count
+// stored→foreign transitions only.  After flipsRequiredForDenylist (2) such
+// transitions inside flipDetectionWindow (60 s), the most recent foreign
+// endpoint is queued as a takeover report.  Then we reset and start fresh —
+// if a NEW rogue source shows up later it has to earn its denylist entry the
+// same way.
+//
+// Must be called with r.endpointChangedMu held.
+func (r *Runner) queueTakeoverIfRogue(wgIP, newEP string) {
+	r.whitelistMu.RLock()
+	storedEP, isAuthed := r.whitelist[wgIP]
+	r.whitelistMu.RUnlock()
+	if !isAuthed || storedEP == "" {
+		// Peer is not authenticated — captive portal flow handles this case
+		// from scratch; nothing to defend.
+		return
+	}
+
+	r.takeoverFlipsMu.Lock()
+	state, ok := r.takeoverFlips[wgIP]
+	if !ok {
+		// First observation for this peer.  Assume the previous live endpoint
+		// was the authenticated one (otherwise it wouldn't be in the whitelist
+		// in the first place).
+		state = &takeoverFlipState{lastWasStored: true}
+		r.takeoverFlips[wgIP] = state
+	}
+	now := time.Now()
+
+	// Forget stale flips: if the first counted flip was longer ago than the
+	// detection window, reset the counter — a rebind that happened a minute
+	// ago and has held since is, by definition, a legitimate roam.
+	if !state.firstFlipAt.IsZero() && now.Sub(state.firstFlipAt) > flipDetectionWindow {
+		state.flipsToForeign = 0
+		state.firstFlipAt = time.Time{}
+	}
+
+	if newEP == storedEP {
+		// Endpoint flipped back to the authenticated value.  This in itself
+		// is normal (legitimate user's keepalive arrived); we just record
+		// "the last reading was at stored" so the next foreign reading
+		// counts as a fresh stored→foreign transition.
+		state.lastWasStored = true
+		r.takeoverFlipsMu.Unlock()
+		return
+	}
+
+	// newEP is foreign.  Count it as a flip ONLY if the previous reading was
+	// at the stored endpoint — successive foreign readings with the SAME
+	// foreign value (no bounce-back to stored in between) is just one event.
+	if state.lastWasStored {
+		state.flipsToForeign++
+		if state.firstFlipAt.IsZero() {
+			state.firstFlipAt = now
+		}
+		log.Debug().
+			Str("wg_ip", wgIP).
+			Str("authenticated_endpoint", storedEP).
+			Str("observed_endpoint", newEP).
+			Int("flips_to_foreign", state.flipsToForeign).
+			Int("required", flipsRequiredForDenylist).
+			Msg("endpoint flipped from authenticated to foreign — counting toward takeover threshold")
+	}
+	state.lastWasStored = false
+	state.lastForeignEP = newEP
+
+	if state.flipsToForeign < flipsRequiredForDenylist {
+		// One flip: indistinguishable from a NAT rebind / roam.  Don't denylist.
+		// The stability window (10 s) plus the captive portal flow take care
+		// of the rest: if the legitimate user just moved networks they will
+		// re-authenticate from the new endpoint and continue working.
+		r.takeoverFlipsMu.Unlock()
+		return
+	}
+
+	// Threshold crossed: we've seen the endpoint bounce stored→foreign at least
+	// twice within flipDetectionWindow.  This is concrete evidence of two
+	// simultaneously-active devices.  Reset the counter so that, if the rogue
+	// later moves to yet a different IP:port, it has to re-cross the threshold
+	// before being denylisted again.
+	state.flipsToForeign = 0
+	state.firstFlipAt = time.Time{}
+	r.takeoverFlipsMu.Unlock()
+
+	// Spam-suppress repeated reports for the same (wgIP, foreign) pair.
+	key := wgIP + "|" + newEP
+	r.reportedTakeoversMu.Lock()
+	if last, ok := r.reportedTakeovers[key]; ok && now.Sub(last) < takeoverReportCooldown {
+		r.reportedTakeoversMu.Unlock()
+		return
+	}
+	r.reportedTakeovers[key] = now
+	r.reportedTakeoversMu.Unlock()
+
+	r.pendingTakeoversMu.Lock()
+	r.pendingTakeovers = append(r.pendingTakeovers, endpointTakeoverReport{
+		WgIP:            wgIP,
+		AuthenticatedAt: storedEP,
+		ObservedAt:      newEP,
+	})
+	r.pendingTakeoversMu.Unlock()
+
+	log.Warn().
+		Str("wg_ip", wgIP).
+		Str("authenticated_endpoint", storedEP).
+		Str("observed_endpoint", newEP).
+		Msg("captive portal: rogue takeover confirmed (endpoint oscillated ≥2× to foreign source within detection window) — queued for server denylist")
+}
+
+// applyPeerRoutesToDNS forwards the per-peer AllowedIPs map to the DNS server,
+// which uses it to decide route-aware whether to redirect external queries from
+// unauthenticated peers (full-tunnel = redirect everything; split-tunnel = only
+// internal/probe redirection).  No-op if the DNS server doesn't implement the
+// optional interface (older builds, non-jump peers).
+func (r *Runner) applyPeerRoutesToDNS(routes map[string][]string) {
+	if routes == nil {
+		return
+	}
+	r.dnsServerMu.Lock()
+	dns := r.dnsServer
+	r.dnsServerMu.Unlock()
+	if dns == nil {
+		return
+	}
+	type peerRoutesSetter interface {
+		SetPeerRoutes(routes map[string][]string)
+	}
+	if setter, ok := dns.(peerRoutesSetter); ok {
+		setter.SetPeerRoutes(routes)
+	}
+}
+
+// drainPendingTakeovers atomically returns and clears the takeover queue.
+func (r *Runner) drainPendingTakeovers() []endpointTakeoverReport {
+	r.pendingTakeoversMu.Lock()
+	defer r.pendingTakeoversMu.Unlock()
+	if len(r.pendingTakeovers) == 0 {
+		return nil
+	}
+	out := r.pendingTakeovers
+	r.pendingTakeovers = nil
+	return out
+}
+
+// SetLocalAllowedIPs records this peer's locally-configured WireGuard AllowedIPs
+// so they can be reported in every heartbeat.  Called after each successful
+// config apply by parseLocalAllowedIPsFromConfig.
+func (r *Runner) SetLocalAllowedIPs(cidrs []string) {
+	cp := append([]string(nil), cidrs...)
+	r.localAllowedIPsMu.Lock()
+	r.localAllowedIPs = cp
+	r.localAllowedIPsMu.Unlock()
+}
+
+func (r *Runner) getLocalAllowedIPs() []string {
+	r.localAllowedIPsMu.RLock()
+	defer r.localAllowedIPsMu.RUnlock()
+	cp := append([]string(nil), r.localAllowedIPs...)
+	return cp
+}
+
+// parseLocalAllowedIPsFromConfig extracts the union of all "AllowedIPs = ..."
+// entries from the [Peer] sections of the WireGuard config text.  This is what
+// the local kernel will route through the VPN — i.e. the peer's effective
+// "what goes through the tunnel" set.
+func parseLocalAllowedIPsFromConfig(cfg string) []string {
+	var out []string
+	seen := make(map[string]struct{})
+	scanner := bufio.NewScanner(strings.NewReader(cfg))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(strings.ToLower(line), "allowedips") {
+			continue
+		}
+		idx := strings.IndexByte(line, '=')
+		if idx == -1 {
+			continue
+		}
+		for _, cidr := range strings.Split(line[idx+1:], ",") {
+			cidr = strings.TrimSpace(cidr)
+			if cidr == "" {
+				continue
+			}
+			if _, ok := seen[cidr]; ok {
+				continue
+			}
+			seen[cidr] = struct{}{}
+			out = append(out, cidr)
+		}
+	}
+	return out
+}
+
 // sendHeartbeat sends system information to the server
 func (r *Runner) sendHeartbeat() {
 	sysInfo, err := CollectSystemInfo(r.getInterface())
@@ -591,11 +1164,46 @@ func (r *Runner) sendHeartbeat() {
 		return
 	}
 
+	takeovers := r.drainPendingTakeovers()
+	// Convert to the wire-form expected by the server.  We use a generic
+	// map[string]interface{} to avoid pulling the server domain package into
+	// the agent module.
+	var takeoverWire []map[string]string
+	if len(takeovers) > 0 {
+		takeoverWire = make([]map[string]string, 0, len(takeovers))
+		for _, t := range takeovers {
+			takeoverWire = append(takeoverWire, map[string]string{
+				"wg_ip":            t.WgIP,
+				"authenticated_at": t.AuthenticatedAt,
+				"observed_at":      t.ObservedAt,
+			})
+		}
+	}
+
 	heartbeat := map[string]interface{}{
 		"hostname":         sysInfo.Hostname,
 		"system_uptime":    sysInfo.SystemUptime,
 		"wireguard_uptime": sysInfo.WireGuardUptime,
 		"peer_endpoints":   sysInfo.PeerEndpoints,
+	}
+
+	// Include WireGuard handshake timestamps so the server can use real
+	// data-plane liveness (not just endpoint presence) for connectivity detection.
+	// wg show latest-handshakes returns a timestamp-per-peer map; zero-valued
+	// entries (no handshake yet) are already filtered out by GetWireGuardHandshakes.
+	if handshakes := GetWireGuardHandshakes(r.getInterface()); len(handshakes) > 0 {
+		handshakeUnix := make(map[string]int64, len(handshakes))
+		for pubKey, t := range handshakes {
+			handshakeUnix[pubKey] = t.Unix()
+		}
+		heartbeat["peer_handshakes"] = handshakeUnix
+	}
+
+	if local := r.getLocalAllowedIPs(); len(local) > 0 {
+		heartbeat["local_allowed_ips"] = local
+	}
+	if len(takeoverWire) > 0 {
+		heartbeat["endpoint_takeovers"] = takeoverWire
 	}
 
 	data, err := json.Marshal(heartbeat)
@@ -606,12 +1214,19 @@ func (r *Runner) sendHeartbeat() {
 
 	if err := r.wsClient.WriteMessage(data); err != nil {
 		log.Debug().Err(err).Msg("failed to send heartbeat (will retry)")
+		// On send failure, re-queue the takeovers so we retry next time.
+		if len(takeovers) > 0 {
+			r.pendingTakeoversMu.Lock()
+			r.pendingTakeovers = append(takeovers, r.pendingTakeovers...)
+			r.pendingTakeoversMu.Unlock()
+		}
 	} else {
 		log.Trace().
 			Str("hostname", sysInfo.Hostname).
 			Int64("system_uptime", sysInfo.SystemUptime).
 			Int64("wireguard_uptime", sysInfo.WireGuardUptime).
 			Interface("peer_endpoints", sysInfo.PeerEndpoints).
+			Int("takeovers", len(takeovers)).
 			Msg("heartbeat sent")
 	}
 }
@@ -954,16 +1569,49 @@ func (r *Runner) startCaptivePortalServer() {
 	// hostnames match the cert. Internal VPN domains are not HSTS-preloaded, so
 	// browsers allow the user to bypass the self-signed warning and follow the
 	// redirect — unlike public domains (google.com, etc.) which are hard-blocked.
-	go func() {
-		tlsAddr := r.wgIP + ":443"
-		if err := srv.StartTLS(tlsAddr, r.wgIP, r.vpnDomain); err != nil {
-			log.Error().Err(err).Msg("captive portal HTTPS server stopped")
-		}
-	}()
+	//
+	// We use net.JoinHostPort because IPv6 addresses contain colons and the
+	// "ipv6:port" form is ambiguous; net.JoinHostPort produces "[ipv6]:port".
+	if r.wgIP != "" {
+		tlsAddr := net.JoinHostPort(r.wgIP, "443")
+		go func() {
+			if err := srv.StartTLS(tlsAddr, r.wgIP, r.vpnDomain); err != nil {
+				log.Error().Str("addr", tlsAddr).Err(err).Msg("captive portal HTTPS server (IPv4) stopped")
+			}
+		}()
 
-	addr := r.wgIP + ":80"
-	log.Info().Str("addr", addr).Str("portal_url", r.captivePortalURL).Msg("starting captive portal HTTP server")
-	if err := srv.Start(addr); err != nil {
-		log.Error().Err(err).Msg("captive portal HTTP server stopped")
+		addr := net.JoinHostPort(r.wgIP, "80")
+		log.Info().Str("addr", addr).Str("portal_url", r.captivePortalURL).Msg("starting captive portal HTTP server (IPv4)")
+		go func() {
+			if err := srv.Start(addr); err != nil {
+				log.Error().Str("addr", addr).Err(err).Msg("captive portal HTTP server (IPv4) stopped")
+			}
+		}()
 	}
+
+	// Spawn the same captive portal endpoints on the IPv6 address (dual-stack
+	// deployments).  The same Server instance handles both — the captive portal
+	// is stateless w.r.t. listening address, and `r.RemoteAddr` in handlers
+	// already gives the per-connection peer IP.
+	if r.wgIPv6 != "" {
+		tlsAddr := net.JoinHostPort(r.wgIPv6, "443")
+		go func() {
+			if err := srv.StartTLS(tlsAddr, r.wgIPv6, r.vpnDomain); err != nil {
+				log.Error().Str("addr", tlsAddr).Err(err).Msg("captive portal HTTPS server (IPv6) stopped")
+			}
+		}()
+
+		addr := net.JoinHostPort(r.wgIPv6, "80")
+		log.Info().Str("addr", addr).Str("portal_url", r.captivePortalURL).Msg("starting captive portal HTTP server (IPv6)")
+		go func() {
+			if err := srv.Start(addr); err != nil {
+				log.Error().Str("addr", addr).Err(err).Msg("captive portal HTTP server (IPv6) stopped")
+			}
+		}()
+	}
+
+	// Block forever (one of the goroutines holds the actual listener); this
+	// goroutine is intentionally kept alive so the caller's `go startCaptivePortalServer()`
+	// continues to "own" the lifecycle of the server.
+	select {}
 }

@@ -482,6 +482,51 @@ func (m *mockFullRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Co
 func (m *mockFullRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
 	return nil
 }
+func (m *mockFullRepository) ListActiveCaptivePortalTokens(ctx context.Context, networkID, jumpPeerID string) ([]*network.CaptivePortalToken, error) {
+	return nil, nil
+}
+func (m *mockFullRepository) MarkCaptivePortalTokenConsumed(ctx context.Context, token string) error {
+	return nil
+}
+func (m *mockFullRepository) SetCaptivePortalTokenConsumeState(ctx context.Context, token, state string) error {
+	return nil
+}
+func (m *mockFullRepository) ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*network.CaptivePortalToken, error) {
+	return nil, nil
+}
+func (m *mockFullRepository) AddEndpointDenylist(ctx context.Context, e *network.EndpointDenylistEntry) error {
+	return nil
+}
+func (m *mockFullRepository) GetEndpointDenylist(ctx context.Context, networkID, jumpPeerID string) ([]*network.EndpointDenylistEntry, error) {
+	return nil, nil
+}
+func (m *mockFullRepository) ClearEndpointDenylistForPeer(ctx context.Context, networkID, wgIP string) error {
+	return nil
+}
+func (m *mockFullRepository) CleanupExpiredEndpointDenylist(ctx context.Context) error {
+	return nil
+}
+func (m *mockFullRepository) GetQuarantine(ctx context.Context, networkID, peerID string) (*network.CaptivePortalQuarantine, error) {
+	return nil, nil
+}
+func (m *mockFullRepository) UpsertQuarantine(ctx context.Context, q *network.CaptivePortalQuarantine) error {
+	return nil
+}
+func (m *mockFullRepository) ListQuarantinedPeers(ctx context.Context, networkID string) ([]*network.CaptivePortalQuarantine, error) {
+	return nil, nil
+}
+func (m *mockFullRepository) ClearQuarantine(ctx context.Context, networkID, peerID string) error {
+	return nil
+}
+func (m *mockFullRepository) UpsertPeerLocalRoutes(ctx context.Context, networkID, peerID string, allowedIPs []string) error {
+	return nil
+}
+func (m *mockFullRepository) GetPeerLocalRoutes(ctx context.Context, networkID, peerID string) ([]string, error) {
+	return nil, nil
+}
+func (m *mockFullRepository) ListPeerLocalRoutes(ctx context.Context, networkID string) (map[string][]string, error) {
+	return nil, nil
+}
 
 type mockIPAMRepository struct {
 	nextIP int

@@ -439,26 +439,28 @@ func (h *Handler) buildMCPServer() *mcp.Server {
 		)
 
 		type CreateRouteParams struct {
-			NetworkID       string `json:"network_id"`
-			Name            string `json:"name"`
-			Description     string `json:"description,omitempty"`
-			DestinationCIDR string `json:"destination_cidr"`
-			JumpPeerID      string `json:"jump_peer_id"`
-			DomainSuffix    string `json:"domain_suffix,omitempty"`
+			NetworkID         string `json:"network_id"`
+			Name              string `json:"name"`
+			Description       string `json:"description,omitempty"`
+			DestinationCIDR   string `json:"destination_cidr,omitempty"`
+			DestinationCIDRv6 string `json:"destination_cidr_v6,omitempty"`
+			JumpPeerID        string `json:"jump_peer_id"`
+			DomainSuffix      string `json:"domain_suffix,omitempty"`
 		}
 		mcp.AddTool(s,
-			&mcp.Tool{Name: "create_route", Description: "Create a new route in a network (admin only). Specifies a destination CIDR reachable via a jump peer."},
+			&mcp.Tool{Name: "create_route", Description: "Create a new route in a network (admin only). Specify destination_cidr (IPv4) and/or destination_cidr_v6 (IPv6) — at least one is required; setting both yields a dual-stack route."},
 			func(ctx context.Context, _ *mcp.CallToolRequest, p CreateRouteParams) (*mcp.CallToolResult, any, error) {
 				user := mcpUserFrom(ctx)
 				if user == nil || user.Role != "administrator" {
 					return mcpErr("admin access required"), nil, nil
 				}
 				route, err := h.routeService.CreateRoute(ctx, p.NetworkID, &domain.RouteCreateRequest{
-					Name:            p.Name,
-					Description:     p.Description,
-					DestinationCIDR: p.DestinationCIDR,
-					JumpPeerID:      p.JumpPeerID,
-					DomainSuffix:    p.DomainSuffix,
+					Name:              p.Name,
+					Description:       p.Description,
+					DestinationCIDR:   p.DestinationCIDR,
+					DestinationCIDRv6: p.DestinationCIDRv6,
+					JumpPeerID:        p.JumpPeerID,
+					DomainSuffix:      p.DomainSuffix,
 				})
 				if err != nil {
 					return mcpErr(err.Error()), nil, nil
@@ -468,13 +470,14 @@ func (h *Handler) buildMCPServer() *mcp.Server {
 		)
 
 		type UpdateRouteParams struct {
-			NetworkID       string `json:"network_id"`
-			RouteID         string `json:"route_id"`
-			Name            string `json:"name,omitempty"`
-			Description     string `json:"description,omitempty"`
-			DestinationCIDR string `json:"destination_cidr,omitempty"`
-			JumpPeerID      string `json:"jump_peer_id,omitempty"`
-			DomainSuffix    string `json:"domain_suffix,omitempty"`
+			NetworkID         string `json:"network_id"`
+			RouteID           string `json:"route_id"`
+			Name              string `json:"name,omitempty"`
+			Description       string `json:"description,omitempty"`
+			DestinationCIDR   string `json:"destination_cidr,omitempty"`
+			DestinationCIDRv6 string `json:"destination_cidr_v6,omitempty"`
+			JumpPeerID        string `json:"jump_peer_id,omitempty"`
+			DomainSuffix      string `json:"domain_suffix,omitempty"`
 		}
 		mcp.AddTool(s,
 			&mcp.Tool{Name: "update_route", Description: "Update a route's configuration (admin only)."},
@@ -484,11 +487,12 @@ func (h *Handler) buildMCPServer() *mcp.Server {
 					return mcpErr("admin access required"), nil, nil
 				}
 				route, err := h.routeService.UpdateRoute(ctx, p.NetworkID, p.RouteID, &domain.RouteUpdateRequest{
-					Name:            p.Name,
-					Description:     p.Description,
-					DestinationCIDR: p.DestinationCIDR,
-					JumpPeerID:      p.JumpPeerID,
-					DomainSuffix:    p.DomainSuffix,
+					Name:              p.Name,
+					Description:       p.Description,
+					DestinationCIDR:   p.DestinationCIDR,
+					DestinationCIDRv6: p.DestinationCIDRv6,
+					JumpPeerID:        p.JumpPeerID,
+					DomainSuffix:      p.DomainSuffix,
 				})
 				if err != nil {
 					return mcpErr(err.Error()), nil, nil

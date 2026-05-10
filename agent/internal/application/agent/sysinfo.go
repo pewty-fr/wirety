@@ -134,6 +134,23 @@ func GetWireGuardAllowedIPs(iface string) map[string][]string {
 	return result
 }
 
+// getWireGuardListenPort returns the WireGuard interface's UDP listen port
+// (as reported by `wg show <iface> listen-port`).  Returns 0 on failure or
+// if the interface has no fixed listen port.  Used by the firewall adapter
+// to scope the physical-interface denylist to WireGuard traffic only.
+func getWireGuardListenPort(iface string) int {
+	cmd := exec.Command("wg", "show", iface, "listen-port") // #nosec G204
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		return 0
+	}
+	return port
+}
+
 // getWireGuardEndpoints returns a map of peer public keys to their endpoints
 func getWireGuardEndpoints(iface string) map[string]string {
 	// Get peer endpoints using wg show

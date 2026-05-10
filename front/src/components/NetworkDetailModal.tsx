@@ -77,20 +77,24 @@ export default function NetworkDetailModal({ isOpen, onClose, network, onUpdate 
           {/* Main Info Grid */}
           <div className="grid grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">CIDR</label>
-              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{network.cidr}</p>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IPv4 CIDR</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{network.cidr || <span className="text-gray-400 italic text-base">—</span>}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IPv6 CIDR</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{network.cidr_v6 || <span className="text-gray-400 italic text-base">—</span>}</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
               <p className="text-lg text-gray-900 dark:text-gray-100">{getNetworkDomain(network)}</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">DNS</label>
-              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{network.dns.join(', ') || 'None'}</p>
-            </div>
-            <div>
               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain Suffix</label>
               <p className="text-lg text-gray-900 dark:text-gray-100">{network.domain_suffix || 'internal'}</p>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">DNS</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{network.dns.join(', ') || 'None'}</p>
             </div>
           </div>
 

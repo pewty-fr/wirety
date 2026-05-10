@@ -2,6 +2,7 @@ export interface Network {
   id: string;
   name: string;
   cidr: string;
+  cidr_v6?: string;      // IPv6 CIDR (optional, dual-stack)
   dns: string[];
   domain_suffix?: string;
   default_group_ids?: string[];
@@ -20,6 +21,7 @@ export interface Peer {
   name: string;
   public_key: string;
   address: string;
+  address_v6?: string;   // IPv6 WireGuard address (optional, dual-stack)
   endpoint: string;
   listen_port?: number;
   token?: string;
@@ -39,6 +41,8 @@ export interface PeerConnectivityStatus {
   has_active_agent: boolean;
   current_session?: AgentSession;
   last_checked: string;
+  /** Captive portal auth state: "authenticated" | "pending_auth" | "quarantined" | "" */
+  captive_portal_state?: string;
 }
 
 export interface AgentSession {
@@ -57,6 +61,7 @@ export interface IPAMAllocation {
   network_id: string;
   network_name: string;
   network_cidr: string;
+  family?: 'ipv4' | 'ipv6';   // present on dual-stack-aware servers; "ipv4" implied if absent
   ip: string;
   peer_id?: string;
   peer_name?: string;
@@ -139,7 +144,10 @@ export interface Route {
   network_name?: string; // Added for cross-network display
   name: string;
   description: string;
-  destination_cidr: string;
+  /** IPv4 destination CIDR (optional if destination_cidr_v6 is set) */
+  destination_cidr?: string;
+  /** IPv6 destination CIDR (optional if destination_cidr is set).  At least one of the two must be set. */
+  destination_cidr_v6?: string;
   jump_peer_id: string;
   domain_suffix: string;
   created_at: string;
@@ -171,7 +179,8 @@ export interface RuleAccess {
 export interface RouteAccess {
   route_id: string;
   route_name: string;
-  destination_cidr: string;
+  destination_cidr?: string;
+  destination_cidr_v6?: string;
   jump_peer_id: string;
   jump_peer_name: string;
   group_name: string;
@@ -191,7 +200,10 @@ export interface DNSMapping {
   id: string;
   route_id: string;
   name: string;
-  ip_address: string;
+  /** IPv4 address (optional if ip_address_v6 is set) */
+  ip_address?: string;
+  /** IPv6 address (optional if ip_address is set).  At least one of the two must be set. */
+  ip_address_v6?: string;
   created_at: string;
   updated_at: string;
 }

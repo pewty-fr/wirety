@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faServer, faLaptop, faRocket, faCopy, faCheckCircle, faTimesCircle, faRoute, faNetworkWired } from '@fortawesome/free-solid-svg-icons';
 import type { PeerReachability } from '../types';
@@ -22,6 +22,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
   const [activeTab, setActiveTab] = useState<'configuration' | 'access' | 'reachability'>('configuration');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
   const [configText, setConfigText] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -38,7 +39,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     _groupName: string;
     _groupPriority: number;
   }>>([]);
-  const [routes, setRoutes] = useState<{ id: string; name: string; destination_cidr: string; description?: string }[]>([]);
+  const [routes, setRoutes] = useState<{ id: string; name: string; destination_cidr?: string; destination_cidr_v6?: string; description?: string }[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [reachability, setReachability] = useState<PeerReachability | null>(null);
   const [loadingReachability, setLoadingReachability] = useState(false);
@@ -64,8 +65,19 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     isOpen && !!peer?.network_id
   );
 
-  // Determine which peer data to display
-  const displayPeer = currentPeer || peer;
+  // Determine which peer data to display.
+  // The live `currentPeer` comes from the server endpoint which does not include
+  // network_id (it is only a URL parameter). Preserve network_id and network_name
+  // from the original `peer` prop so that config download / delete operations work.
+  // useMemo prevents a new object reference on every render (which would otherwise
+  // trigger the loadPeerDetails useEffect infinitely every time the modal re-renders).
+  const displayPeer = useMemo(
+    () => currentPeer
+      ? { ...currentPeer, network_id: peer?.network_id, network_name: peer?.network_name }
+      : peer,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentPeer, peer?.network_id, peer?.network_name]
+  );
 
   // Load groups, policies, and routes for this peer
   useEffect(() => {
@@ -167,7 +179,8 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
     };
 
     void loadPeerDetails();
-  }, [isOpen, peer?.network_id, displayPeer]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, peer?.network_id, displayPeer?.id, displayPeer?.group_ids?.join(',')]);
 
   // Load reachability data when the reachability tab is opened
   useEffect(() => {
@@ -218,6 +231,30 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
       alert(err.response?.data?.error || 'Failed to delete peer');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleResetAuth = async () => {
+    if (!confirm(
+      `Reset captive-portal authentication state for "${displayPeer.name}"?\n\n` +
+      `This will:\n` +
+      `  • Remove the peer from the captive-portal whitelist\n` +
+      `  • Cancel any pending sign-in tokens\n` +
+      `  • Clear strike counter and lift any active quarantine\n\n` +
+      `The peer remains in the network. The next request from it will be redirected to the captive portal for fresh authentication via SSO. ` +
+      `Use this to kick a peer that may have a leaked config (forces re-auth) OR to release a peer that got soft-locked into quarantine.`
+    )) {
+      return;
+    }
+    setResetting(true);
+    try {
+      await api.revokePeerAuthentication(displayPeer.network_id!, displayPeer.id);
+      onUpdate();
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      alert(err.response?.data?.error || 'Failed to reset authentication state');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -300,13 +337,19 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IP Address</label>
-              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address}</p>
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IPv4 Address</label>
+              <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address || <span className="text-gray-400 italic text-base">—</span>}</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Domain</label>
               <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.name}.{network?.name || displayPeer.network_name || 'network'}.{network?.domain_suffix || 'internal' }</p>
             </div>
+            {displayPeer.address_v6 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">IPv6 Address</label>
+                <p className="text-lg font-mono text-gray-900 dark:text-gray-100">{displayPeer.address_v6}</p>
+              </div>
+            )}
             {/* Owner */}
             {displayPeer.owner_id && (
             <div>
@@ -378,6 +421,46 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                   </span>
                 </div>
               )}
+
+              {/* Captive Portal Auth State (non-jump peers only) */}
+              {!displayPeer.is_jump && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">Portal Auth</span>
+                  {(() => {
+                    const state = displayPeer.session_status?.captive_portal_state;
+                    if (state === 'authenticated') {
+                      return (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                          Authenticated
+                        </span>
+                      );
+                    }
+                    if (state === 'pending_auth') {
+                      return (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                          <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                          Pending Auth
+                        </span>
+                      );
+                    }
+                    if (state === 'quarantined') {
+                      return (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                          <span className="w-2 h-2 rounded-full bg-red-500" />
+                          Quarantined
+                        </span>
+                      );
+                    }
+                    return (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                        <span className="w-2 h-2 rounded-full bg-gray-400" />
+                        Not authenticated
+                      </span>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           </div>
 
@@ -387,9 +470,14 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
           {!displayPeer.use_agent && (
             <div className="space-y-2">
               <h4 className="text-sm font-medium text-gray-700 dark:text-gray-200">WireGuard Configuration</h4>
+              {!displayPeer.owner_id && (
+                <p className="text-sm text-amber-600 dark:text-amber-400">
+                  Config download is disabled — this peer has no owner. Assign an owner to enable it.
+                </p>
+              )}
               <div className="flex gap-2">
                 <button
-                  disabled={configLoading || configCopied}
+                  disabled={configLoading || configCopied || !displayPeer.owner_id}
                   onClick={async () => {
                     if (!peer.network_id) return;
                     setConfigLoading(true);
@@ -415,7 +503,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                   {configLoading ? 'Copying...' : configCopied ? 'Copied ✓' : 'Copy Config'}
                 </button>
                 <button
-                  disabled={configLoading}
+                  disabled={configLoading || !displayPeer.owner_id}
                   onClick={async () => {
                     if (!peer.network_id) return;
                     setConfigError(null);
@@ -609,8 +697,8 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                   {routes.map((route) => (
                     <div key={route.id} className="bg-white dark:bg-gray-700 px-3 py-2 rounded">
                       <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{route.name}</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        {route.destination_cidr}
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono">
+                        {[route.destination_cidr, route.destination_cidr_v6].filter(Boolean).join(' / ')}
                       </div>
                       {route.description && (
                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{route.description}</div>
@@ -748,7 +836,7 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                           <div className="flex items-center justify-between gap-2">
                             <div>
                               <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{route.route_name}</span>
-                              <span className="text-xs font-mono text-gray-500 dark:text-gray-400 ml-2">{route.destination_cidr}</span>
+                              <span className="text-xs font-mono text-gray-500 dark:text-gray-400 ml-2">{[route.destination_cidr, route.destination_cidr_v6].filter(Boolean).join(' / ')}</span>
                             </div>
                             <div className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
                               via <span className="font-medium text-gray-700 dark:text-gray-200">{route.jump_peer_name}</span>
@@ -775,17 +863,30 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
           {/* Actions */}
           <div className="flex justify-between gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
             {canEdit && (
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                title="Delete Peer"
-                className="group px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
-              >
-                <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-                {deleting ? 'Deleting...' : 'Delete'}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting || resetting}
+                  title="Delete Peer"
+                  className="group px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
+                >
+                  <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  {deleting ? 'Deleting...' : 'Delete'}
+                </button>
+                <button
+                  onClick={handleResetAuth}
+                  disabled={deleting || resetting}
+                  title="Reset captive-portal auth state: clears whitelist, cancels pending sign-in tokens, lifts quarantine. Use this both to force re-auth on a suspected shared config AND to release a peer that got soft-locked from too many failed sign-ins."
+                  className="group px-4 py-2.5 bg-gradient-to-r from-amber-600 to-orange-500 text-white rounded-xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-2 font-semibold shadow-lg hover:shadow-xl"
+                >
+                  <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  {resetting ? 'Resetting...' : 'Reset Auth'}
+                </button>
+              </div>
             )}
             <div className="flex gap-3 ml-auto">
               <button

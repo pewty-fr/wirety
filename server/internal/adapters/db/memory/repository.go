@@ -17,6 +17,10 @@ type Repository struct {
 	sessions         map[string]map[string]*network.AgentSession   // networkID -> sessionID -> AgentSession
 	captiveWhitelist map[string]map[string]string                  // "networkID:jumpPeerID" -> peerIP -> endpointIP (may be "")
 	captiveTokens    map[string]*network.CaptivePortalToken        // token -> CaptivePortalToken
+	consumedTokens   map[string]struct{}                           // tokens marked successfully consumed
+	endpointDenylist map[string][]*network.EndpointDenylistEntry   // "networkID:jumpPeerID" -> entries
+	quarantine       map[string]*network.CaptivePortalQuarantine   // "networkID:peerID" -> quarantine state
+	peerRoutes       map[string]map[string][]string                // networkID -> peerID -> AllowedIPs
 }
 
 // NewRepository creates a new in-memory repository
@@ -505,5 +509,223 @@ func (r *Repository) CleanupExpiredCaptivePortalTokens(ctx context.Context) erro
 	}
 
 	return nil
+}
+
+func (r *Repository) MarkCaptivePortalTokenConsumed(ctx context.Context, tokenStr string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.consumedTokens == nil {
+		r.consumedTokens = make(map[string]struct{})
+	}
+	r.consumedTokens[tokenStr] = struct{}{}
+	return nil
+}
+
+func (r *Repository) SetCaptivePortalTokenConsumeState(ctx context.Context, tokenStr, state string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.captiveTokens == nil {
+		return fmt.Errorf("token not found")
+	}
+	t, ok := r.captiveTokens[tokenStr]
+	if !ok || t.ExpiresAt.Before(time.Now()) {
+		return fmt.Errorf("token not found")
+	}
+	t.ConsumeState = state
+	return nil
+}
+
+func (r *Repository) ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*network.CaptivePortalToken, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	now := time.Now()
+	var out []*network.CaptivePortalToken
+	for tok, t := range r.captiveTokens {
+		if !now.After(t.ExpiresAt) {
+			continue
+		}
+		if _, consumed := r.consumedTokens[tok]; consumed {
+			continue
+		}
+		cp := *t
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+func (r *Repository) ListActiveCaptivePortalTokens(ctx context.Context, networkID, jumpPeerID string) ([]*network.CaptivePortalToken, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	now := time.Now()
+	var out []*network.CaptivePortalToken
+	for _, t := range r.captiveTokens {
+		if t.NetworkID == networkID && t.JumpPeerID == jumpPeerID && now.Before(t.ExpiresAt) {
+			cp := *t
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+// Endpoint denylist (in-memory)
+func (r *Repository) AddEndpointDenylist(ctx context.Context, e *network.EndpointDenylistEntry) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.endpointDenylist == nil {
+		r.endpointDenylist = make(map[string][]*network.EndpointDenylistEntry)
+	}
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now()
+	}
+	if e.ExpiresAt.IsZero() {
+		e.ExpiresAt = e.CreatedAt.Add(network.EndpointDenylistDefaultTTL)
+	}
+	key := e.NetworkID + ":" + e.JumpPeerID
+	// Replace any existing matching entry.
+	entries := r.endpointDenylist[key]
+	for i, existing := range entries {
+		if existing.WgIP == e.WgIP && existing.BlockedIP == e.BlockedIP && existing.BlockedPort == e.BlockedPort {
+			entries[i] = e
+			r.endpointDenylist[key] = entries
+			return nil
+		}
+	}
+	r.endpointDenylist[key] = append(entries, e)
+	return nil
+}
+
+func (r *Repository) GetEndpointDenylist(ctx context.Context, networkID, jumpPeerID string) ([]*network.EndpointDenylistEntry, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	now := time.Now()
+	key := networkID + ":" + jumpPeerID
+	var out []*network.EndpointDenylistEntry
+	for _, e := range r.endpointDenylist[key] {
+		if now.Before(e.ExpiresAt) {
+			cp := *e
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *Repository) ClearEndpointDenylistForPeer(ctx context.Context, networkID, wgIP string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key, entries := range r.endpointDenylist {
+		// key is "networkID:jumpPeerID" — only act on entries belonging to this network.
+		if len(key) < len(networkID) || key[:len(networkID)] != networkID {
+			continue
+		}
+		filtered := entries[:0]
+		for _, e := range entries {
+			if e.WgIP != wgIP {
+				filtered = append(filtered, e)
+			}
+		}
+		r.endpointDenylist[key] = filtered
+	}
+	return nil
+}
+
+func (r *Repository) CleanupExpiredEndpointDenylist(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	for key, entries := range r.endpointDenylist {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if now.Before(e.ExpiresAt) {
+				filtered = append(filtered, e)
+			}
+		}
+		r.endpointDenylist[key] = filtered
+	}
+	return nil
+}
+
+// Quarantine (in-memory)
+func (r *Repository) GetQuarantine(ctx context.Context, networkID, peerID string) (*network.CaptivePortalQuarantine, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if q, ok := r.quarantine[networkID+":"+peerID]; ok {
+		cp := *q
+		return &cp, nil
+	}
+	return nil, nil
+}
+
+func (r *Repository) UpsertQuarantine(ctx context.Context, q *network.CaptivePortalQuarantine) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.quarantine == nil {
+		r.quarantine = make(map[string]*network.CaptivePortalQuarantine)
+	}
+	cp := *q
+	r.quarantine[q.NetworkID+":"+q.PeerID] = &cp
+	return nil
+}
+
+func (r *Repository) ListQuarantinedPeers(ctx context.Context, networkID string) ([]*network.CaptivePortalQuarantine, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	now := time.Now()
+	var out []*network.CaptivePortalQuarantine
+	for _, q := range r.quarantine {
+		if q.NetworkID != networkID {
+			continue
+		}
+		if q.QuarantinedUntil != nil && now.Before(*q.QuarantinedUntil) {
+			cp := *q
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *Repository) ClearQuarantine(ctx context.Context, networkID, peerID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.quarantine, networkID+":"+peerID)
+	return nil
+}
+
+// Peer-reported local routes (in-memory)
+func (r *Repository) UpsertPeerLocalRoutes(ctx context.Context, networkID, peerID string, allowedIPs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.peerRoutes == nil {
+		r.peerRoutes = make(map[string]map[string][]string)
+	}
+	if _, ok := r.peerRoutes[networkID]; !ok {
+		r.peerRoutes[networkID] = make(map[string][]string)
+	}
+	cp := append([]string(nil), allowedIPs...)
+	r.peerRoutes[networkID][peerID] = cp
+	return nil
+}
+
+func (r *Repository) GetPeerLocalRoutes(ctx context.Context, networkID, peerID string) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if peers, ok := r.peerRoutes[networkID]; ok {
+		if cidrs, ok2 := peers[peerID]; ok2 {
+			cp := append([]string(nil), cidrs...)
+			return cp, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *Repository) ListPeerLocalRoutes(ctx context.Context, networkID string) (map[string][]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string][]string)
+	if peers, ok := r.peerRoutes[networkID]; ok {
+		for k, v := range peers {
+			out[k] = append([]string(nil), v...)
+		}
+	}
+	return out, nil
 }
 

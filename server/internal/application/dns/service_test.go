@@ -70,6 +70,51 @@ func (m *mockPeerRepository) RemoveCaptivePortalWhitelistByPeerIP(ctx context.Co
 func (m *mockPeerRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
 	return nil
 }
+func (m *mockPeerRepository) ListActiveCaptivePortalTokens(ctx context.Context, networkID, jumpPeerID string) ([]*network.CaptivePortalToken, error) {
+	return nil, nil
+}
+func (m *mockPeerRepository) MarkCaptivePortalTokenConsumed(ctx context.Context, token string) error {
+	return nil
+}
+func (m *mockPeerRepository) SetCaptivePortalTokenConsumeState(ctx context.Context, token, state string) error {
+	return nil
+}
+func (m *mockPeerRepository) ListExpiredUnconsumedCaptivePortalTokens(ctx context.Context) ([]*network.CaptivePortalToken, error) {
+	return nil, nil
+}
+func (m *mockPeerRepository) AddEndpointDenylist(ctx context.Context, e *network.EndpointDenylistEntry) error {
+	return nil
+}
+func (m *mockPeerRepository) GetEndpointDenylist(ctx context.Context, networkID, jumpPeerID string) ([]*network.EndpointDenylistEntry, error) {
+	return nil, nil
+}
+func (m *mockPeerRepository) ClearEndpointDenylistForPeer(ctx context.Context, networkID, wgIP string) error {
+	return nil
+}
+func (m *mockPeerRepository) CleanupExpiredEndpointDenylist(ctx context.Context) error {
+	return nil
+}
+func (m *mockPeerRepository) GetQuarantine(ctx context.Context, networkID, peerID string) (*network.CaptivePortalQuarantine, error) {
+	return nil, nil
+}
+func (m *mockPeerRepository) UpsertQuarantine(ctx context.Context, q *network.CaptivePortalQuarantine) error {
+	return nil
+}
+func (m *mockPeerRepository) ListQuarantinedPeers(ctx context.Context, networkID string) ([]*network.CaptivePortalQuarantine, error) {
+	return nil, nil
+}
+func (m *mockPeerRepository) ClearQuarantine(ctx context.Context, networkID, peerID string) error {
+	return nil
+}
+func (m *mockPeerRepository) UpsertPeerLocalRoutes(ctx context.Context, networkID, peerID string, allowedIPs []string) error {
+	return nil
+}
+func (m *mockPeerRepository) GetPeerLocalRoutes(ctx context.Context, networkID, peerID string) ([]string, error) {
+	return nil, nil
+}
+func (m *mockPeerRepository) ListPeerLocalRoutes(ctx context.Context, networkID string) (map[string][]string, error) {
+	return nil, nil
+}
 func (m *mockPeerRepository) CreateACL(ctx context.Context, networkID string, acl *network.ACL) error {
 	return nil
 }
