@@ -955,9 +955,42 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 			s.wgLastSeenMu.Unlock()
 
 			// 2. Update session last_seen for non-agent peers and build active-IP set.
+			//
+			// IMPORTANT: We gate this on the SAME handshake-recency check as
+			// wgLastSeen above (185 s).  Without the gate, `wg show endpoints`
+			// makes us bump session.LastSeen to "now" every heartbeat for EVERY
+			// configured peer — even ones that disconnected hours ago — because
+			// WireGuard remembers each peer's last known endpoint indefinitely.
+			//
+			// That causes two bugs the user observes:
+			//   (a) Peer Detail shows "Authenticated" + recent Last Seen for a
+			//       peer whose handshake is hours stale → frontend's connectivity
+			//       fallback (session.LastSeen ≤ PeerConnectivityThreshold) trips.
+			//   (b) The dashboard's "needs sign-in" popup fires for stale peers
+			//       because the active-recency hook in useCaptivePortalCheck
+			//       reads session.LastSeen too.
+			//
+			// Legacy agents that don't send PeerHandshakes keep the old
+			// (endpoint-only) behaviour — we have nothing better to fall back on.
+			peerIsLive := func(p *network.Peer) bool {
+				if len(heartbeat.PeerHandshakes) == 0 {
+					return true // legacy agent — preserve old behaviour
+				}
+				ts, ok := heartbeat.PeerHandshakes[p.PublicKey]
+				if !ok {
+					return false
+				}
+				return now.Sub(time.Unix(ts, 0)) <= wgHandshakeStaleness
+			}
+
 			for _, p := range peers {
 				endpoint, seen := heartbeat.PeerEndpoints[p.PublicKey]
 				if !seen {
+					continue
+				}
+				// Skip peers whose WG handshake is stale — `wg show endpoints`
+				// reports them but they aren't currently connected.
+				if !peerIsLive(p) {
 					continue
 				}
 				// Agent peers send their own heartbeat directly; updating their session
