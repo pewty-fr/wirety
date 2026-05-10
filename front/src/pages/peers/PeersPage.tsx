@@ -344,32 +344,69 @@ export default function PeersPage() {
                               green  — connected, OR agent up, OR authenticated
                               grey   — disconnected / no agent / no auth */}
                         {(() => {
+                          // Status-dot logic for a peer.  Priority order matches the
+                          // user-visible meaning of the colour:
+                          //
+                          //   red    — quarantined (peer is BLOCKED, auth failures
+                          //            exceeded threshold; admin reset required)
+                          //   orange — action needed by the user (a captive-portal
+                          //            sign-in is in progress, OR the WG tunnel is
+                          //            up but the peer hasn't authenticated yet so
+                          //            no actual network access is granted)
+                          //   green  — fully usable (connected AND authenticated,
+                          //            OR a jump peer for which captive-portal
+                          //            auth doesn't apply)
+                          //   grey   — offline / no active session
+                          //
+                          // The key change vs a naive "connected = green" is that a
+                          // non-jump peer with a fresh WG handshake but EMPTY
+                          // captive_portal_state is shown orange, not green.
+                          // Without captive-portal auth the iptables WIRETY_JUMP
+                          // chain drops all forwarded traffic from this peer — the
+                          // tunnel is up but the firewall blocks every actual
+                          // request.  Showing green there gives the user a false
+                          // sense that the device works.
                           const portalState = peer.session_status?.captive_portal_state;
+                          const isOnline = isConnected || hasActiveAgent;
                           let color = 'bg-gray-400';
-                          let title = 'Disconnected';
+                          let title = 'No active session';
+                          let pulse = false;
+
                           if (portalState === 'quarantined') {
                             color = 'bg-red-500';
                             title = 'Quarantined — too many auth failures, access blocked';
                           } else if (portalState === 'pending_auth') {
                             color = 'bg-orange-500';
-                            title = 'Captive portal token issued — waiting for user to complete sign-in';
-                          } else if (portalState === 'authenticated' || isConnected || hasActiveAgent) {
+                            title = 'Captive portal sign-in in progress — waiting for user';
+                            pulse = true;
+                          } else if (!isOnline) {
+                            color = 'bg-gray-400';
+                            title = peer.use_agent ? 'Agent offline' : 'Offline';
+                          } else if (peer.is_jump) {
+                            // Jump peers don't authenticate to themselves — being
+                            // online is sufficient.
                             color = 'bg-green-500';
-                            const parts: string[] = [];
-                            if (isConnected) parts.push('connected');
+                            title = 'Connected';
+                          } else if (portalState === 'authenticated') {
+                            color = 'bg-green-500';
+                            const parts: string[] = ['authenticated'];
+                            if (isConnected) parts.unshift('connected');
                             if (peer.use_agent && hasActiveAgent) parts.push('agent up');
-                            if (portalState === 'authenticated') parts.push('authenticated');
-                            title = parts.length > 0
-                              ? parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' • ')
-                              : 'Active';
-                          } else if (peer.use_agent) {
-                            title = 'Agent offline';
+                            title = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' • ');
                           } else {
-                            title = 'No active session';
+                            // Online + non-jump + no auth state = WG tunnel is up but
+                            // the peer hasn't completed captive-portal auth.  Network
+                            // access is blocked at the firewall.  Static orange (no
+                            // pulse) — the user knows what to do; we reserve the
+                            // pulse for pending_auth where a sign-in is actively in
+                            // flight and the dot draws the eye to "finish me".
+                            color = 'bg-orange-500';
+                            title = 'WireGuard connected but not authenticated to captive portal';
                           }
+
                           return (
                             <div className="flex items-center gap-2" title={title}>
-                              <span className={`w-2.5 h-2.5 rounded-full ${color} ${portalState === 'pending_auth' ? 'animate-pulse' : ''}`} />
+                              <span className={`w-2.5 h-2.5 rounded-full ${color} ${pulse ? 'animate-pulse' : ''}`} />
                             </div>
                           );
                         })()}
