@@ -285,9 +285,7 @@ export default function PeersPage() {
                   {isAdmin && (
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
                   )}
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Connected</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Portal Auth</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Agent</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
                 </tr>
@@ -339,64 +337,50 @@ export default function PeersPage() {
                         </td>
                       )}
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {/* Connected column: badge based on last_seen freshness (3-min window) */}
-                        {isConnected ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                            Connected
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
-                            <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
-                            Offline
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {/* Portal Auth column: captive portal state for non-jump peers */}
-                        {peer.is_jump ? (
-                          <span className="text-gray-400 dark:text-gray-500 text-xs">—</span>
-                        ) : (() => {
-                          const state = peer.session_status?.captive_portal_state;
-                          if (state === 'authenticated') {
-                            return (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                Auth'd
-                              </span>
-                            );
-                          }
-                          if (state === 'pending_auth') {
-                            return (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                                Pending
-                              </span>
-                            );
-                          }
-                          if (state === 'quarantined') {
-                            return (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                                Quarantined
-                              </span>
-                            );
+                        {/* Status column: a single dot summarising the peer's overall state.
+                            Priority (highest first): quarantined > pending_auth > connected/agent/auth > offline.
+                              red    — quarantined (auth blocked)
+                              orange — pending captive-portal auth (token outstanding)
+                              green  — connected, OR agent up, OR authenticated
+                              grey   — disconnected / no agent / no auth */}
+                        {(() => {
+                          const portalState = peer.session_status?.captive_portal_state;
+                          let color = 'bg-gray-400';
+                          let label = 'Offline';
+                          let title = 'Disconnected';
+                          if (portalState === 'quarantined') {
+                            color = 'bg-red-500';
+                            label = 'Quarantined';
+                            title = 'Quarantined — too many auth failures, access blocked';
+                          } else if (portalState === 'pending_auth') {
+                            color = 'bg-orange-500';
+                            label = 'Pending auth';
+                            title = 'Captive portal token issued — waiting for user to complete sign-in';
+                          } else if (portalState === 'authenticated' || isConnected || hasActiveAgent) {
+                            color = 'bg-green-500';
+                            const parts: string[] = [];
+                            if (isConnected) parts.push('connected');
+                            if (peer.use_agent && hasActiveAgent) parts.push('agent up');
+                            if (portalState === 'authenticated') parts.push('authenticated');
+                            label = parts[0]
+                              ? parts[0].charAt(0).toUpperCase() + parts[0].slice(1)
+                              : 'Active';
+                            title = parts.length > 0
+                              ? parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' • ')
+                              : 'Active';
+                          } else if (peer.use_agent) {
+                            // agent peer with no signal at all
+                            title = 'Agent offline';
+                          } else {
+                            title = 'No active session';
                           }
                           return (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
-                              Not auth'd
-                            </span>
+                            <div className="flex items-center gap-2" title={title}>
+                              <span className={`w-2.5 h-2.5 rounded-full ${color} ${portalState === 'pending_auth' ? 'animate-pulse' : ''}`} />
+                              <span className="text-xs text-gray-600 dark:text-gray-300">{label}</span>
+                            </div>
                           );
                         })()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {/* Agent column: shows whether peer runs the wirety agent */}
-                        <div className="flex items-center">
-                          <span className={`w-3 h-3 rounded-full ${
-                            !peer.use_agent ? 'bg-gray-400' : (hasActiveAgent ? 'bg-green-500' : 'bg-red-500')
-                          }`} title={!peer.use_agent ? 'No agent (static config)' : hasActiveAgent ? 'Agent online' : 'Agent offline'}></span>
-                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {/* Type column at end: Jump or Regular */}
