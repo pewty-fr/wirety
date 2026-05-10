@@ -290,7 +290,7 @@ export default function ProfilePage() {
 
   if (!user) {
     return (
-      <div className="p-8">
+      <div className="p-4 sm:p-8">
         <div className="text-center text-gray-500 dark:text-gray-400">Loading...</div>
       </div>
     );
@@ -299,7 +299,7 @@ export default function ProfilePage() {
   const isAdmin = user.role === 'administrator';
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-8">
       <PageHeader
         title="Profile"
         subtitle="Manage your account and preferences"

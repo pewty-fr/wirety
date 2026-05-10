@@ -209,7 +209,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Main content */}
       <div className="lg:pl-64">
-        <main className="min-h-screen pb-16">
+        {/* pb-10 leaves room for the compact mobile footer (~32–36 px tall),
+            pb-16 on sm+ for the expanded footer with full labels. */}
+        <main className="min-h-screen pb-10 sm:pb-16">
           {children}
         </main>
       </div>

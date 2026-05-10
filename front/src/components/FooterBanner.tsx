@@ -6,12 +6,15 @@ export default function FooterBanner() {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-20 lg:pl-64">
       <div className="relative overflow-hidden bg-gradient-to-r from-primary-600 via-accent-blue to-primary-600 animate-gradient bg-[length:200%_100%]">
-        <div className="px-4 py-3">
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-4 text-white text-sm">
-            <div className="flex items-center gap-2">
-              <span>Proudly made with</span>
+        {/* Compact single-line layout on mobile, expanded on sm+. The verbose
+            "Proudly made with" / "Free & Open Source" labels are hidden on
+            phones where every vertical pixel counts. */}
+        <div className="px-3 py-1.5 sm:px-4 sm:py-3">
+          <div className="flex flex-row sm:flex-row items-center justify-center gap-3 sm:gap-4 text-white text-xs sm:text-sm">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="hidden sm:inline">Proudly made with</span>
               <FontAwesomeIcon icon={faHeart} className="text-red-300 animate-pulse" />
-              <span>by</span>
+              <span className="hidden sm:inline">by</span>
               <a
                 href="https://pewty.fr"
                 target="_blank"
@@ -21,10 +24,10 @@ export default function FooterBanner() {
                 Pewty
               </a>
             </div>
-            <span className="hidden sm:inline text-white/60">•</span>
-            <div className="flex items-center gap-2">
-              <FontAwesomeIcon icon={faCode} />
-              <span>Free & Open Source</span>
+            <span className="text-white/60">•</span>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <FontAwesomeIcon icon={faCode} className="hidden sm:inline" />
+              <span className="hidden sm:inline">Free & Open Source</span>
               <a
                 href="https://github.com/pewty-fr/wirety"
                 target="_blank"
