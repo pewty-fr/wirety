@@ -21,7 +21,7 @@
     "autoprefixer": "^10.5.0",
     "axios": "^1.15.2",
     "mermaid": "^11.14.0",
-    "postcss": "^8.5.12",
+    "postcss": "^8.5.15",
     "react": "^19.2.3",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.14.2",
