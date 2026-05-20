@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.0.0](https://github.com/pewty-fr/wirety/compare/wirety-server/v2.1.0...wirety-server/v3.0.0) (2026-05-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* ipv6 ([#215](https://github.com/pewty-fr/wirety/issues/215))
+* simplification ([#213](https://github.com/pewty-fr/wirety/issues/213))
+
+### Features
+
+* github auth ([#185](https://github.com/pewty-fr/wirety/issues/185)) ([25e1f87](https://github.com/pewty-fr/wirety/commit/25e1f8783dbd46d66663612f236170f61a78e0f1))
+* ipv6 ([#215](https://github.com/pewty-fr/wirety/issues/215)) ([1210526](https://github.com/pewty-fr/wirety/commit/121052667f727134902b2e9baac0d742f2c6bf34))
+* simplification ([#213](https://github.com/pewty-fr/wirety/issues/213)) ([30e8911](https://github.com/pewty-fr/wirety/commit/30e8911fd65c36de1898ec8a788ff0825a7376a0))
+
+
+### Bug Fixes
+
+* update api references ([d7452df](https://github.com/pewty-fr/wirety/commit/d7452df7e63d35dd4584bd5ee87690e3475f9e93))
+
 ## [2.1.0](https://github.com/pewty-fr/wirety/compare/wirety-server/v2.0.0...wirety-server/v2.1.0) (2026-04-13)
 
 
