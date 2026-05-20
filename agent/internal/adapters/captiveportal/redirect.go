@@ -370,7 +370,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// where an attacker on a stolen WG config generates a token URL and
 	// sends it to the legitimate owner.  See the server-side migration 026
 	// and api/captive_portal_handlers.go::CaptivePortalStart for details.
+	//
+	// We build the URL from --portal-url's scheme+host rather than --server, so
+	// the browser is sent to the user-facing hostname (and its load balancer)
+	// rather than the raw IP the agent uses internally for API traffic.  The
+	// /start endpoint and the /captive-portal page MUST be on the same origin
+	// for the bouncer's same-origin cookie to be readable by the page.
+	//
+	// Falls back to serverURL when portalURL is missing a scheme+host (shouldn't
+	// happen in practice — main.go always defaults portalURL to <server>/captive-portal).
 	startURL := strings.TrimRight(s.serverURL, "/") + "/api/v1/captive-portal/start"
+	if parsed, err := url.Parse(s.portalURL); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		startURL = parsed.Scheme + "://" + parsed.Host + "/api/v1/captive-portal/start"
+	}
 	redirectTarget := fmt.Sprintf("%s?token=%s&redirect=%s",
 		startURL,
 		url.QueryEscape(token),

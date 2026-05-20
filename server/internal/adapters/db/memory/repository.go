@@ -558,11 +558,21 @@ func (r *Repository) ListActiveCaptivePortalTokens(ctx context.Context, networkI
 	defer r.mu.RUnlock()
 	now := time.Now()
 	var out []*network.CaptivePortalToken
-	for _, t := range r.captiveTokens {
-		if t.NetworkID == networkID && t.JumpPeerID == jumpPeerID && now.Before(t.ExpiresAt) {
-			cp := *t
-			out = append(out, &cp)
+	for tok, t := range r.captiveTokens {
+		if t.NetworkID != networkID || t.JumpPeerID != jumpPeerID {
+			continue
 		}
+		if !now.Before(t.ExpiresAt) {
+			continue
+		}
+		// Mirror the Postgres semantics: consumed tokens are no longer "active".
+		// Without this filter, a token revoked via MarkCaptivePortalTokenConsumed
+		// (e.g. by "Revoke Auth") would keep the peer in pending_auth state.
+		if _, consumed := r.consumedTokens[tok]; consumed {
+			continue
+		}
+		cp := *t
+		out = append(out, &cp)
 	}
 	return out, nil
 }

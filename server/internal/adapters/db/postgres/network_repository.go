@@ -645,12 +645,19 @@ func (r *NetworkRepository) ListExpiredUnconsumedCaptivePortalTokens(ctx context
 	return out, rows.Err()
 }
 
-// ListActiveCaptivePortalTokens returns all unexpired tokens for a jump peer.
+// ListActiveCaptivePortalTokens returns all unexpired AND unconsumed tokens
+// for a jump peer.  Tokens marked consumed (via MarkCaptivePortalTokenConsumed,
+// e.g. by "Revoke Auth" or when a new token is issued for the same peer) MUST
+// be excluded — they no longer represent a peer in the pending_auth state, and
+// returning them would keep:
+//   - getPeerCaptivePortalState() reporting "pending_auth" after revoke
+//   - the firewall granting the pending-auth HTTPS-anywhere bypass to a peer
+//     whose auth was just revoked
 func (r *NetworkRepository) ListActiveCaptivePortalTokens(ctx context.Context, networkID, jumpPeerID string) ([]*network.CaptivePortalToken, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT token, network_id, jump_peer_id, peer_ip, COALESCE(peer_endpoint, ''), created_at, expires_at
 		FROM captive_portal_tokens
-		WHERE network_id=$1 AND jump_peer_id=$2 AND expires_at > NOW()
+		WHERE network_id=$1 AND jump_peer_id=$2 AND expires_at > NOW() AND consumed_at IS NULL
 		ORDER BY created_at ASC
 	`, networkID, jumpPeerID)
 	if err != nil {
