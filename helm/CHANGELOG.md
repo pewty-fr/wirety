@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/pewty-fr/wirety/compare/wirety-helm/v2.0.0...wirety-helm/v2.0.1) (2026-05-20)
+
+
+### Bug Fixes
+
+* upgrade to v3.0.0 ([8a30021](https://github.com/pewty-fr/wirety/commit/8a300213be7004504d471fb9209dd39ccca6fc4c))
+
 ## [2.0.0](https://github.com/pewty-fr/wirety/compare/wirety-helm/v1.1.0...wirety-helm/v2.0.0) (2026-05-20)
 
 
