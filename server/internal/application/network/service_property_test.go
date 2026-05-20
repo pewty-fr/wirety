@@ -1009,12 +1009,15 @@ func TestProperty_RouteDNSQueryResolution(t *testing.T) {
 				routeRepo := newMockRouteRepository()
 				dnsRepo := newMockDNSRepository()
 
-				// Create network
+				// Create network — its name + domain_suffix drive the FQDN
+				// regardless of the route the mapping belongs to.
+				networkName := "test-network"
+				networkSuffix := "internal"
 				fullRepo.networks[networkID] = &network.Network{
 					ID:           networkID,
-					Name:         "test-network",
+					Name:         networkName,
 					CIDR:         "10.0.0.0/16",
-					DomainSuffix: "internal",
+					DomainSuffix: networkSuffix,
 					Peers:        make(map[string]*network.Peer),
 				}
 
@@ -1029,7 +1032,9 @@ func TestProperty_RouteDNSQueryResolution(t *testing.T) {
 				fullRepo.peers[jumpPeerID] = jumpPeer
 				fullRepo.networks[networkID].Peers[jumpPeerID] = jumpPeer
 
-				// Create route
+				// Create route.  Its name / domain suffix are intentionally
+				// distinct from the network's — the test verifies they do NOT
+				// influence the FQDN.
 				routeID := "route-1"
 				route := &network.Route{
 					ID:              routeID,
@@ -1037,7 +1042,7 @@ func TestProperty_RouteDNSQueryResolution(t *testing.T) {
 					Name:            routeName,
 					DestinationCIDR: "192.168.1.0/24",
 					JumpPeerID:      jumpPeerID,
-					DomainSuffix:    "internal",
+					DomainSuffix:    "irrelevant-route-suffix",
 				}
 				routeRepo.routes[routeID] = route
 
@@ -1071,8 +1076,8 @@ func TestProperty_RouteDNSQueryResolution(t *testing.T) {
 					return false
 				}
 
-				// Build expected FQDN: name.route_name.domain_suffix
-				expectedFQDN := fmt.Sprintf("%s.%s.%s", sanitizeDNSLabel(dnsName), sanitizeDNSLabel(routeName), "internal")
+				// FQDN: <name>.<network-name>.<network-domain-suffix>
+				expectedFQDN := fmt.Sprintf("%s.%s.%s", sanitizeDNSLabel(dnsName), sanitizeDNSLabel(networkName), networkSuffix)
 
 				// Find the DNS record for the route
 				found := false
@@ -1086,7 +1091,7 @@ func TestProperty_RouteDNSQueryResolution(t *testing.T) {
 				return found
 			},
 			genNetworkID(),
-			genPeerName(),             // Use as route name
+			genPeerName(),             // Use as route name (no longer affects the FQDN)
 			genPeerName(),             // Use as DNS name
 			gen.Const("192.168.1.10"), // Fixed IP within route CIDR
 		))

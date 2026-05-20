@@ -9,7 +9,11 @@ import type { Network, Route, DNSMapping } from '../../types';
 interface DNSRow extends DNSMapping {
   route_name?: string;
   route_destination_cidr?: string;
-  route_domain_suffix?: string;
+  // The selected network's identity is the source of truth for the FQDN; the
+  // network's name + domain_suffix are captured here when the rows are loaded
+  // so the table can render the resolved name without re-querying.
+  network_name?: string;
+  network_domain_suffix?: string;
 }
 
 // sanitizeDNSLabel mirrors server-side sanitizeDNSLabel:
@@ -25,13 +29,16 @@ function sanitizeDNSLabel(s: string): string {
 }
 
 // buildFQDN constructs the full DNS name a peer would query to resolve this
-// record: <name>.<route_name>.<route_domain_suffix or "internal">.
+// record: <name>.<network-name>.<network-domain-suffix or "internal">.
+// The route the record belongs to intentionally does NOT appear — routes are
+// an internal grouping concept and renaming a route must not affect the
+// resolved name.
 function buildFQDN(row: DNSRow): string {
   const label = sanitizeDNSLabel(row.name);
-  const route = sanitizeDNSLabel(row.route_name || '');
-  const suffix = (row.route_domain_suffix && row.route_domain_suffix.trim()) || 'internal';
-  if (!route) return `${label}.${suffix}`;
-  return `${label}.${route}.${suffix}`;
+  const network = sanitizeDNSLabel(row.network_name || '');
+  const suffix = (row.network_domain_suffix && row.network_domain_suffix.trim()) || 'internal';
+  if (!network) return `${label}.${suffix}`;
+  return `${label}.${network}.${suffix}`;
 }
 
 export default function DNSRecordsPage() {
@@ -71,13 +78,19 @@ export default function DNSRecordsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadData = useCallback(async (networkId: string) => {
+  const loadData = useCallback(async (networkId: string, networkList: Network[]) => {
     if (!networkId) return;
     setLoading(true);
     try {
       // Load routes first
       const routesRes = await api.getRoutes(networkId).catch(() => [] as Route[]);
       setRoutes(routesRes);
+
+      // Look up the selected network's name + domain_suffix.  These drive the
+      // FQDN in the UI (the route's name/suffix is no longer part of it).
+      const selectedNetwork = networkList.find(n => n.id === networkId);
+      const networkName = selectedNetwork?.name;
+      const networkDomainSuffix = selectedNetwork?.domain_suffix;
 
       // For each route, load its DNS mappings (which have real `id` and `route_id`)
       const routeById = new Map(routesRes.map(r => [r.id, r]));
@@ -90,7 +103,8 @@ export default function DNSRecordsPage() {
         ...m,
         route_name: routeById.get(m.route_id)?.name,
         route_destination_cidr: routeById.get(m.route_id)?.destination_cidr,
-        route_domain_suffix: routeById.get(m.route_id)?.domain_suffix,
+        network_name: networkName,
+        network_domain_suffix: networkDomainSuffix,
       }));
       setRecords(allMappings);
     } finally {
@@ -99,8 +113,8 @@ export default function DNSRecordsPage() {
   }, []);
 
   useEffect(() => {
-    if (selectedNetworkId) void loadData(selectedNetworkId);
-  }, [selectedNetworkId, loadData]);
+    if (selectedNetworkId) void loadData(selectedNetworkId, networks);
+  }, [selectedNetworkId, networks, loadData]);
 
   const startEdit = (row: DNSRow) => {
     setEditingId(row.id);
@@ -129,7 +143,7 @@ export default function DNSRecordsPage() {
         ip_address: editIP.trim() || undefined,
         ip_address_v6: editIPv6.trim() || undefined,
       });
-      await loadData(selectedNetworkId);
+      await loadData(selectedNetworkId, networks);
       cancelEdit();
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } }; message?: string };
@@ -145,7 +159,7 @@ export default function DNSRecordsPage() {
     if (!window.confirm(`Delete DNS record "${buildFQDN(row)}" → ${addrSummary || '(no address)'}?`)) return;
     try {
       await api.deleteDNSMapping(selectedNetworkId, row.route_id, row.id);
-      await loadData(selectedNetworkId);
+      await loadData(selectedNetworkId, networks);
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } }; message?: string };
       alert(e?.response?.data?.error || e?.message || 'Failed to delete DNS record');
@@ -175,7 +189,7 @@ export default function DNSRecordsPage() {
       setNewName('');
       setNewIP('');
       setNewIPv6('');
-      await loadData(selectedNetworkId);
+      await loadData(selectedNetworkId, networks);
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } }; message?: string };
       setCreateError(e?.response?.data?.error || e?.message || 'Failed to create DNS record');
@@ -252,9 +266,14 @@ export default function DNSRecordsPage() {
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
                 {newRouteId && newName.trim() && (() => {
+                  // The FQDN is anchored on the network's name + domain
+                  // suffix; the chosen route only determines the routing
+                  // CIDR, not the resolved name.
                   const route = routes.find(r => r.id === newRouteId);
                   if (!route) return null;
-                  const fqdn = `${sanitizeDNSLabel(newName)}.${sanitizeDNSLabel(route.name)}.${(route.domain_suffix && route.domain_suffix.trim()) || 'internal'}`;
+                  const net = networks.find(n => n.id === selectedNetworkId);
+                  if (!net) return null;
+                  const fqdn = `${sanitizeDNSLabel(newName)}.${sanitizeDNSLabel(net.name)}.${(net.domain_suffix && net.domain_suffix.trim()) || 'internal'}`;
                   return (
                     <div className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-1">
                       → resolves as <span className="text-gray-700 dark:text-gray-200">{fqdn}</span>
@@ -344,7 +363,7 @@ export default function DNSRecordsPage() {
                               placeholder="hostname label only"
                             />
                             <div className="text-xs text-gray-400 dark:text-gray-500 font-mono mt-1">
-                              FQDN: {sanitizeDNSLabel(editName || row.name)}.{sanitizeDNSLabel(row.route_name || '')}.{(row.route_domain_suffix && row.route_domain_suffix.trim()) || 'internal'}
+                              FQDN: {sanitizeDNSLabel(editName || row.name)}.{sanitizeDNSLabel(row.network_name || '')}.{(row.network_domain_suffix && row.network_domain_suffix.trim()) || 'internal'}
                             </div>
                           </div>
                         ) : (

@@ -729,22 +729,21 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 		if s.dnsRepo != nil && s.routeRepo != nil {
 			routeMappings, err := s.dnsRepo.GetNetworkDNSMappings(ctx, networkID)
 			if err == nil {
-				// For each DNS mapping, get the route to build FQDN
+				// Build FQDN from the *network's* name + domain suffix.  The
+				// route the mapping belongs to is still looked up so we can
+				// skip orphans, but it no longer influences the resolved name.
+				networkDomainSuffix := net.DomainSuffix
+				if networkDomainSuffix == "" {
+					networkDomainSuffix = "internal"
+				}
 				for _, mapping := range routeMappings {
-					route, err := s.routeRepo.GetRoute(ctx, networkID, mapping.RouteID)
-					if err != nil {
+					if _, err := s.routeRepo.GetRoute(ctx, networkID, mapping.RouteID); err != nil {
 						// Skip if route not found
 						continue
 					}
 
-					// Build FQDN using route's domain suffix
-					routeDomainSuffix := route.DomainSuffix
-					if routeDomainSuffix == "" {
-						routeDomainSuffix = "internal"
-					}
-
-					// Format: name.route_name.domain_suffix
-					fqdn := fmt.Sprintf("%s.%s.%s", sanitizeDNSLabel(mapping.Name), sanitizeDNSLabel(route.Name), routeDomainSuffix)
+					// Format: <record-name>.<network-name>.<network-domain-suffix>
+					fqdn := fmt.Sprintf("%s.%s.%s", sanitizeDNSLabel(mapping.Name), sanitizeDNSLabel(net.Name), networkDomainSuffix)
 
 					// Place each address in the correct family slot.  DNSPeer
 					// has separate IP (IPv4) and IPv6 fields and the agent's
