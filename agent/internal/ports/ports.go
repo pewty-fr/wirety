@@ -26,6 +26,12 @@ type WebSocketClientPort interface {
 	Connect(url string, header http.Header) error
 	ReadMessage() ([]byte, error)
 	WriteMessage(data []byte) error
+	// Ping sends a WebSocket protocol-level Ping control frame.  Used as a
+	// lightweight keepalive that does not look like an application message:
+	// gorilla servers respond automatically with Pong, and stateful
+	// intermediaries (reverse proxies, load balancers) reset their idle
+	// timers on the resulting client→server traffic.
+	Ping() error
 	Close() error
 }
 

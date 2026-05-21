@@ -642,11 +642,30 @@ func (r *Runner) Start(stop <-chan struct{}) {
 		}
 		r.captivePortalSrvMu.Unlock()
 
+		// Send an immediate client→server frame the moment the upgrade is up.
+		// Some reverse proxies / load balancers (notably Scaleway's managed LB)
+		// apply a short "post-response client-idle" timer to upgraded HTTP/1.1
+		// connections and tear the TCP socket down within a few seconds when
+		// the client stays silent.  Without this the first heartbeat is 30 s
+		// away and the agent's connection dies inside that window.  A protocol
+		// Ping is enough — the server's default PingHandler responds with Pong
+		// transparently, so there's no application-level cost.
+		if err := r.wsClient.Ping(); err != nil {
+			log.Warn().Err(err).Msg("initial websocket ping failed")
+		}
+
 		// Start heartbeat goroutine with endpoint change detection
 		heartbeatTicker := time.NewTicker(r.heartbeatInterval)
 		defer heartbeatTicker.Stop()
 		endpointCheckTicker := time.NewTicker(300 * time.Millisecond)
 		defer endpointCheckTicker.Stop()
+		// Keepalive ping at a much shorter cadence than the heartbeat — its only
+		// job is to keep traffic visible to any stateful intermediary that
+		// would otherwise close an "idle" upgraded connection.  5 s is well
+		// inside the typical 10–30 s LB defaults while staying lightweight
+		// (a Ping frame is 6 bytes on the wire).
+		keepalivePingTicker := time.NewTicker(5 * time.Second)
+		defer keepalivePingTicker.Stop()
 		heartbeatDone := make(chan struct{})
 		var heartbeatWg sync.WaitGroup
 
@@ -669,6 +688,14 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				case <-heartbeatDone:
 					log.Debug().Msg("heartbeat goroutine stopping")
 					return
+				case <-keepalivePingTicker.C:
+					// Lightweight WS protocol Ping — gorilla auto-responds
+					// with Pong server-side.  Lives in the same goroutine as
+					// the heartbeat to keep "one writer at a time" semantics
+					// (gorilla disallows concurrent writers on a connection).
+					if err := r.wsClient.Ping(); err != nil {
+						log.Debug().Err(err).Msg("keepalive ping failed (will retry)")
+					}
 				case <-heartbeatTicker.C:
 					// Regular heartbeat every 30 seconds
 					r.sendHeartbeat()
@@ -886,6 +913,14 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				r.captivePortalSrvMu.Unlock()
 				if cpSrv != nil {
 					cpSrv.NotifyPolicyReceived()
+					// Drop cached redirect tokens for any peer that the server
+					// no longer lists as pending_auth.  This is what makes
+					// "Revoke Auth" take immediate effect for the next browser
+					// hit: without it, the agent would keep handing out the
+					// old token URL for up to tokenTTL (≈ 9 min) and the
+					// browser would land on /start → "persist state: token
+					// not found".
+					cpSrv.RetainPendingTokens(pendingWgIPs)
 				}
 
 				// Push per-peer routes to the DNS server so it can decide route-aware
