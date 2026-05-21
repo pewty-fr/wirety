@@ -125,7 +125,10 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
+			// Surface the underlying error so we can tell apart a clean Close
+			// frame, an idle-timeout from an intermediary LB, a TCP RST, etc.
 			log.Info().
+				Err(err).
 				Str("network_id", networkID).
 				Str("peer_id", peerID).
 				Msg("WebSocket connection closed")
