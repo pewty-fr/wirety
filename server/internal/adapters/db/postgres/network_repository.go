@@ -555,13 +555,19 @@ func (r *NetworkRepository) CreateCaptivePortalToken(ctx context.Context, token 
 	return err
 }
 
+// GetCaptivePortalToken returns the token row only when it is still usable —
+// i.e. not consumed.  A row whose consumed_at column is non-NULL has either
+// been used to authenticate or has been revoked by an admin via
+// RevokePeerAuthentication; either way the caller should treat it as gone.
+// We deliberately keep expired rows discoverable here so callers can map them
+// to a clearer "expired" error before the row is GC'd by the cleanup sweep.
 func (r *NetworkRepository) GetCaptivePortalToken(ctx context.Context, tokenStr string) (*network.CaptivePortalToken, error) {
 	var token network.CaptivePortalToken
 	var endpointIP, consumeState sql.NullString
 	err := r.db.QueryRowContext(ctx, `
 		SELECT token, network_id, jump_peer_id, peer_ip, peer_endpoint, created_at, expires_at, consume_state
 		FROM captive_portal_tokens
-		WHERE token=$1
+		WHERE token=$1 AND consumed_at IS NULL
 	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.PeerIP, &endpointIP, &token.CreatedAt, &token.ExpiresAt, &consumeState)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

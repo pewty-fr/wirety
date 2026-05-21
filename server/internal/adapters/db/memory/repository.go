@@ -466,6 +466,12 @@ func (r *Repository) CreateCaptivePortalToken(ctx context.Context, token *networ
 	return nil
 }
 
+// GetCaptivePortalToken mirrors the Postgres semantics: a consumed token (set
+// via MarkCaptivePortalTokenConsumed, either by authenticating or by an admin
+// "Revoke Auth") is reported as not found.  Without this filter, the stale
+// row keeps showing up via BindCaptivePortalTokenToBrowser / Authenticate /
+// Preview and produces the confusing "persist state: token not found" trail
+// described in the captive-portal post-revoke bug.
 func (r *Repository) GetCaptivePortalToken(ctx context.Context, tokenStr string) (*network.CaptivePortalToken, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -476,6 +482,10 @@ func (r *Repository) GetCaptivePortalToken(ctx context.Context, tokenStr string)
 
 	token, exists := r.captiveTokens[tokenStr]
 	if !exists {
+		return nil, fmt.Errorf("token not found")
+	}
+
+	if _, consumed := r.consumedTokens[tokenStr]; consumed {
 		return nil, fmt.Errorf("token not found")
 	}
 
