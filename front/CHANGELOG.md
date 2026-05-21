@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.0.0...wirety-front/v3.0.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* captive portal issues ([#233](https://github.com/pewty-fr/wirety/issues/233)) ([505d458](https://github.com/pewty-fr/wirety/commit/505d45856114f1b14f257337224ddaeccfb7f396))
+
 ## [3.0.0](https://github.com/pewty-fr/wirety/compare/wirety-front/v2.1.0...wirety-front/v3.0.0) (2026-05-20)
 
 
