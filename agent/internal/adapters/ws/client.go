@@ -49,6 +49,17 @@ func (c *Client) WriteMessage(data []byte) error {
 	return c.conn.WriteMessage(websocket.TextMessage, data)
 }
 
+// Ping sends a WebSocket control-frame Ping with an empty payload.  Cheap
+// (6 bytes on the wire) and processed transparently by the gorilla server
+// (auto-responds with Pong via the default PingHandler), so it's purely a
+// keepalive — it does not look like an application message to the server.
+func (c *Client) Ping() error {
+	if c.conn == nil {
+		return websocket.ErrBadHandshake
+	}
+	return c.conn.WriteMessage(websocket.PingMessage, nil)
+}
+
 func (c *Client) Close() error {
 	if c.conn != nil {
 		return c.conn.Close()

@@ -154,7 +154,7 @@ func main() {
 		wsServer = "wss://" + server[8:]
 	}
 	wsURL := fmt.Sprintf("%s/api/v1/ws", wsServer)
-	wsClient := ws.NewClientWithDialer(newWSDialer(skipTLSVerify))
+	wsClient := ws.NewClientWithDialer(newWSDialer(skipTLSVerify, serverHost))
 
 	// Parse proxy ports
 	httpPortInt := 3128
@@ -302,13 +302,34 @@ func newHTTPClient(serverHost string, skipTLSVerify bool) *http.Client {
 	return &http.Client{Transport: transport}
 }
 
-// newWSDialer returns a *websocket.Dialer with TLS verification optionally disabled.
-func newWSDialer(skipTLSVerify bool) *websocket.Dialer {
-	if !skipTLSVerify {
+// newWSDialer returns a *websocket.Dialer with TLS verification optionally
+// disabled and the TLS SNI optionally pinned to a separate hostname.
+//
+// SNI override is critical when the agent reaches the Wirety server via a raw
+// IP (--server https://10.0.0.13) behind a TLS-terminating reverse proxy that
+// routes by SNI.  Without it the TLS handshake advertises ServerName=10.0.0.13
+// — which most LBs treat as "no match", default-routing the connection to a
+// catch-all that may accept the HTTP 101 upgrade but lack WebSocket-aware
+// config, then tear down the TCP socket right after the first response (the
+// "connection lives ~2 s then 1006 unexpected EOF" symptom).  Setting
+// ServerName to --server-host puts the right name on the wire so the proxy
+// routes to the actual Wirety backend.
+//
+// With InsecureSkipVerify=true the certificate isn't checked, but ServerName
+// is still used for routing.
+func newWSDialer(skipTLSVerify bool, serverHost string) *websocket.Dialer {
+	if !skipTLSVerify && serverHost == "" {
 		return websocket.DefaultDialer
 	}
+	tlsCfg := &tls.Config{} // #nosec G402 — fields controlled by flags below
+	if skipTLSVerify {
+		tlsCfg.InsecureSkipVerify = true
+	}
+	if serverHost != "" {
+		tlsCfg.ServerName = serverHost
+	}
 	return &websocket.Dialer{
-		TLSClientConfig:  &tls.Config{InsecureSkipVerify: true}, // #nosec G402 — intentional, controlled by SKIP_TLS_VERIFY
+		TLSClientConfig:  tlsCfg,
 		HandshakeTimeout: websocket.DefaultDialer.HandshakeTimeout,
 	}
 }

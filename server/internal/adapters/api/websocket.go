@@ -125,7 +125,10 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
+			// Surface the underlying error so we can tell apart a clean Close
+			// frame, an idle-timeout from an intermediary LB, a TCP RST, etc.
 			log.Info().
+				Err(err).
 				Str("network_id", networkID).
 				Str("peer_id", peerID).
 				Msg("WebSocket connection closed")
@@ -193,15 +196,15 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 	}
 
 	msg := struct {
-		Config      string                                `json:"config"`
-		DNS         interface{}                           `json:"dns,omitempty"`
-		Policy      interface{}                           `json:"policy,omitempty"`
-		Whitelist   []string                              `json:"whitelist,omitempty"`
-		PendingAuth []network.PendingAuthEntry            `json:"pending_auth,omitempty"`
-		Denylist    []network.EndpointDenylistAgentEntry  `json:"endpoint_denylist,omitempty"`
-		Quarantined []string                              `json:"quarantined,omitempty"`
-		PeerRoutes  map[string][]string                   `json:"peer_routes,omitempty"`
-		OAuthIssuer string                                `json:"oauth_issuer,omitempty"`
+		Config      string                               `json:"config"`
+		DNS         interface{}                          `json:"dns,omitempty"`
+		Policy      interface{}                          `json:"policy,omitempty"`
+		Whitelist   []string                             `json:"whitelist,omitempty"`
+		PendingAuth []network.PendingAuthEntry           `json:"pending_auth,omitempty"`
+		Denylist    []network.EndpointDenylistAgentEntry `json:"endpoint_denylist,omitempty"`
+		Quarantined []string                             `json:"quarantined,omitempty"`
+		PeerRoutes  map[string][]string                  `json:"peer_routes,omitempty"`
+		OAuthIssuer string                               `json:"oauth_issuer,omitempty"`
 	}{
 		Config:      cfg,
 		DNS:         dnsCfg,
@@ -221,7 +224,7 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 	for {
 		msgType, message, err := conn.ReadMessage()
 		if err != nil {
-			log.Info().Str("network_id", networkID).Str("peer_id", peer.ID).Msg("WebSocket token connection closed")
+			log.Info().Str("network_id", networkID).Str("peer_id", peer.ID).Err(err).Msg("WebSocket token connection closed")
 			break
 		}
 
@@ -295,17 +298,17 @@ func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
 			}
 
 			msg := struct {
-				Config      string                                `json:"config"`
-				DNS         interface{}                           `json:"dns,omitempty"`
-				Policy      interface{}                           `json:"policy,omitempty"`
-				PeerID      string                                `json:"peer_id"`
-				PeerName    string                                `json:"peer_name"`
-				Whitelist   []string                              `json:"whitelist,omitempty"`
-				PendingAuth []network.PendingAuthEntry            `json:"pending_auth,omitempty"`
-				Denylist    []network.EndpointDenylistAgentEntry  `json:"endpoint_denylist,omitempty"`
-				Quarantined []string                              `json:"quarantined,omitempty"`
-				PeerRoutes  map[string][]string                   `json:"peer_routes,omitempty"`
-				OAuthIssuer string                                `json:"oauth_issuer,omitempty"`
+				Config      string                               `json:"config"`
+				DNS         interface{}                          `json:"dns,omitempty"`
+				Policy      interface{}                          `json:"policy,omitempty"`
+				PeerID      string                               `json:"peer_id"`
+				PeerName    string                               `json:"peer_name"`
+				Whitelist   []string                             `json:"whitelist,omitempty"`
+				PendingAuth []network.PendingAuthEntry           `json:"pending_auth,omitempty"`
+				Denylist    []network.EndpointDenylistAgentEntry `json:"endpoint_denylist,omitempty"`
+				Quarantined []string                             `json:"quarantined,omitempty"`
+				PeerRoutes  map[string][]string                  `json:"peer_routes,omitempty"`
+				OAuthIssuer string                               `json:"oauth_issuer,omitempty"`
 			}{
 				Config:      cfg,
 				DNS:         dnsCfg,

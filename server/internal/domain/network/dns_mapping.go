@@ -39,14 +39,22 @@ type DNSMappingUpdateRequest struct {
 	IPv6Address string `json:"ip_address_v6,omitempty"`
 }
 
-// GetFQDN returns the fully qualified domain name
-// Format: name.route_name.domain_suffix
-func (d *DNSMapping) GetFQDN(route *Route) string {
-	suffix := route.DomainSuffix
+// GetFQDN returns the fully qualified domain name for this DNS mapping.
+//
+// Format: <record-name>.<network-name>.<network-domain-suffix>
+// (the suffix defaults to "internal" when empty).
+//
+// The route that hosts the mapping is intentionally NOT part of the FQDN:
+// DNS records live in the network's namespace regardless of which route they
+// belong to.  Routes are an internal grouping/gating concept — renaming a
+// route, or moving a record between routes, must not change the name peers
+// resolve to.
+func (d *DNSMapping) GetFQDN(network *Network) string {
+	suffix := network.DomainSuffix
 	if suffix == "" {
 		suffix = "internal"
 	}
-	return fmt.Sprintf("%s.%s.%s", d.Name, route.Name, suffix)
+	return fmt.Sprintf("%s.%s.%s", d.Name, network.Name, suffix)
 }
 
 // Validate validates the DNS mapping creation request.  Requires at least one

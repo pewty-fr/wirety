@@ -83,6 +83,23 @@ func (c *tokenCache) set(peerIP, token string) {
 	c.entries[peerIP] = cachedToken{value: token, expiresAt: time.Now().Add(tokenTTL)}
 }
 
+// retain drops cache entries for peer IPs not present in keep.  The cache
+// invariant we want to enforce is "a cached token only ever maps to a peer
+// whose server-side row is still pending_auth"; anything outside that set is
+// stale (token was consumed by authentication, by an admin "Revoke Auth", or
+// by a re-issue) and must not be handed back to the next browser request.
+func (c *tokenCache) retain(keep map[string]struct{}) (dropped []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for ip := range c.entries {
+		if _, ok := keep[ip]; !ok {
+			delete(c.entries, ip)
+			dropped = append(dropped, ip)
+		}
+	}
+	return dropped
+}
+
 // Server is the captive portal HTTP server. It listens directly on the WireGuard
 // interface IP on port 80 (e.g. "10.255.0.1:80"), replacing the previous approach
 // of DNATing port-80 traffic to a localhost port.
@@ -154,6 +171,27 @@ func (s *Server) SetPeerIPLookup(fn func(host string) string) {
 // can bind the whitelist entry to a specific source IP+port.
 func (s *Server) SetEndpointLookup(fn func(wgIP string) string) {
 	s.lookupEndpoint = fn
+}
+
+// RetainPendingTokens drops cached redirect tokens for peers that are no
+// longer in the server-reported pending_auth set.  Called by the agent's WS
+// payload handler on every policy push so that:
+//
+//   - After an admin "Revoke Auth", the next browser request from the affected
+//     peer creates a fresh token instead of being redirected to a now-consumed
+//     one (which would produce the "persist state: token not found" error at
+//     /captive-portal/start).
+//   - After a successful authentication, the cached token (now in the whitelist
+//     tier) is also dropped — we won't need it again until the peer is logged
+//     out, and keeping it around would only widen the window for a stale hit.
+func (s *Server) RetainPendingTokens(pendingPeerIPs []string) {
+	keep := make(map[string]struct{}, len(pendingPeerIPs))
+	for _, ip := range pendingPeerIPs {
+		keep[ip] = struct{}{}
+	}
+	if dropped := s.cache.retain(keep); len(dropped) > 0 {
+		log.Debug().Strs("peer_ips", dropped).Msg("captive portal: dropped cached tokens after policy push")
+	}
 }
 
 // NotifyPolicyReceived marks the server as having received at least one policy
@@ -370,7 +408,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// where an attacker on a stolen WG config generates a token URL and
 	// sends it to the legitimate owner.  See the server-side migration 026
 	// and api/captive_portal_handlers.go::CaptivePortalStart for details.
+	//
+	// We build the URL from --portal-url's scheme+host rather than --server, so
+	// the browser is sent to the user-facing hostname (and its load balancer)
+	// rather than the raw IP the agent uses internally for API traffic.  The
+	// /start endpoint and the /captive-portal page MUST be on the same origin
+	// for the bouncer's same-origin cookie to be readable by the page.
+	//
+	// Falls back to serverURL when portalURL is missing a scheme+host (shouldn't
+	// happen in practice — main.go always defaults portalURL to <server>/captive-portal).
 	startURL := strings.TrimRight(s.serverURL, "/") + "/api/v1/captive-portal/start"
+	if parsed, err := url.Parse(s.portalURL); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		startURL = parsed.Scheme + "://" + parsed.Host + "/api/v1/captive-portal/start"
+	}
 	redirectTarget := fmt.Sprintf("%s?token=%s&redirect=%s",
 		startURL,
 		url.QueryEscape(token),
