@@ -743,7 +743,24 @@ func (s *Service) GeneratePeerConfigWithDNS(ctx context.Context, networkID, peer
 					}
 
 					// Format: <record-name>.<network-name>.<network-domain-suffix>
-					fqdn := fmt.Sprintf("%s.%s.%s", sanitizeDNSLabel(mapping.Name), sanitizeDNSLabel(net.Name), networkDomainSuffix)
+					//
+					// Wildcard names ("*" or "*.sub") must keep the "*." prefix
+					// intact — sanitizeDNSLabel would corrupt it.  Only the
+					// non-wildcard portion of the suffix goes through sanitization.
+					var fqdn string
+					switch {
+					case mapping.Name == "*":
+						// bare wildcard → "*.network.suffix"
+						fqdn = fmt.Sprintf("*.%s.%s", sanitizeDNSLabel(net.Name), networkDomainSuffix)
+					case strings.HasPrefix(mapping.Name, "*."):
+						// e.g. "*.api" → "*.api.network.suffix"
+						// The suffix labels after "*." are already validated
+						// (alphanumeric + hyphens only); just lowercase them.
+						subPath := strings.ToLower(mapping.Name[2:])
+						fqdn = fmt.Sprintf("*.%s.%s.%s", subPath, sanitizeDNSLabel(net.Name), networkDomainSuffix)
+					default:
+						fqdn = fmt.Sprintf("%s.%s.%s", sanitizeDNSLabel(mapping.Name), sanitizeDNSLabel(net.Name), networkDomainSuffix)
+					}
 
 					// Place each address in the correct family slot.  DNSPeer
 					// has separate IP (IPv4) and IPv6 fields and the agent's

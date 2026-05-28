@@ -155,27 +155,67 @@ func ValidateIPInCIDR(ip, cidr string) error {
 	return nil
 }
 
-// validateDNSName validates a DNS name
+// validateDNSName validates a DNS name.
+//
+// Supported forms:
+//   - A single DNS label: alphanumeric + hyphens, 1–63 chars, no leading/trailing hyphen.
+//   - A bare wildcard:    "*" — becomes *.network.suffix when resolved.
+//   - A wildcard prefix:  "*.label[.label…]" — matches one additional label deep.
+//     e.g. "*.api" → "*.api.network.suffix" matches "v1.api.network.suffix".
+//
+// Wildcard records follow RFC 4592: the "*" covers exactly one label, so
+// "*.api.internal" matches "v1.api.internal" but NOT "x.v1.api.internal".
+// Fully-specified records always take priority over wildcard matches.
 func validateDNSName(name string) error {
 	if name == "" {
 		return errors.New("DNS name cannot be empty")
 	}
-	// DNS labels should be max 63 characters according to RFC 1035
+
+	// Wildcard name: "*" or "*.one-or-more-labels"
+	if strings.HasPrefix(name, "*") {
+		if name == "*" {
+			return nil // bare wildcard — valid
+		}
+		if !strings.HasPrefix(name, "*.") {
+			return errors.New("DNS wildcard must be exactly '*' or start with '*.'")
+		}
+		rest := name[2:] // labels after "*."
+		if rest == "" {
+			return errors.New("wildcard DNS name must have at least one label after '*.'")
+		}
+		for _, label := range strings.Split(rest, ".") {
+			if label == "" {
+				return errors.New("wildcard DNS name cannot have empty labels")
+			}
+			if len(label) > 63 {
+				return errors.New("DNS label cannot exceed 63 characters")
+			}
+			for _, ch := range label {
+				if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') &&
+					(ch < '0' || ch > '9') && ch != '-' {
+					return errors.New("DNS name can only contain alphanumeric characters and hyphens")
+				}
+			}
+			if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+				return errors.New("DNS label cannot start or end with a hyphen")
+			}
+		}
+		return nil
+	}
+
+	// Non-wildcard: single label (dots are separators in the FQDN, not allowed here)
 	if len(name) > 63 {
 		return errors.New("DNS name cannot exceed 63 characters")
 	}
-	// Check for invalid characters - DNS names should be alphanumeric with hyphens
 	if strings.ContainsAny(name, " \n\r\t") {
 		return errors.New("DNS name cannot contain spaces, newlines, or tabs")
 	}
-	// Additional RFC compliance: no special characters except hyphens
 	for _, char := range name {
 		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
 			(char < '0' || char > '9') && char != '-' {
 			return errors.New("DNS name can only contain alphanumeric characters and hyphens")
 		}
 	}
-	// Cannot start or end with hyphen
 	if strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") {
 		return errors.New("DNS name cannot start or end with a hyphen")
 	}

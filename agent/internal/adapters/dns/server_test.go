@@ -307,6 +307,49 @@ func (m *mockResponseWriter) Hijack() {}
 
 // Test edge cases
 
+// TestLookupWildcard verifies that wildcard records resolve correctly and that
+// exact matches always take priority over wildcards.
+func TestLookupWildcard(t *testing.T) {
+	domain := "mynet.internal"
+	peers := []dom.DNSPeer{
+		// Exact record for "svc.mynet.internal"
+		{Name: "svc.mynet.internal", IP: "10.0.0.10"},
+		// Bare wildcard: matches any single label under "mynet.internal"
+		{Name: "*.mynet.internal", IP: "10.0.0.100"},
+		// More-specific wildcard: matches single label under "api.mynet.internal"
+		{Name: "*.api.mynet.internal", IP: "10.0.0.200"},
+	}
+	server := NewServer(domain, peers)
+
+	tests := []struct {
+		query    string
+		wantIPv4 string
+		desc     string
+	}{
+		// Exact match wins over wildcard
+		{"svc.mynet.internal", "10.0.0.10", "exact beats wildcard"},
+		// Bare wildcard matches one label
+		{"anything.mynet.internal", "10.0.0.100", "bare wildcard match"},
+		{"other.mynet.internal", "10.0.0.100", "bare wildcard match (different label)"},
+		// More specific wildcard wins
+		{"v1.api.mynet.internal", "10.0.0.200", "specific wildcard wins"},
+		{"v2.api.mynet.internal", "10.0.0.200", "specific wildcard wins (different label)"},
+		// Wildcard does NOT match two levels deep (RFC 4592)
+		{"x.y.mynet.internal", "", "two-level query misses bare wildcard"},
+		// No match at all
+		{"nonexistent.other.com", "", "no match"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			got := server.lookupPeerIP(tt.query)
+			if got != tt.wantIPv4 {
+				t.Errorf("lookupPeerIP(%q) = %q, want %q", tt.query, got, tt.wantIPv4)
+			}
+		})
+	}
+}
+
 func TestLookupPeerIPEdgeCases(t *testing.T) {
 	server := NewServer("", []dom.DNSPeer{}) // Empty domain
 

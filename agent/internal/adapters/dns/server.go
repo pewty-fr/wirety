@@ -467,24 +467,59 @@ func (s *Server) lookupPeerIP(name string) string {
 
 // lookupPeerAddresses returns both the IPv4 and IPv6 WireGuard addresses for
 // the given hostname (FQDN).  Either value may be empty if not configured.
+//
+// Resolution priority (highest first):
+//  1. Exact match — the query name equals a configured FQDN.
+//  2. Wildcard match — the query matches "*.suffix" for some configured
+//     wildcard record.  Among multiple matching wildcards the most specific
+//     one wins (the one with the greatest number of labels in its suffix,
+//     e.g. "*.api.mynet.internal" beats "*.mynet.internal").
+//
+// Wildcards follow RFC 4592: "*.suffix" matches exactly ONE additional label,
+// so "*.foo.internal" matches "bar.foo.internal" but NOT "x.bar.foo.internal".
 func (s *Server) lookupPeerAddresses(name string) (ipv4, ipv6 string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	var bestWildcardIPv4, bestWildcardIPv6 string
+	bestWildcardSpecificity := -1 // number of labels in the wildcard suffix
+
 	for _, p := range s.peers {
 		var fqdn string
 		if strings.Contains(p.Name, ".") {
-			// Route DNS mapping stored with full FQDN
+			// Route DNS mapping stored with full FQDN (e.g. "*.api.mynet.internal")
 			fqdn = p.Name
 		} else {
-			// Peer DNS record — construct FQDN
+			// Peer name — construct FQDN (e.g. "peer1.mynet.internal")
 			fqdn = fmt.Sprintf("%s.%s", p.Name, s.domain)
 		}
+
+		// 1. Exact match → highest priority, return immediately.
 		if name == fqdn {
 			return p.IP, p.IPv6
 		}
+
+		// 2. Wildcard match: "*.suffix" matches "<one-label>.suffix".
+		if strings.HasPrefix(fqdn, "*.") {
+			suffix := fqdn[2:] // everything after "*."
+			// The query must end with "."+suffix, and the preceding part must
+			// be exactly one label (no dots).
+			if strings.HasSuffix(name, "."+suffix) {
+				prefix := name[:len(name)-len(suffix)-1]
+				if prefix != "" && !strings.Contains(prefix, ".") {
+					// More labels in suffix = more specific wildcard.
+					specificity := strings.Count(suffix, ".") + 1
+					if specificity > bestWildcardSpecificity {
+						bestWildcardSpecificity = specificity
+						bestWildcardIPv4 = p.IP
+						bestWildcardIPv6 = p.IPv6
+					}
+				}
+			}
+		}
 	}
-	return "", ""
+
+	return bestWildcardIPv4, bestWildcardIPv6
 }
 
 // Update updates the DNS server configuration with new domain, peers, and upstream servers

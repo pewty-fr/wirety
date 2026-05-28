@@ -28,17 +28,34 @@ function sanitizeDNSLabel(s: string): string {
   return out || 'peer';
 }
 
+// previewFQDN constructs the full DNS name (FQDN) for a given record name +
+// network identity.  Wildcard names keep their "*." prefix intact so the
+// preview matches what the agent actually serves.
+//
+//   name="nas"     → "nas.mynet.internal"
+//   name="*"       → "*.mynet.internal"
+//   name="*.api"   → "*.api.mynet.internal"
+function previewFQDN(name: string, networkName: string, domainSuffix?: string): string {
+  const network = sanitizeDNSLabel(networkName);
+  const suffix = (domainSuffix && domainSuffix.trim()) || 'internal';
+  if (name === '*') {
+    return network ? `*.${network}.${suffix}` : `*.${suffix}`;
+  }
+  if (name.startsWith('*.')) {
+    const sub = name.slice(2).toLowerCase();
+    return network ? `*.${sub}.${network}.${suffix}` : `*.${sub}.${suffix}`;
+  }
+  const label = sanitizeDNSLabel(name);
+  return network ? `${label}.${network}.${suffix}` : `${label}.${suffix}`;
+}
+
 // buildFQDN constructs the full DNS name a peer would query to resolve this
 // record: <name>.<network-name>.<network-domain-suffix or "internal">.
 // The route the record belongs to intentionally does NOT appear — routes are
 // an internal grouping concept and renaming a route must not affect the
 // resolved name.
 function buildFQDN(row: DNSRow): string {
-  const label = sanitizeDNSLabel(row.name);
-  const network = sanitizeDNSLabel(row.network_name || '');
-  const suffix = (row.network_domain_suffix && row.network_domain_suffix.trim()) || 'internal';
-  if (!network) return `${label}.${suffix}`;
-  return `${label}.${network}.${suffix}`;
+  return previewFQDN(row.name, row.network_name || '', row.network_domain_suffix);
 }
 
 export default function DNSRecordsPage() {
@@ -273,7 +290,7 @@ export default function DNSRecordsPage() {
                   if (!route) return null;
                   const net = networks.find(n => n.id === selectedNetworkId);
                   if (!net) return null;
-                  const fqdn = `${sanitizeDNSLabel(newName)}.${sanitizeDNSLabel(net.name)}.${(net.domain_suffix && net.domain_suffix.trim()) || 'internal'}`;
+                  const fqdn = previewFQDN(newName.trim(), net.name, net.domain_suffix);
                   return (
                     <div className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-1">
                       → resolves as <span className="text-gray-700 dark:text-gray-200">{fqdn}</span>
@@ -363,7 +380,7 @@ export default function DNSRecordsPage() {
                               placeholder="hostname label only"
                             />
                             <div className="text-xs text-gray-400 dark:text-gray-500 font-mono mt-1">
-                              FQDN: {sanitizeDNSLabel(editName || row.name)}.{sanitizeDNSLabel(row.network_name || '')}.{(row.network_domain_suffix && row.network_domain_suffix.trim()) || 'internal'}
+                              FQDN: {previewFQDN(editName || row.name, row.network_name || '', row.network_domain_suffix)}
                             </div>
                           </div>
                         ) : (
