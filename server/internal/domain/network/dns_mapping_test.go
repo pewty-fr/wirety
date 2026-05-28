@@ -125,6 +125,57 @@ func TestValidateDNSName(t *testing.T) {
 			dnsName:     "a" + string(make([]byte, 254)), // 255 characters total
 			expectError: true,                            // Should be rejected as it's exactly 255 chars
 		},
+		// Wildcard names
+		{
+			name:        "bare wildcard",
+			dnsName:     "*",
+			expectError: false,
+		},
+		{
+			name:        "wildcard with single sublabel",
+			dnsName:     "*.api",
+			expectError: false,
+		},
+		{
+			name:        "wildcard with multiple sublabels",
+			dnsName:     "*.foo.bar",
+			expectError: false,
+		},
+		{
+			name:        "wildcard with hyphen in sublabel",
+			dnsName:     "*.my-service",
+			expectError: false,
+		},
+		{
+			name:        "wildcard star not at start",
+			dnsName:     "foo.*",
+			expectError: true,
+		},
+		{
+			name:        "wildcard missing dot after star",
+			dnsName:     "*foo",
+			expectError: true,
+		},
+		{
+			name:        "wildcard empty label after dot",
+			dnsName:     "*.",
+			expectError: true,
+		},
+		{
+			name:        "wildcard sublabel starting with hyphen",
+			dnsName:     "*.-api",
+			expectError: true,
+		},
+		{
+			name:        "wildcard sublabel ending with hyphen",
+			dnsName:     "*.api-",
+			expectError: true,
+		},
+		{
+			name:        "wildcard sublabel with special chars",
+			dnsName:     "*.api!",
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {

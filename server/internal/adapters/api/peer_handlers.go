@@ -99,7 +99,8 @@ func (h *Handler) GetPeer(c *gin.Context) {
 		return
 	}
 
-	if user != nil && !user.IsAdministrator() && peer.OwnerID != user.ID {
+	// Jump peers are shared network infrastructure visible to all users on the network.
+	if user != nil && !user.IsAdministrator() && !peer.IsJump && peer.OwnerID != user.ID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "you can only view your own peers"})
 		return
 	}
@@ -143,7 +144,10 @@ func (h *Handler) ListPeers(c *gin.Context) {
 
 	var accessiblePeers []*domain.Peer
 	for _, p := range peers {
-		if user != nil && !user.IsAdministrator() && p.OwnerID != user.ID {
+		// Jump peers are shared network infrastructure — every user on the network
+		// needs to see them so the frontend can build the captive-portal URL.
+		// All other peers are restricted to their owner (or admins).
+		if user != nil && !user.IsAdministrator() && !p.IsJump && p.OwnerID != user.ID {
 			continue
 		}
 		accessiblePeers = append(accessiblePeers, p)
