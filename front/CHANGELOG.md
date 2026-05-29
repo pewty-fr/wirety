@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.1](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.1.0...wirety-front/v3.1.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* dependencies ([16ad6e4](https://github.com/pewty-fr/wirety/commit/16ad6e4e51ca8ef589899f414dae509a63ae43f3))
+* lint ([0c1ba61](https://github.com/pewty-fr/wirety/commit/0c1ba61f190cbc98b90fb39b9afb915d624ce27c))
+
 ## [3.1.0](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.0.1...wirety-front/v3.1.0) (2026-05-29)
 
 
