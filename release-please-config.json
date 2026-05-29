@@ -21,13 +21,6 @@
       "separate-pull-requests": true,
       "tag-separator": "/"
     },
-    "doc": {
-      "release-type": "node",
-      "package-name": "wirety-doc",
-      "include-component-in-tag": true,
-      "separate-pull-requests": true,
-      "tag-separator": "/"
-    },
     "helm": {
       "release-type": "helm",
       "package-name": "wirety-helm",
