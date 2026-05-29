@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.0.1...wirety-front/v3.1.0) (2026-05-29)
+
+
+### Features
+
+* wildcard dns ([#251](https://github.com/pewty-fr/wirety/issues/251)) ([c3391f2](https://github.com/pewty-fr/wirety/commit/c3391f24848b6c2b23a20af1ef2fdeebc775a801))
+
 ## [3.0.1](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.0.0...wirety-front/v3.0.1) (2026-05-21)
 
 
