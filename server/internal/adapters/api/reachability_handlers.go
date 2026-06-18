@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sort"
 
+	"wirety/internal/adapters/api/middleware"
 	domain "wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
@@ -70,11 +71,22 @@ func (h *Handler) GetPeerReachability(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
 	ctx := c.Request.Context()
+	user := middleware.GetUserFromContext(c)
 
 	// 1. Get target peer
 	peer, err := h.service.GetPeer(ctx, networkID, peerID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "peer not found"})
+		return
+	}
+
+	// Object-level authz: reachability enumerates every peer in the network
+	// plus the full ACL/policy/route topology, so it is restricted to the
+	// peer's owner or an admin. Unlike connectivity status there is no
+	// jump-peer exception — querying a jump peer would still leak the whole
+	// network map to any member.
+	if user != nil && !user.IsAdministrator() && peer.OwnerID != user.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you can only view your own peers"})
 		return
 	}
 

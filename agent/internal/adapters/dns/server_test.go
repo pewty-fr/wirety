@@ -179,6 +179,53 @@ func TestHandleDNSWithLocalRecords(t *testing.T) {
 	}
 }
 
+// TestProbeDomainInterceptionGatedOnAuth locks in the fix for the HSTS bug:
+// well-known captive-portal probe hosts (which include real, HSTS-preloaded
+// sites like www.apple.com) must be redirected to the portal ONLY while the
+// peer is unauthenticated. Once authenticated they must resolve normally, or
+// browsing to apple.com yields an unbypassable HSTS error.
+func TestProbeDomainInterceptionGatedOnAuth(t *testing.T) {
+	server := NewServer("test.com", []dom.DNSPeer{})
+	server.SetCaptivePortalIP("10.255.0.1")
+	// Only 10.0.0.99 is authenticated.
+	server.SetAuthChecker(func(peerIP string) bool { return peerIP == "10.0.0.99" })
+	// Forward path for the authenticated case points at TEST-NET (unreachable)
+	// so the test never touches real DNS.
+	server.SetUpstreamServers([]string{"192.0.2.1:53"})
+
+	portalIP := net.ParseIP("10.255.0.1")
+
+	query := func(peerIP string) *dns.Msg {
+		m := new(dns.Msg)
+		m.SetQuestion(dns.Fqdn("www.apple.com"), dns.TypeA)
+		w := &mockResponseWriter{remoteAddr: &net.UDPAddr{IP: net.ParseIP(peerIP), Port: 12345}}
+		server.handleDNS(w, m)
+		return w.msg
+	}
+
+	// Unauthenticated peer: probe host MUST be hijacked to the portal IP so the
+	// OS "Sign in to network" detector fires.
+	unauth := query("10.0.0.5")
+	if unauth == nil || len(unauth.Answer) != 1 {
+		t.Fatalf("unauthenticated: expected 1 answer, got %v", unauth)
+	}
+	if a, ok := unauth.Answer[0].(*dns.A); !ok || !a.A.Equal(portalIP) {
+		t.Errorf("unauthenticated: expected portal IP %s, got %v", portalIP, unauth.Answer)
+	}
+
+	// Authenticated peer: probe host MUST NOT resolve to the portal — that is
+	// exactly what produced the HSTS error. It is forwarded upstream instead
+	// (which fails in-test), so we assert only that no portal-IP answer appears.
+	authed := query("10.0.0.99")
+	if authed != nil {
+		for _, rr := range authed.Answer {
+			if a, ok := rr.(*dns.A); ok && a.A.Equal(portalIP) {
+				t.Errorf("authenticated: probe host redirected to portal IP %s (HSTS bug regression)", portalIP)
+			}
+		}
+	}
+}
+
 func TestHandleDNSWithNonLocalRecords(t *testing.T) {
 	domain := "test.com"
 	peers := []dom.DNSPeer{

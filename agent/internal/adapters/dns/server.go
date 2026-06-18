@@ -309,7 +309,17 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		//
 		// For AAAA queries: return NODATA to force the OS to fall back to IPv4.
 		// Without this, a peer that prefers IPv6 bypasses the captive portal.
-		if portalIP != "" {
+		//
+		// Gated on redirectInternal (peer UNauthenticated): the only reason to
+		// hijack a probe domain is to trip the OS "Sign in to network" detector
+		// for a peer that still needs to authenticate. Once the peer is
+		// authenticated we must STOP intercepting these — several probe hosts
+		// (www.apple.com, captive.apple.com, …) are real, HSTS-preloaded sites,
+		// so continuing to point them at the captive portal's self-signed cert
+		// gives the user an unbypassable HSTS error when they browse to e.g.
+		// apple.com. Letting them forward upstream also lets the OS notice the
+		// network is no longer captive and dismiss the sign-in banner.
+		if redirectInternal {
 			if _, ok := captiveProbeHosts[name]; ok {
 				if q.Qtype == dns.TypeA {
 					log.Debug().Str("domain", name).Str("ip", portalIP).Msg("DNS: intercepting captive portal probe")
