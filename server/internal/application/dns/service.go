@@ -255,15 +255,17 @@ func (s *Service) GetNetworkDNSRecords(ctx context.Context, networkID string) ([
 		return nil, fmt.Errorf("failed to get network DNS mappings: %w", err)
 	}
 
-	// For each mapping, get the route to build FQDN
+	// Iterate the mappings to build their FQDN.  The route the mapping
+	// belongs to is no longer needed for the FQDN itself (the format is
+	// <name>.<network>.<suffix>), but we still look it up to filter out
+	// orphaned mappings whose route was deleted without a cascade.
 	for _, mapping := range routeMappings {
-		route, err := s.routeRepo.GetRoute(ctx, networkID, mapping.RouteID)
-		if err != nil {
+		if _, err := s.routeRepo.GetRoute(ctx, networkID, mapping.RouteID); err != nil {
 			// Skip if route not found
 			continue
 		}
 
-		fqdn := mapping.GetFQDN(route)
+		fqdn := mapping.GetFQDN(net)
 		records = append(records, DNSRecord{
 			Name:        mapping.Name,
 			IPAddress:   mapping.IPAddress,

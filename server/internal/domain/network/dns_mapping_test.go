@@ -9,38 +9,38 @@ func TestDNSMapping_GetFQDN(t *testing.T) {
 	tests := []struct {
 		name         string
 		dnsMapping   *DNSMapping
-		route        *Route
+		network      *Network
 		expectedFQDN string
 	}{
 		{
-			name: "with custom domain suffix",
+			name: "with custom network domain suffix",
 			dnsMapping: &DNSMapping{
 				ID:        "mapping1",
 				RouteID:   "route1",
 				Name:      "api",
 				IPAddress: "192.168.1.10",
 			},
-			route: &Route{
-				ID:           "route1",
-				Name:         "backend",
+			network: &Network{
+				ID:           "net1",
+				Name:         "corp-vpn",
 				DomainSuffix: "example.com",
 			},
-			expectedFQDN: "api.backend.example.com",
+			expectedFQDN: "api.corp-vpn.example.com",
 		},
 		{
-			name: "with empty domain suffix (should use default)",
+			name: "with empty network domain suffix (should use default)",
 			dnsMapping: &DNSMapping{
 				ID:        "mapping1",
 				RouteID:   "route1",
 				Name:      "database",
 				IPAddress: "192.168.1.20",
 			},
-			route: &Route{
-				ID:           "route1",
-				Name:         "storage",
+			network: &Network{
+				ID:           "net1",
+				Name:         "homelab",
 				DomainSuffix: "",
 			},
-			expectedFQDN: "database.storage.internal",
+			expectedFQDN: "database.homelab.internal",
 		},
 		{
 			name: "with complex names",
@@ -50,18 +50,18 @@ func TestDNSMapping_GetFQDN(t *testing.T) {
 				Name:      "web-server-01",
 				IPAddress: "10.0.0.100",
 			},
-			route: &Route{
-				ID:           "route1",
-				Name:         "production-web",
+			network: &Network{
+				ID:           "net1",
+				Name:         "production",
 				DomainSuffix: "corp.local",
 			},
-			expectedFQDN: "web-server-01.production-web.corp.local",
+			expectedFQDN: "web-server-01.production.corp.local",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fqdn := tt.dnsMapping.GetFQDN(tt.route)
+			fqdn := tt.dnsMapping.GetFQDN(tt.network)
 			if fqdn != tt.expectedFQDN {
 				t.Errorf("Expected FQDN %s, got %s", tt.expectedFQDN, fqdn)
 			}
@@ -124,6 +124,57 @@ func TestValidateDNSName(t *testing.T) {
 			name:        "name at maximum length boundary",
 			dnsName:     "a" + string(make([]byte, 254)), // 255 characters total
 			expectError: true,                            // Should be rejected as it's exactly 255 chars
+		},
+		// Wildcard names
+		{
+			name:        "bare wildcard",
+			dnsName:     "*",
+			expectError: false,
+		},
+		{
+			name:        "wildcard with single sublabel",
+			dnsName:     "*.api",
+			expectError: false,
+		},
+		{
+			name:        "wildcard with multiple sublabels",
+			dnsName:     "*.foo.bar",
+			expectError: false,
+		},
+		{
+			name:        "wildcard with hyphen in sublabel",
+			dnsName:     "*.my-service",
+			expectError: false,
+		},
+		{
+			name:        "wildcard star not at start",
+			dnsName:     "foo.*",
+			expectError: true,
+		},
+		{
+			name:        "wildcard missing dot after star",
+			dnsName:     "*foo",
+			expectError: true,
+		},
+		{
+			name:        "wildcard empty label after dot",
+			dnsName:     "*.",
+			expectError: true,
+		},
+		{
+			name:        "wildcard sublabel starting with hyphen",
+			dnsName:     "*.-api",
+			expectError: true,
+		},
+		{
+			name:        "wildcard sublabel ending with hyphen",
+			dnsName:     "*.api-",
+			expectError: true,
+		},
+		{
+			name:        "wildcard sublabel with special chars",
+			dnsName:     "*.api!",
+			expectError: true,
 		},
 	}
 

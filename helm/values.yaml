@@ -19,7 +19,7 @@ frontend:
   image:
     pullPolicy: IfNotPresent
     repository: ghcr.io/pewty-fr/wirety/front
-    tag: v2.1.0
+    tag: v3.1.1
   # livenessProbe:
   #   httpGet:
   #     path: /
@@ -73,7 +73,7 @@ server:
   image:
     pullPolicy: IfNotPresent
     repository: ghcr.io/pewty-fr/wirety/server
-    tag: v2.1.0
+    tag: v3.1.0
   livenessProbe:
     httpGet:
       path: /api/v1/health

@@ -84,6 +84,10 @@ func (m *mockWebSocketClient) WriteMessage(data []byte) error {
 	return nil
 }
 
+func (m *mockWebSocketClient) Ping() error {
+	return nil
+}
+
 func (m *mockWebSocketClient) Close() error {
 	m.closed = true
 	m.connected = false

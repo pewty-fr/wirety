@@ -162,21 +162,32 @@ func (s *Server) SetPeerRoutes(routes map[string][]string) {
 // the peer is full-tunnel.
 //
 // When the peer's routes are unknown (no heartbeat received yet, or peer does not
-// run the agent), we default to true — i.e. assume full-tunnel.  This is the
-// conservative captive-portal choice: redirecting external DNS for a split-tunnel
-// peer that doesn't run the agent merely causes their browser to land on the
-// captive portal page (which they can dismiss by authenticating), whereas NOT
-// redirecting for an actual full-tunnel peer leaves them staring at silent
-// connection drops with no hint that they need to log in.
+// run the agent), we default to FALSE — i.e. assume split-tunnel.  The reverse
+// default was tempting (redirect external DNS so the user lands on the captive
+// portal page) but it is broken for HSTS-preloaded hosts: a redirect of e.g.
+// login.windows.net to the captive portal IP makes the browser receive the
+// portal's self-signed cert under the wrong SNI, and Firefox/Chrome refuse the
+// bypass because of HSTS — the user is stuck on an unhelpful error page with no
+// way to reach the captive portal.  Since every major SSO provider (Microsoft
+// Entra ID, Google, Okta, …) is HSTS-preloaded, redirecting external DNS by
+// default actively breaks OIDC sign-in for non-agent split-tunnel peers, which
+// is the common case (most clients run plain WireGuard, not the agent).
 //
-// Once the peer's agent reports local AllowedIPs, peerRoutes is populated and
-// the accurate split-tunnel vs. full-tunnel decision takes over.
+// The trade-off: an actual full-tunnel peer that doesn't run the agent gets no
+// aggressive interception, so the browser tries the real external IP and runs
+// into the FORWARD-chain DROP with no captive-portal hint.  Mitigations still
+// in place:
+//   - Probe-domain interception (Apple/Android/Windows/Firefox NCSI hostnames)
+//     still routes captive-portal probes to the jump peer, so the OS-level
+//     "Sign in to network" prompt still fires.
+//   - Once the peer's agent does report local AllowedIPs, peerRoutes is
+//     populated and the accurate full-tunnel decision kicks in.
 func (s *Server) isFullTunnelPeer(peerIP string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	cidrs, ok := s.peerRoutes[peerIP]
 	if !ok {
-		return true // unknown → assume full-tunnel (see comment above)
+		return false // unknown → assume split-tunnel (see comment above)
 	}
 	for _, c := range cidrs {
 		switch strings.TrimSpace(c) {
@@ -456,24 +467,59 @@ func (s *Server) lookupPeerIP(name string) string {
 
 // lookupPeerAddresses returns both the IPv4 and IPv6 WireGuard addresses for
 // the given hostname (FQDN).  Either value may be empty if not configured.
+//
+// Resolution priority (highest first):
+//  1. Exact match — the query name equals a configured FQDN.
+//  2. Wildcard match — the query matches "*.suffix" for some configured
+//     wildcard record.  Among multiple matching wildcards the most specific
+//     one wins (the one with the greatest number of labels in its suffix,
+//     e.g. "*.api.mynet.internal" beats "*.mynet.internal").
+//
+// Wildcards follow RFC 4592: "*.suffix" matches exactly ONE additional label,
+// so "*.foo.internal" matches "bar.foo.internal" but NOT "x.bar.foo.internal".
 func (s *Server) lookupPeerAddresses(name string) (ipv4, ipv6 string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	var bestWildcardIPv4, bestWildcardIPv6 string
+	bestWildcardSpecificity := -1 // number of labels in the wildcard suffix
+
 	for _, p := range s.peers {
 		var fqdn string
 		if strings.Contains(p.Name, ".") {
-			// Route DNS mapping stored with full FQDN
+			// Route DNS mapping stored with full FQDN (e.g. "*.api.mynet.internal")
 			fqdn = p.Name
 		} else {
-			// Peer DNS record — construct FQDN
+			// Peer name — construct FQDN (e.g. "peer1.mynet.internal")
 			fqdn = fmt.Sprintf("%s.%s", p.Name, s.domain)
 		}
+
+		// 1. Exact match → highest priority, return immediately.
 		if name == fqdn {
 			return p.IP, p.IPv6
 		}
+
+		// 2. Wildcard match: "*.suffix" matches "<one-label>.suffix".
+		if strings.HasPrefix(fqdn, "*.") {
+			suffix := fqdn[2:] // everything after "*."
+			// The query must end with "."+suffix, and the preceding part must
+			// be exactly one label (no dots).
+			if strings.HasSuffix(name, "."+suffix) {
+				prefix := name[:len(name)-len(suffix)-1]
+				if prefix != "" && !strings.Contains(prefix, ".") {
+					// More labels in suffix = more specific wildcard.
+					specificity := strings.Count(suffix, ".") + 1
+					if specificity > bestWildcardSpecificity {
+						bestWildcardSpecificity = specificity
+						bestWildcardIPv4 = p.IP
+						bestWildcardIPv6 = p.IPv6
+					}
+				}
+			}
+		}
 	}
-	return "", ""
+
+	return bestWildcardIPv4, bestWildcardIPv6
 }
 
 // Update updates the DNS server configuration with new domain, peers, and upstream servers

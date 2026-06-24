@@ -12,8 +12,8 @@
 [![GitHub Release](https://img.shields.io/github/v/release/pewty-fr/wirety?sort=semver&filter=wirety-agent*)](https://github.com/pewty-fr/wirety/releases)
 [![GitHub Release](https://img.shields.io/github/v/release/pewty-fr/wirety?sort=semver&filter=wirety-front*)](https://github.com/pewty-fr/wirety/releases)
 [![GitHub Release](https://img.shields.io/github/v/release/pewty-fr/wirety?sort=semver&filter=wirety-helm*)](https://github.com/pewty-fr/wirety/releases)
-[![Docker Pulls](https://img.shields.io/badge/docker-pulls-blue)](https://rg.fr-par.scw.cloud/wirety)
-[![Helm Chart](https://img.shields.io/badge/helm-chart-0F1689)](https://rg.fr-par.scw.cloud/wirety/chart)
+[![Docker Pulls](https://img.shields.io/badge/docker-pulls-blue)](https://ghcr.io/pewty-fr/wirety)
+[![Helm Chart](https://img.shields.io/badge/helm-chart-0F1689)](https://ghcr.io/pewty-fr/wirety/chart)
 
 [🚀 Quick Start](#-quick-start) • [📚 Documentation](#-documentation) • [🎯 Features](#-features) • [🤝 Contributing](#-contributors)
 
@@ -101,10 +101,10 @@ All Wirety components are available as container images:
 
 | Component | Registry | Latest Tag |
 |-----------|----------|------------|
-| **Server** | `rg.fr-par.scw.cloud/wirety/server` | `latest` |
-| **Frontend** | `rg.fr-par.scw.cloud/wirety/front` | `latest` |
-| **Documentation** | `rg.fr-par.scw.cloud/wirety/doc` | `latest` |
-| **Helm Chart** | `oci://rg.fr-par.scw.cloud/wirety/chart` | See [releases](https://github.com/pewty-fr/wirety/releases) |
+| **Server** | `ghcr.io/pewty-fr/wirety/server` | `latest` |
+| **Frontend** | `ghcr.io/pewty-fr/wirety/front` | `latest` |
+| **Documentation** | `ghcr.io/pewty-fr/wirety/doc` | `latest` |
+| **Helm Chart** | `oci://ghcr.io/pewty-fr/wirety/chart` | See [releases](https://github.com/pewty-fr/wirety/releases) |
 
 ### Agent Binary Releases
 
@@ -122,7 +122,7 @@ Deploy the complete Wirety platform (server + frontend) to Kubernetes:
 
 ```bash
 # Add the Helm repository
-helm install wirety oci://rg.fr-par.scw.cloud/wirety/chart/wirety \
+helm install wirety oci://ghcr.io/pewty-fr/wirety/chart/wirety \
   --version <version> \
   --namespace wirety \
   --create-namespace \
@@ -241,7 +241,7 @@ Customize your deployment with `values.yaml`:
 # Server configuration
 server:
   image:
-    repository: rg.fr-par.scw.cloud/wirety/server
+    repository: ghcr.io/pewty-fr/wirety/server
     tag: "latest"
   
   env:
@@ -254,7 +254,7 @@ server:
 # Frontend configuration
 frontend:
   image:
-    repository: rg.fr-par.scw.cloud/wirety/front
+    repository: ghcr.io/pewty-fr/wirety/front
     tag: "latest"
   
   env:
@@ -356,7 +356,7 @@ furnished to do so, subject to the following conditions:
 - 🌐 **Website**: [https://pewty.fr](https://pewty.fr)
 - 📖 **Documentation**: [https://docs-wirety.pewty.fr/](https://docs-wirety.pewty.fr/)
 - 📦 **GitHub**: [https://github.com/pewty-fr/wirety](https://github.com/pewty-fr/wirety)
-- 🐳 **Container Registry**: [rg.fr-par.scw.cloud/wirety](https://console.scaleway.com/registry/)
+- 🐳 **Container Registry**: [ghcr.io/pewty-fr/wirety](https://console.scaleway.com/registry/)
 - 💬 **Issues**: [GitHub Issues](https://github.com/pewty-fr/wirety/issues)
 - 🤝 **Contributing**: [Contributing Guide](CONTRIBUTING.md)
 

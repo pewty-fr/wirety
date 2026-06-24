@@ -1,5 +1,42 @@
 # Changelog
 
+## [3.1.1](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.1.0...wirety-front/v3.1.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* dependencies ([16ad6e4](https://github.com/pewty-fr/wirety/commit/16ad6e4e51ca8ef589899f414dae509a63ae43f3))
+* lint ([0c1ba61](https://github.com/pewty-fr/wirety/commit/0c1ba61f190cbc98b90fb39b9afb915d624ce27c))
+
+## [3.1.0](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.0.1...wirety-front/v3.1.0) (2026-05-29)
+
+
+### Features
+
+* wildcard dns ([#251](https://github.com/pewty-fr/wirety/issues/251)) ([c3391f2](https://github.com/pewty-fr/wirety/commit/c3391f24848b6c2b23a20af1ef2fdeebc775a801))
+
+## [3.0.1](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.0.0...wirety-front/v3.0.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* captive portal issues ([#233](https://github.com/pewty-fr/wirety/issues/233)) ([505d458](https://github.com/pewty-fr/wirety/commit/505d45856114f1b14f257337224ddaeccfb7f396))
+
+## [3.0.0](https://github.com/pewty-fr/wirety/compare/wirety-front/v2.1.0...wirety-front/v3.0.0) (2026-05-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* ipv6 ([#215](https://github.com/pewty-fr/wirety/issues/215))
+* simplification ([#213](https://github.com/pewty-fr/wirety/issues/213))
+
+### Features
+
+* github auth ([#185](https://github.com/pewty-fr/wirety/issues/185)) ([25e1f87](https://github.com/pewty-fr/wirety/commit/25e1f8783dbd46d66663612f236170f61a78e0f1))
+* ipv6 ([#215](https://github.com/pewty-fr/wirety/issues/215)) ([1210526](https://github.com/pewty-fr/wirety/commit/121052667f727134902b2e9baac0d742f2c6bf34))
+* simplification ([#213](https://github.com/pewty-fr/wirety/issues/213)) ([30e8911](https://github.com/pewty-fr/wirety/commit/30e8911fd65c36de1898ec8a788ff0825a7376a0))
+* ui improvments ([#219](https://github.com/pewty-fr/wirety/issues/219)) ([f546f7d](https://github.com/pewty-fr/wirety/commit/f546f7d262bd93306fd230c8cd02427a3af257c5))
+
 ## [2.1.0](https://github.com/pewty-fr/wirety/compare/wirety-front/v2.0.0...wirety-front/v2.1.0) (2026-04-13)
 
 

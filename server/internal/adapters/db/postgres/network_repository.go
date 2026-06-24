@@ -555,13 +555,19 @@ func (r *NetworkRepository) CreateCaptivePortalToken(ctx context.Context, token 
 	return err
 }
 
+// GetCaptivePortalToken returns the token row only when it is still usable —
+// i.e. not consumed.  A row whose consumed_at column is non-NULL has either
+// been used to authenticate or has been revoked by an admin via
+// RevokePeerAuthentication; either way the caller should treat it as gone.
+// We deliberately keep expired rows discoverable here so callers can map them
+// to a clearer "expired" error before the row is GC'd by the cleanup sweep.
 func (r *NetworkRepository) GetCaptivePortalToken(ctx context.Context, tokenStr string) (*network.CaptivePortalToken, error) {
 	var token network.CaptivePortalToken
 	var endpointIP, consumeState sql.NullString
 	err := r.db.QueryRowContext(ctx, `
 		SELECT token, network_id, jump_peer_id, peer_ip, peer_endpoint, created_at, expires_at, consume_state
 		FROM captive_portal_tokens
-		WHERE token=$1
+		WHERE token=$1 AND consumed_at IS NULL
 	`, tokenStr).Scan(&token.Token, &token.NetworkID, &token.JumpPeerID, &token.PeerIP, &endpointIP, &token.CreatedAt, &token.ExpiresAt, &consumeState)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -645,12 +651,19 @@ func (r *NetworkRepository) ListExpiredUnconsumedCaptivePortalTokens(ctx context
 	return out, rows.Err()
 }
 
-// ListActiveCaptivePortalTokens returns all unexpired tokens for a jump peer.
+// ListActiveCaptivePortalTokens returns all unexpired AND unconsumed tokens
+// for a jump peer.  Tokens marked consumed (via MarkCaptivePortalTokenConsumed,
+// e.g. by "Revoke Auth" or when a new token is issued for the same peer) MUST
+// be excluded — they no longer represent a peer in the pending_auth state, and
+// returning them would keep:
+//   - getPeerCaptivePortalState() reporting "pending_auth" after revoke
+//   - the firewall granting the pending-auth HTTPS-anywhere bypass to a peer
+//     whose auth was just revoked
 func (r *NetworkRepository) ListActiveCaptivePortalTokens(ctx context.Context, networkID, jumpPeerID string) ([]*network.CaptivePortalToken, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT token, network_id, jump_peer_id, peer_ip, COALESCE(peer_endpoint, ''), created_at, expires_at
 		FROM captive_portal_tokens
-		WHERE network_id=$1 AND jump_peer_id=$2 AND expires_at > NOW()
+		WHERE network_id=$1 AND jump_peer_id=$2 AND expires_at > NOW() AND consumed_at IS NULL
 		ORDER BY created_at ASC
 	`, networkID, jumpPeerID)
 	if err != nil {

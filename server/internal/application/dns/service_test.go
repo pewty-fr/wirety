@@ -711,7 +711,9 @@ func TestService_GetNetworkDNSRecords(t *testing.T) {
 			}
 		case "route":
 			routeRecords++
-			expectedFQDN := "api.backend.example.com"
+			// Route DNS records resolve under <name>.<network>.<network-suffix>;
+			// the route name ("backend") is intentionally absent from the FQDN.
+			expectedFQDN := "api.testnet.example.com"
 			if record.FQDN != expectedFQDN {
 				t.Errorf("Expected route FQDN %s, got %s", expectedFQDN, record.FQDN)
 			}

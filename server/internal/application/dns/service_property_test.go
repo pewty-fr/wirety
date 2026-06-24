@@ -339,7 +339,7 @@ func TestProperty_DNSMappingFQDNFormat(t *testing.T) {
 
 	properties.Property("Feature: network-groups-policies-routing, Property 46: DNS mapping FQDN format",
 		prop.ForAll(
-			func(networkID string, routeID string, dnsName string, routeName string, domainSuffix string, cidrAndIP []interface{}) bool {
+			func(networkID string, routeID string, dnsName string, networkName string, domainSuffix string, cidrAndIP []interface{}) bool {
 				// Extract CIDR and IP from the generated pair
 				cidr := cidrAndIP[0].(string)
 				ip := cidrAndIP[1].(string)
@@ -348,15 +348,23 @@ func TestProperty_DNSMappingFQDNFormat(t *testing.T) {
 				dnsRepo := newMockDNSRepository()
 				routeRepo := newMockRouteRepository()
 
-				// Create a route with the generated properties
+				// The network carries the name + domain suffix that drive the
+				// FQDN.  The route name is intentionally irrelevant — a hard-
+				// coded route name here documents that property.
+				net := &network.Network{
+					ID:           networkID,
+					Name:         networkName,
+					DomainSuffix: domainSuffix,
+				}
+
 				route := &network.Route{
 					ID:              routeID,
 					NetworkID:       networkID,
-					Name:            routeName,
+					Name:            "irrelevant-route-name",
 					Description:     "Test route",
 					DestinationCIDR: cidr,
 					JumpPeerID:      "jump-peer-1",
-					DomainSuffix:    domainSuffix,
+					DomainSuffix:    "irrelevant-route-suffix",
 					CreatedAt:       time.Now(),
 					UpdatedAt:       time.Now(),
 				}
@@ -377,18 +385,18 @@ func TestProperty_DNSMappingFQDNFormat(t *testing.T) {
 					return true
 				}
 
-				// Get the FQDN using the GetFQDN method
-				fqdn := mapping.GetFQDN(route)
+				// Get the FQDN using the GetFQDN method (now keyed on the network).
+				fqdn := mapping.GetFQDN(net)
 
-				// Verify property: FQDN should be formatted as name.route_name.domain_suffix
-				expectedFQDN := fmt.Sprintf("%s.%s.%s", dnsName, routeName, domainSuffix)
+				// Verify property: FQDN format is <name>.<network>.<network-suffix>.
+				expectedFQDN := fmt.Sprintf("%s.%s.%s", dnsName, networkName, domainSuffix)
 
 				return fqdn == expectedFQDN
 			},
 			genNetworkID(),
 			genRouteID(),
 			genValidDNSName(),
-			genRouteName(),
+			genRouteName(), // re-used as a network-name generator (same shape)
 			genDomainSuffix(),
 			genCIDRAndIPInRange(),
 		))
