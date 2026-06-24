@@ -138,8 +138,11 @@ func (h *Handler) RegisterRoutes(r *gin.Engine, authMiddleware gin.HandlerFunc, 
 		api.POST("/auth/login", h.SimpleLogin)
 		api.POST("/auth/logout", h.Logout)
 		api.GET("/agent/resolve", h.ResolveAgent)
-		api.GET("/ws", h.HandleWebSocketToken)               // token-based WebSocket
-		api.GET("/ws/:networkId/:peerId", h.HandleWebSocket) // legacy WebSocket
+		api.GET("/ws", h.HandleWebSocketToken) // token-based WebSocket
+		// NOTE: the legacy /ws/:networkId/:peerId route was removed — it was
+		// unauthenticated and streamed the peer's full WireGuard config (incl.
+		// its private key) to anyone who knew the network/peer UUIDs. All agents
+		// use the token-authenticated /ws endpoint above.
 
 		// Captive portal: token creation is agent-authenticated (enrollment token),
 		// authenticate is unauthenticated (uses captive_token + session_hash).

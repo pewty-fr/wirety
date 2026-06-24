@@ -21,6 +21,34 @@ interface TokenPreview {
 }
 
 /**
+ * safeRedirect validates the post-auth `redirect` query param before it is used
+ * as a navigation target or an <a href>.
+ *
+ * The destination is whatever internal VPN resource the user originally tried to
+ * reach (an arbitrary private host/IP), so we cannot restrict it to a known host
+ * allowlist. We MUST, however, reject any non-http(s) scheme: a `javascript:` or
+ * `data:` value here would execute script in the user's browser (XSS) when fed
+ * to window.location.replace() or rendered as a link. Relative values are
+ * resolved against our own origin and are always safe.
+ *
+ * Returns the validated absolute URL, or null if the param is absent/unsafe.
+ * (Residual: a post-auth redirect to an arbitrary http(s) host is still
+ * possible — proportionate, since the user has already completed SSO and the
+ * explicit "this is me" confirmation by this point.)
+ */
+function safeRedirect(raw: string | null): string | null {
+  if (!raw) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw, window.location.origin);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  return parsed.href;
+}
+
+/**
  * CaptivePortalPage — sign-in landing target for the captive-portal redirect.
  *
  * Phishing-defense flow (see server migration 026 + service.go):
@@ -55,7 +83,9 @@ export default function CaptivePortalPage() {
   const [preview, setPreview] = useState<TokenPreview | null>(null);
 
   const captiveToken = searchParams.get('token');
-  const redirectUrl = searchParams.get('redirect');
+  // Validate the redirect target — reject javascript:/data: and other dangerous
+  // schemes before it is ever used as a navigation target or link href.
+  const redirectUrl = safeRedirect(searchParams.get('redirect'));
 
   // Fetch the preview as soon as we have a session.  This validates the token,
   // checks ownership, and gives us the data to show the user — but does NOT

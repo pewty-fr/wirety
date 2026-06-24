@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"wirety/internal/adapters/api/middleware"
 	domain "wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,20 @@ import (
 func (h *Handler) GetPeerConnectivityStatus(c *gin.Context) {
 	networkID := c.Param("networkId")
 	peerID := c.Param("peerId")
+	user := middleware.GetUserFromContext(c)
+
+	// Object-level authz: a non-admin may only read connectivity for their own
+	// peers (jump peers are shared infrastructure and stay visible, mirroring
+	// GetPeer — the dashboard polls every listed peer's status, jump included).
+	peer, err := h.service.GetPeer(c.Request.Context(), networkID, peerID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "peer not found"})
+		return
+	}
+	if user != nil && !user.IsAdministrator() && !peer.IsJump && peer.OwnerID != user.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you can only view your own peers"})
+		return
+	}
 
 	status, err := h.service.GetPeerConnectivityStatus(c.Request.Context(), networkID, peerID)
 	if err != nil {

@@ -6,10 +6,35 @@ import (
 
 	"wirety/internal/adapters/api/middleware"
 	"wirety/internal/audit"
+	"wirety/internal/domain/auth"
 	domain "wirety/internal/domain/network"
 
 	"github.com/gin-gonic/gin"
 )
+
+// redactPeerForUser returns a copy of the peer that is safe to serialize to the
+// given user. The agent enrollment Token is a secret credential — it can be
+// exchanged at /agent/resolve for the peer's full WireGuard config, including
+// the private key — so it is stripped unless the requester is the peer's owner
+// or an administrator.
+//
+// This matters specifically for jump peers: they have no owner, and are
+// returned to all network members (so the dashboard can build the captive-portal
+// URL), so without this redaction every user on the network would receive the
+// jump peer's enrollment token and could take over the network hub.
+//
+// The copy is essential: the in-memory repository hands back live pointers to
+// stored peers, so mutating the token in place would wipe it from the store.
+func redactPeerForUser(p *domain.Peer, user *auth.User) *domain.Peer {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	if user == nil || (!user.IsAdministrator() && p.OwnerID != user.ID) {
+		cp.Token = ""
+	}
+	return &cp
+}
 
 // PaginatedPeers represents a paginated list of peers
 type PaginatedPeers struct {
@@ -105,7 +130,7 @@ func (h *Handler) GetPeer(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, peer)
+	c.JSON(http.StatusOK, redactPeerForUser(peer, user))
 }
 
 // ListPeers godoc
@@ -174,8 +199,18 @@ func (h *Handler) ListPeers(c *gin.Context) {
 		end = total
 	}
 
+	// Redact the enrollment token from every peer the caller doesn't own
+	// (admins see all). Without this, jump peers — returned to all network
+	// members — would leak their token, which is exchangeable for the hub's
+	// private key.
+	pageItems := filtered[start:end]
+	redacted := make([]*domain.Peer, len(pageItems))
+	for i, p := range pageItems {
+		redacted[i] = redactPeerForUser(p, user)
+	}
+
 	c.JSON(http.StatusOK, PaginatedPeers{
-		Data:     filtered[start:end],
+		Data:     redacted,
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,

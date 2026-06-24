@@ -85,58 +85,6 @@ func (m *WebSocketManager) IsConnected(networkID, peerID string) bool {
 	return false
 }
 
-// HandleWebSocket handles WebSocket connections for peer configuration updates
-func (h *Handler) HandleWebSocket(c *gin.Context) {
-	networkID := c.Param("networkId")
-	peerID := c.Param("peerId")
-
-	// Upgrade HTTP connection to WebSocket
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to upgrade connection")
-		return
-	}
-	defer func() {
-		h.wsManager.Unregister(networkID, peerID)
-		_ = conn.Close()
-	}()
-
-	log.Info().
-		Str("network_id", networkID).
-		Str("peer_id", peerID).
-		Msg("WebSocket connection established")
-
-	// Register connection
-	h.wsManager.Register(networkID, peerID, conn)
-
-	// Send initial configuration
-	config, err := h.service.GeneratePeerConfig(c.Request.Context(), networkID, peerID)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to generate initial config")
-		return
-	}
-
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(config)); err != nil {
-		log.Error().Err(err).Msg("Failed to send initial config")
-		return
-	}
-
-	// Keep connection alive and listen for close
-	for {
-		_, _, err := conn.ReadMessage()
-		if err != nil {
-			// Surface the underlying error so we can tell apart a clean Close
-			// frame, an idle-timeout from an intermediary LB, a TCP RST, etc.
-			log.Info().
-				Err(err).
-				Str("network_id", networkID).
-				Str("peer_id", peerID).
-				Msg("WebSocket connection closed")
-			break
-		}
-	}
-}
-
 // HandleWebSocketToken handles WebSocket connections authenticated by enrollment token (Authorization: Bearer <token>)
 func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 	token := extractBearerToken(c)
