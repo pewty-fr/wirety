@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.1](https://github.com/pewty-fr/wirety/compare/wirety-server/v3.1.0...wirety-server/v3.1.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* security review ([#271](https://github.com/pewty-fr/wirety/issues/271)) ([d8f1078](https://github.com/pewty-fr/wirety/commit/d8f1078aff22ed471ab0c39bc5c648b6301622f5))
+
 ## [3.1.0](https://github.com/pewty-fr/wirety/compare/wirety-server/v3.0.1...wirety-server/v3.1.0) (2026-05-29)
 
 
