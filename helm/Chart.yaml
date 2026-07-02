@@ -2,7 +2,7 @@ apiVersion: v2
 name: wirety
 description: Secure, dynamic WireGuard mesh with agents and a captive-portal-gated network
 type: application
-version: 2.0.1
+version: 2.1.0
 appVersion: "2.0.0"
 keywords:
   - wireguard
