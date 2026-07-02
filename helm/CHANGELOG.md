@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.0](https://github.com/pewty-fr/wirety/compare/wirety-helm/v2.0.1...wirety-helm/v2.1.0) (2026-07-02)
+
+
+### Features
+
+* add filters on httproute ([089a054](https://github.com/pewty-fr/wirety/commit/089a054840631c4797baaf158692a2681ddd6fe1))
+
+
+### Bug Fixes
+
+* upgrade front to 3.1.2 and server to 3.1.1 ([4c5855d](https://github.com/pewty-fr/wirety/commit/4c5855dbec8330166ba87deb572aee528021394e))
+* upgrade versions ([0c38dfd](https://github.com/pewty-fr/wirety/commit/0c38dfdd0fe04947d9ea83f97609e59704ebf27f))
+
 ## [2.0.1](https://github.com/pewty-fr/wirety/compare/wirety-helm/v2.0.0...wirety-helm/v2.0.1) (2026-05-20)
 
 
