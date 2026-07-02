@@ -145,8 +145,8 @@ httpRoute:
     #     filters:
     #     - type: ResponseHeaderModifier
     #       responseHeaderModifier:
-    #          remove:
-    #            - server
+    #         remove:
+    #           - server
     #     backend: frontend
     #
     # ── Optional: agent connectivity (needed if agents reach the server over
@@ -222,8 +222,8 @@ httpRoute:
     #     filters:
     #     - type: ResponseHeaderModifier
     #       responseHeaderModifier:
-    #          remove:
-    #            - server
+    #         remove:
+    #           - server
     #     backend: frontend
     rules: []
 
