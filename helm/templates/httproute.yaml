@@ -80,6 +80,8 @@ spec:
     {{- range .Values.httpRoute.private.rules }}
     - matches:
         {{- toYaml .matches | nindent 8 }}
+      filters:
+        {{- toYaml .filters | nindent 8 }}
       backendRefs:
         - name: {{ include "wirety.fullname" $ }}-{{ .backend }}
           port: {{ if eq .backend "server" }}{{ $.Values.server.service.port }}{{ else }}{{ $.Values.frontend.service.port }}{{ end }}

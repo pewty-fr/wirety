@@ -142,6 +142,11 @@ httpRoute:
     #       - path:
     #           type: PathPrefix
     #           value: /
+    #     filters:
+    #     - type: ResponseHeaderModifier
+    #       responseHeaderModifier:
+    #          remove:
+    #            - server
     #     backend: frontend
     #
     # ── Optional: agent connectivity (needed if agents reach the server over
@@ -214,6 +219,11 @@ httpRoute:
     #       - path:
     #           type: PathPrefix
     #           value: /
+    #     filters:
+    #     - type: ResponseHeaderModifier
+    #       responseHeaderModifier:
+    #          remove:
+    #            - server
     #     backend: frontend
     rules: []
 
