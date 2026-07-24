@@ -95,7 +95,12 @@ Common patterns:
 - `http://localhost:3000/callback`
 
 ## Refresh Tokens
-`grantTypes` include `refresh_token`; ensure Wirety stores and exchanges refresh tokens if long-lived sessions are needed.
+Dex only issues a refresh token when the `offline_access` scope is requested — Wirety requests it by default (`AUTH_SCOPES`). To verify the refresh flow quickly, add a short id_token lifetime to `config.yaml` and confirm the session survives past it:
+
+```yaml
+expiry:
+  idTokens: "2m"
+```
 
 ## Notes
 - This setup is NOT production-ready (no external connector, single secret, plaintext config).

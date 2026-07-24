@@ -40,6 +40,8 @@ Successfully implemented a dual-mode authentication system for Wirety Server sup
 - `AUTH_ISSUER_URL` - Keycloak realm URL
 - `AUTH_CLIENT_ID` - OIDC client identifier
 - `AUTH_JWKS_CACHE_TTL` - JWKS cache duration
+- `AUTH_SCOPES` - OAuth scopes requested at login (default: `openid profile email offline_access`; `offline_access` is omitted automatically for Google and Slack, which reject it)
+- `AUTH_AUTHORIZATION_EXTRA_PARAMS` - Extra query params appended to the authorization URL (Google needs `access_type=offline&prompt=consent` for refresh tokens)
 
 **Repository (`internal/adapters/db/memory/user_repository.go`):**
 - In-memory user storage
@@ -153,6 +155,29 @@ Agents (WireGuard peers) use a separate authentication mechanism:
 3. Can create/delete networks
 4. Can manage users and permissions
 5. Can configure default settings
+
+## Session Refresh and the offline_access Scope
+
+Sessions are kept alive by refreshing the id_token with the refresh token stored
+in the server-side session (`middleware/auth.go`). Per OIDC Core §11, most
+providers (Azure Entra ID, Dex, ...) only issue a refresh token when the
+`offline_access` scope is requested at login — which is why it is part of the
+default `AUTH_SCOPES`. Without it, `session.RefreshToken` stays empty and the
+session is deleted as soon as the first id_token expires (often minutes), which
+users experience as constant logouts. The server logs a Warn
+(`no refresh token received`) at token exchange when this happens.
+
+Provider quirks:
+- **Google** rejects `offline_access` (excluded automatically) and needs
+  `AUTH_AUTHORIZATION_EXTRA_PARAMS="access_type=offline&prompt=consent"` instead.
+- **Slack** rejects `offline_access` (excluded automatically); enable token
+  rotation in the Slack app settings to get rotating `xoxe-1-...` refresh tokens.
+- **Keycloak** issues session-bound refresh tokens even without `offline_access`;
+  with it, sessions use long-lived offline tokens.
+- On the refresh grant itself, `offline_access` is stripped
+  (`AuthConfig.RefreshScopes`) — it only has meaning on the authorization request,
+  and RFC 6749 §6 forbids requesting scopes beyond the original grant, which
+  keeps sessions created before this scope was added refreshable.
 
 ## Security Features
 

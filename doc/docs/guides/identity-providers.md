@@ -30,6 +30,15 @@ AUTH_CLIENT_SECRET=your-client-secret
 
 The server fetches `{AUTH_ISSUER_URL}/.well-known/openid-configuration` on startup and caches the result for one hour (`AUTH_JWKS_CACHE_TTL`, default `3600`).
 
+By default Wirety requests the scopes `openid profile email offline_access`. The `offline_access` scope is what makes the provider issue a **refresh token** — without one, sessions cannot auto-renew and end as soon as the first id_token expires (often just minutes). Two optional variables tune this per provider:
+
+```bash
+AUTH_SCOPES="openid profile email offline_access"        # override the requested scopes
+AUTH_AUTHORIZATION_EXTRA_PARAMS="access_type=offline&prompt=consent"  # extra authorization URL params (needed for Google)
+```
+
+Requesting `offline_access` may add a line to the provider's consent screen (e.g. Entra ID shows *"Maintain access to data you have given it access to"*).
+
 The OAuth redirect URI to register in your provider is:
 
 ```
@@ -68,6 +77,7 @@ AUTH_CLIENT_SECRET=<client-secret>
 ### Notes
 
 - Keycloak includes `email`, `name`, and `sub` in the ID token by default — no extra configuration needed.
+- Wirety requests the `offline_access` scope by default, so Keycloak issues an **offline token** (long-lived refresh token) and sessions survive past the id_token lifespan. The `offline_access` client scope is assigned to new clients out of the box; if it was removed from your client, Keycloak silently ignores the request and falls back to a regular (SSO-session-bound) refresh token.
 - If you want to pre-assign users to the `administrator` role automatically, use a Keycloak client mapper to add a custom claim and manage roles in the Wirety UI after first login.
 
 ---
@@ -102,6 +112,7 @@ AUTH_CLIENT_SECRET=<client-secret>
 
 ### Notes
 
+- Wirety requests the `offline_access` scope by default — Entra ID **requires** it to issue a refresh token (without one, sessions end when the first id_token expires, typically after ~1 hour or less depending on tenant policy). Users will see *"Maintain access to data you have given it access to"* on the consent screen; this is expected.
 - Azure Entra ID does not include the `email` claim in the ID token by default. Wirety automatically falls back to the userinfo endpoint and, if needed, the `upn` (user principal name) claim.
 - Azure returns `expires_in` as a quoted string (`"3600"`) rather than an integer. Wirety handles this transparently.
 - Make sure the application has the **User.Read** delegated permission granted.
@@ -138,8 +149,35 @@ AUTH_CLIENT_SECRET=<client-secret>
 ### Notes
 
 - Slack is a full OIDC provider — no proxy or additional tooling required.
+- Slack rejects the `offline_access` scope, so Wirety automatically excludes it for `slack.com` issuers. To get refresh tokens (long-lived sessions), enable **token rotation** in the Slack app settings — Slack then returns rotating `xoxe-1-...` refresh tokens that Wirety handles natively.
 - Slack does not support RP-initiated logout (`end_session_endpoint`). Clicking **Logout** in Wirety invalidates the Wirety session only; the Slack workspace session is unaffected.
 - Access is naturally scoped to users who have the app installed in their workspace. If your Slack app is distributed across multiple workspaces, any workspace member can log in — there is no per-workspace restriction enforced at the Wirety level.
+
+---
+
+## Google
+
+Google is a standard OIDC provider but handles offline access differently: it rejects the `offline_access` scope (Wirety automatically excludes it for `accounts.google.com`) and instead requires two extra authorization parameters to issue a refresh token.
+
+### 1. Create OAuth credentials
+
+In the [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an **OAuth client ID** of type **Web application** with authorized redirect URI `https://<your-wirety-domain>/`.
+
+### 2. Configure Wirety
+
+```bash
+AUTH_ENABLED=true
+AUTH_ISSUER_URL=https://accounts.google.com
+AUTH_CLIENT_ID=<client-id>.apps.googleusercontent.com
+AUTH_CLIENT_SECRET=<client-secret>
+AUTH_AUTHORIZATION_EXTRA_PARAMS="access_type=offline&prompt=consent"
+```
+
+### Notes
+
+- Without `AUTH_AUTHORIZATION_EXTRA_PARAMS="access_type=offline&prompt=consent"` Google never returns a refresh token, and sessions end when the first id_token expires (~1 hour).
+- `prompt=consent` forces the consent screen on every login; Google only issues a refresh token on consent, so this guarantees one even after re-logins.
+- Google does not support RP-initiated logout. Clicking **Logout** in Wirety invalidates the Wirety session only.
 
 ---
 
@@ -227,6 +265,7 @@ AUTH_USER_GROUP=my-org
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
+| Logged out after a few minutes | Provider issued no refresh token — the session ends when the first id_token expires. The server logs `no refresh token received` (Warn) at login | Ensure `offline_access` is requested and granted (`AUTH_SCOPES`); Google: set `AUTH_AUTHORIZATION_EXTRA_PARAMS="access_type=offline&prompt=consent"`; Slack: enable token rotation |
 | Redirect loop after login | Redirect URI mismatch | Check the URI registered in your provider matches `https://<your-wirety-domain>/` exactly |
 | `email claim is empty` error | Provider not sending email | Add `email` scope; for Azure check User.Read permission |
 | `Failed to discover OIDC endpoints` | Wrong issuer URL | Verify `AUTH_ISSUER_URL` points to the issuer root (without trailing slash) |

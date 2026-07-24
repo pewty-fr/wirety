@@ -41,6 +41,14 @@ func TestLoadConfig_DefaultValues(t *testing.T) {
 		t.Errorf("Expected Auth.JWKSCacheTTL to be 3600, got %d", config.Auth.JWKSCacheTTL)
 	}
 
+	if config.Auth.Scopes != "" {
+		t.Errorf("Expected Auth.Scopes to be empty (provider-aware default), got '%s'", config.Auth.Scopes)
+	}
+
+	if config.Auth.AuthorizationExtraParams != "" {
+		t.Errorf("Expected Auth.AuthorizationExtraParams to be empty, got '%s'", config.Auth.AuthorizationExtraParams)
+	}
+
 	// Test Database defaults
 	if config.Database.Enabled != false {
 		t.Errorf("Expected Database.Enabled to be false, got %v", config.Database.Enabled)
@@ -69,6 +77,8 @@ func TestLoadConfig_EnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("AUTH_CLIENT_ID", "test-client")
 	_ = os.Setenv("AUTH_CLIENT_SECRET", "secret123")
 	_ = os.Setenv("AUTH_JWKS_CACHE_TTL", "7200")
+	_ = os.Setenv("AUTH_SCOPES", "openid email")
+	_ = os.Setenv("AUTH_AUTHORIZATION_EXTRA_PARAMS", "access_type=offline&prompt=consent")
 	_ = os.Setenv("DB_ENABLED", "true")
 	_ = os.Setenv("DB_DSN", "postgres://test:test@localhost:5433/testdb")
 	_ = os.Setenv("KO_DATA_PATH", "/custom/path")
@@ -105,6 +115,14 @@ func TestLoadConfig_EnvironmentVariables(t *testing.T) {
 
 	if config.Auth.JWKSCacheTTL != 7200 {
 		t.Errorf("Expected Auth.JWKSCacheTTL to be 7200, got %d", config.Auth.JWKSCacheTTL)
+	}
+
+	if config.Auth.Scopes != "openid email" {
+		t.Errorf("Expected Auth.Scopes to be 'openid email', got '%s'", config.Auth.Scopes)
+	}
+
+	if config.Auth.AuthorizationExtraParams != "access_type=offline&prompt=consent" {
+		t.Errorf("Expected Auth.AuthorizationExtraParams to be 'access_type=offline&prompt=consent', got '%s'", config.Auth.AuthorizationExtraParams)
 	}
 
 	// Test Database environment values
@@ -301,6 +319,100 @@ func TestAuthConfig_BooleanParsing(t *testing.T) {
 	}
 }
 
+func TestAuthConfig_OIDCScopes(t *testing.T) {
+	tests := []struct {
+		name      string
+		issuerURL string
+		scopes    string
+		expected  string
+	}{
+		{
+			name:      "default requests offline_access so providers issue a refresh token",
+			issuerURL: "https://keycloak.example.com/realms/wirety",
+			expected:  "openid profile email offline_access",
+		},
+		{
+			name:     "default with no issuer still contains offline_access",
+			expected: "openid profile email offline_access",
+		},
+		{
+			name:      "google rejects offline_access — excluded from the default",
+			issuerURL: "https://accounts.google.com",
+			expected:  "openid profile email",
+		},
+		{
+			name:      "slack rejects offline_access — excluded from the default",
+			issuerURL: "https://slack.com",
+			expected:  "openid profile email",
+		},
+		{
+			name:      "AUTH_SCOPES overrides the default",
+			issuerURL: "https://keycloak.example.com/realms/wirety",
+			scopes:    "openid email",
+			expected:  "openid email",
+		},
+		{
+			name:      "AUTH_SCOPES overrides even for google",
+			issuerURL: "https://accounts.google.com",
+			scopes:    "openid profile email offline_access",
+			expected:  "openid profile email offline_access",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := AuthConfig{IssuerURL: tt.issuerURL, Scopes: tt.scopes}
+			if got := cfg.OIDCScopes(); got != tt.expected {
+				t.Errorf("OIDCScopes() = %q, expected %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAuthConfig_RefreshScopes(t *testing.T) {
+	tests := []struct {
+		name     string
+		scopes   string
+		expected string
+	}{
+		{
+			name:     "default drops offline_access on refresh",
+			expected: "openid profile email",
+		},
+		{
+			name:     "custom scopes with offline_access in the middle",
+			scopes:   "openid offline_access email",
+			expected: "openid email",
+		},
+		{
+			name:     "custom scopes without offline_access are unchanged",
+			scopes:   "openid email",
+			expected: "openid email",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := AuthConfig{IssuerURL: "https://keycloak.example.com/realms/wirety", Scopes: tt.scopes}
+			if got := cfg.RefreshScopes(); got != tt.expected {
+				t.Errorf("RefreshScopes() = %q, expected %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAuthConfig_ValidateAuthorizationExtraParams(t *testing.T) {
+	valid := AuthConfig{AuthorizationExtraParams: "access_type=offline&prompt=consent"}
+	if err := valid.Validate(); err != nil {
+		t.Errorf("Expected valid extra params to pass validation, got error: %v", err)
+	}
+
+	invalid := AuthConfig{AuthorizationExtraParams: "access_type=%zz"}
+	if err := invalid.Validate(); err == nil {
+		t.Error("Expected invalid extra params (bad percent-encoding) to fail validation")
+	}
+}
+
 // Helper function to clear environment variables used in tests
 func clearEnvVars() {
 	envVars := []string{
@@ -312,6 +424,8 @@ func clearEnvVars() {
 		"AUTH_CLIENT_ID",
 		"AUTH_CLIENT_SECRET",
 		"AUTH_JWKS_CACHE_TTL",
+		"AUTH_SCOPES",
+		"AUTH_AUTHORIZATION_EXTRA_PARAMS",
 		"DB_ENABLED",
 		"DB_DSN",
 		"KO_DATA_PATH",

@@ -57,6 +57,11 @@ server:
     # AUTH_CLIENT_SECRET: ""
     # AUTH_JWKS_CACHE_TTL: "3600"
     # AUTH_PASSWORD: ""
+    # OAuth scopes requested at login (default: "openid profile email offline_access";
+    # offline_access is omitted automatically for Google and Slack, which reject it).
+    # AUTH_SCOPES: ""
+    # Extra authorization URL params — Google needs these for refresh tokens:
+    # AUTH_AUTHORIZATION_EXTRA_PARAMS: "access_type=offline&prompt=consent"
     # Database — DB_DSN is used when DB_ENABLED is "true".
     # When postgres.enabled=true this is automatically overridden by the
     # subchart service name in the deployment template.

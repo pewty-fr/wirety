@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"wirety/internal/audit"
 	appauth "wirety/internal/application/auth"
+	"wirety/internal/audit"
 	"wirety/internal/domain/auth"
 	"wirety/internal/infrastructure/github"
 	"wirety/internal/infrastructure/oidc"
@@ -53,13 +53,14 @@ func (f *flexInt) UnmarshalJSON(b []byte) error {
 
 // AuthConfigResponse contains public authentication configuration
 type AuthConfigResponse struct {
-	Enabled               bool   `json:"enabled"`
-	IssuerURL             string `json:"issuer_url"`
-	ClientID              string `json:"client_id"`
-	SimpleAuth            bool   `json:"simple_auth"`             // true when AUTH_ENABLED=false (admin/password login)
-	AuthorizationEndpoint string `json:"authorization_endpoint"` // populated from OIDC discovery (or hardcoded for GitHub)
-	EndSessionEndpoint    string `json:"end_session_endpoint"`    // populated from OIDC discovery; empty if provider does not support RP-initiated logout
-	Scope                 string `json:"scope"`                  // OAuth scopes the frontend must request; provider-specific
+	Enabled                  bool   `json:"enabled"`
+	IssuerURL                string `json:"issuer_url"`
+	ClientID                 string `json:"client_id"`
+	SimpleAuth               bool   `json:"simple_auth"`                // true when AUTH_ENABLED=false (admin/password login)
+	AuthorizationEndpoint    string `json:"authorization_endpoint"`     // populated from OIDC discovery (or hardcoded for GitHub)
+	EndSessionEndpoint       string `json:"end_session_endpoint"`       // populated from OIDC discovery; empty if provider does not support RP-initiated logout
+	Scope                    string `json:"scope"`                      // OAuth scopes the frontend must request; provider-specific
+	AuthorizationExtraParams string `json:"authorization_extra_params"` // extra query params the frontend appends to the authorization URL (AUTH_AUTHORIZATION_EXTRA_PARAMS)
 }
 
 // GetAuthConfig godoc
@@ -71,11 +72,12 @@ type AuthConfigResponse struct {
 // @Router       /auth/config [get]
 func (h *Handler) GetAuthConfig(c *gin.Context) {
 	resp := AuthConfigResponse{
-		Enabled:    h.authConfig.Enabled,
-		IssuerURL:  h.authConfig.IssuerURL,
-		ClientID:   h.authConfig.ClientID,
-		SimpleAuth: !h.authConfig.Enabled,
-		Scope:      "openid profile email",
+		Enabled:                  h.authConfig.Enabled,
+		IssuerURL:                h.authConfig.IssuerURL,
+		ClientID:                 h.authConfig.ClientID,
+		SimpleAuth:               !h.authConfig.Enabled,
+		Scope:                    h.authConfig.OIDCScopes(),
+		AuthorizationExtraParams: h.authConfig.AuthorizationExtraParams,
 	}
 
 	if h.authConfig.Enabled && h.authConfig.IssuerURL != "" {
@@ -176,7 +178,7 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 
 	var oidcTokenResp struct {
 		AccessToken  string  `json:"access_token"`
-		IDToken      string  `json:"id_token"`      // OIDC identity token — always a JWT
+		IDToken      string  `json:"id_token"` // OIDC identity token — always a JWT
 		RefreshToken string  `json:"refresh_token"`
 		ExpiresIn    flexInt `json:"expires_in"`
 		TokenType    string  `json:"token_type"`
@@ -187,11 +189,14 @@ func (h *Handler) ExchangeToken(c *gin.Context) {
 	}
 
 	if oidcTokenResp.RefreshToken == "" {
-		// No refresh token: session will not auto-renew once the id_token expires.
-		// Note: providers like Slack DO issue refresh tokens when token rotation is
-		// enabled in the app settings (xoxe-1-... format). If you get logged out
-		// frequently, enable token rotation in your Slack app configuration.
-		log.Debug().Msg("ExchangeToken: no refresh token received; session will not auto-renew")
+		// No refresh token: the session cannot auto-renew and ends when the id_token
+		// expires. Most OIDC providers only issue refresh tokens when offline_access
+		// is in the requested scopes (AUTH_SCOPES). Exceptions: Google needs
+		// AUTH_AUTHORIZATION_EXTRA_PARAMS="access_type=offline&prompt=consent";
+		// Slack needs token rotation enabled in the app settings (xoxe-1-... tokens).
+		log.Warn().
+			Str("requested_scopes", h.authConfig.OIDCScopes()).
+			Msg("ExchangeToken: no refresh token received — session will not auto-renew and will end when the id_token expires; check that the offline_access scope (or your provider's equivalent) is requested and granted")
 	}
 
 	// Prefer id_token for validation: it is always a standard JWT per the OIDC spec.
@@ -562,4 +567,3 @@ func (h *Handler) setSessionCookie(c *gin.Context, sessionHash string, maxAge in
 func (h *Handler) clearSessionCookie(c *gin.Context) {
 	c.SetCookie(sessionCookieName, "", -1, "/", "", h.authConfig.CookieSecure, true)
 }
-
