@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
 export interface User {
@@ -17,6 +17,7 @@ export interface AuthConfig {
   authorization_endpoint: string;
   end_session_endpoint: string;
   scope: string;
+  authorization_extra_params: string;
 }
 
 interface AuthContextType {
@@ -35,11 +36,24 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const API_BASE = '/api/v1';
 
+// Anti-CSRF state for the OAuth authorization code flow (RFC 6749 §10.12).
+// Stored in sessionStorage between the redirect to the IdP and the callback.
+const OAUTH_STATE_KEY = 'oauth_state';
+
+function generateOAuthState(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [oauthError, setOauthError] = useState<string | null>(null);
+  // Guards against processing the OAuth callback twice on one page load
+  // (authorization codes and the anti-CSRF state are both single-use).
+  const oauthCallbackHandled = useRef(false);
 
   // Fetch auth config then try to restore session from cookie
   useEffect(() => {
@@ -101,6 +115,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     if (code && authConfig && authConfig.enabled) {
+      if (oauthCallbackHandled.current) return;
+      oauthCallbackHandled.current = true;
+      // Anti-CSRF check: the state echoed by the IdP must match the value we
+      // generated in login(). A mismatch means the code was not requested by
+      // this browser session — do not exchange it.
+      const returnedState = params.get('state');
+      const expectedState = sessionStorage.getItem(OAUTH_STATE_KEY);
+      sessionStorage.removeItem(OAUTH_STATE_KEY); // one-shot value
+      if (!expectedState || returnedState !== expectedState) {
+        console.error('OAuth callback rejected: state mismatch (possible CSRF or stale callback)');
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setOauthError('Sign-in could not be verified (state mismatch). Please try logging in again.');
+        setIsLoading(false);
+        return;
+      }
       handleOAuthCallback(code);
     }
   }, [authConfig]);
@@ -113,7 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAuthConfig(config);
     } catch (error) {
       console.error('Failed to fetch auth config:', error);
-      setAuthConfig({ enabled: false, issuer_url: '', client_id: '', simple_auth: true, authorization_endpoint: '', end_session_endpoint: '', scope: '' });
+      setAuthConfig({ enabled: false, issuer_url: '', client_id: '', simple_auth: true, authorization_endpoint: '', end_session_endpoint: '', scope: '', authorization_extra_params: '' });
     }
   };
 
@@ -148,12 +177,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const state = generateOAuthState();
+    sessionStorage.setItem(OAUTH_STATE_KEY, state);
+
     const redirectUri = `${window.location.origin}/`;
-    const authUrl = `${authorizationEndpoint}?` +
+    let authUrl = `${authorizationEndpoint}?` +
       `client_id=${authConfig.client_id}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
       `response_type=code&` +
-      `scope=${encodeURIComponent(authConfig.scope)}`;
+      `scope=${encodeURIComponent(authConfig.scope)}&` +
+      `state=${state}`;
+
+    // Provider-specific additions, e.g. Google's access_type=offline&prompt=consent
+    // (AUTH_AUTHORIZATION_EXTRA_PARAMS on the server; validated as a query string there).
+    if (authConfig.authorization_extra_params) {
+      authUrl += `&${authConfig.authorization_extra_params}`;
+    }
 
     window.location.href = authUrl;
   };

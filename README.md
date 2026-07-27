@@ -197,6 +197,8 @@ Configure the Wirety server with these environment variables:
 | `AUTH_ISSUER_URL` | OIDC provider URL | - | If auth enabled |
 | `AUTH_CLIENT_ID` | OIDC client ID | - | If auth enabled |
 | `AUTH_CLIENT_SECRET` | OIDC client secret | - | If auth enabled |
+| `AUTH_SCOPES` | OAuth scopes requested at login. `offline_access` is needed for the provider to issue a refresh token — without one, sessions end as soon as the first id_token expires | `openid profile email offline_access` (`offline_access` omitted for Google and Slack, which reject it) | No |
+| `AUTH_AUTHORIZATION_EXTRA_PARAMS` | Extra query parameters appended to the authorization URL. Google requires `access_type=offline&prompt=consent` to issue a refresh token | - | No |
 | `AUTH_JWKS_CACHE_TTL` | JWKS cache duration (seconds) | `3600` | No |
 | `DB_ENABLED` | Enable database persistence | `false` | No |
 | `DB_DSN` | PostgreSQL connection string | `postgres://...` | If DB enabled |
