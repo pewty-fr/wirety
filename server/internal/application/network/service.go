@@ -189,7 +189,9 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 	}
 
 	oldCIDR := net.CIDR
+	oldCIDRv6 := net.CIDRv6
 	cidrChanged := false
+	cidrV6Changed := false
 	dnsChanged := false
 
 	if req.Name != "" {
@@ -201,6 +203,16 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 	if req.CIDR != "" && req.CIDR != oldCIDR {
 		net.CIDR = req.CIDR
 		cidrChanged = true
+	}
+	// Adding (or switching) the IPv6 CIDR on an existing network. Empty means
+	// "leave unchanged", mirroring the IPv4 semantics above — so this can never
+	// accidentally wipe an existing v6 CIDR.
+	if req.CIDRv6 != "" && req.CIDRv6 != oldCIDRv6 {
+		if err := validateNetworkCIDR(req.CIDRv6); err != nil {
+			return nil, fmt.Errorf("invalid cidr_v6: %w", err)
+		}
+		net.CIDRv6 = req.CIDRv6
+		cidrV6Changed = true
 	}
 	if req.DNS != nil {
 		if len(req.DNS) != len(net.DNS) {
@@ -268,11 +280,44 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 		}
 	}
 
+	// If the IPv6 CIDR was added or changed, register the IPAM prefix and give
+	// every existing peer an IPv6 address so the network becomes fully
+	// dual-stack. (New peers already pick up an IPv6 via AddPeer.) Unlike an
+	// IPv4 CIDR change we do NOT block on static (non-agent) peers: adding IPv6
+	// is additive and never breaks their existing IPv4 connectivity — their
+	// operators just need to redistribute the regenerated config to use v6.
+	if cidrV6Changed {
+		if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDRv6); err != nil {
+			return nil, fmt.Errorf("failed to ensure IPv6 root prefix: %w", err)
+		}
+		peers, err := s.repo.ListPeers(ctx, networkID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list peers: %w", err)
+		}
+		for _, peer := range peers {
+			// When switching from a previous IPv6 CIDR, release the old address first.
+			if oldCIDRv6 != "" && peer.AddressV6 != "" {
+				if err := s.repo.ReleaseIP(ctx, oldCIDRv6, peer.AddressV6); err != nil {
+					log.Warn().Err(err).Str("ip", peer.AddressV6).Str("cidr", oldCIDRv6).Msg("failed to release old IPv6 during CIDRv6 change")
+				}
+			}
+			newV6, err := s.repo.AcquireIP(ctx, net.CIDRv6)
+			if err != nil {
+				return nil, fmt.Errorf("failed to allocate IPv6 for peer %s: %w", peer.ID, err)
+			}
+			peer.AddressV6 = newV6
+			peer.UpdatedAt = time.Now()
+			if err := s.repo.UpdatePeer(ctx, networkID, peer); err != nil {
+				return nil, fmt.Errorf("failed to update peer %s with IPv6: %w", peer.ID, err)
+			}
+		}
+	}
+
 	if err := s.repo.UpdateNetwork(ctx, net); err != nil {
 		return nil, fmt.Errorf("failed to update network: %w", err)
 	}
 
-	if cidrChanged || dnsChanged {
+	if cidrChanged || cidrV6Changed || dnsChanged {
 		if s.wsNotifier != nil {
 			s.wsNotifier.NotifyNetworkPeers(networkID)
 		}
