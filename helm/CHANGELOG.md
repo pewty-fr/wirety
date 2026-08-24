@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.2](https://github.com/pewty-fr/wirety/compare/wirety-helm/v2.1.1...wirety-helm/v2.1.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* **oidc:** refresh token ([#322](https://github.com/pewty-fr/wirety/issues/322)) ([3d04f5b](https://github.com/pewty-fr/wirety/commit/3d04f5be3c46bc1d232857e2c91f96a9b5995257))
+
 ## [2.1.1](https://github.com/pewty-fr/wirety/compare/wirety-helm/v2.1.0...wirety-helm/v2.1.1) (2026-07-02)
 
 
