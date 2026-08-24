@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.2](https://github.com/pewty-fr/wirety/compare/wirety-server/v3.1.1...wirety-server/v3.1.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* ipv6 update ([#342](https://github.com/pewty-fr/wirety/issues/342)) ([37e5d1a](https://github.com/pewty-fr/wirety/commit/37e5d1a1aaeefdb0293c713b74466f72b74f7f30))
+* **oidc:** refresh token ([#322](https://github.com/pewty-fr/wirety/issues/322)) ([3d04f5b](https://github.com/pewty-fr/wirety/commit/3d04f5be3c46bc1d232857e2c91f96a9b5995257))
+
 ## [3.1.1](https://github.com/pewty-fr/wirety/compare/wirety-server/v3.1.0...wirety-server/v3.1.1) (2026-07-02)
 
 
