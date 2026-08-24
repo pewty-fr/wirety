@@ -101,13 +101,11 @@ func (h *Handler) GetPeerReachability(c *gin.Context) {
 		peerByID[p.ID] = p
 	}
 
-	// 3. Get ACL for the network (GetACL returns interface{} — type-assert to *domain.ACL)
-	acl := &domain.ACL{Enabled: false} // default: no ACL restrictions
-	if aclRaw, err := h.service.GetACL(ctx, networkID); err == nil {
-		if a, ok := aclRaw.(*domain.ACL); ok {
-			acl = a
-		}
-	}
+	// 3. ACL layer: the legacy ACL system has been removed (the service stub
+	// unconditionally errored, so this branch could never load one — see
+	// staticcheck SA4023). Reachability treats ACLs as disabled and relies on
+	// the group/policy rules computed below.
+	acl := &domain.ACL{Enabled: false}
 
 	// 4. Compute peer access (ACL layer)
 	var peerAccess []PeerAccess

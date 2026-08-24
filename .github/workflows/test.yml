@@ -73,6 +73,10 @@ jobs:
       - name: Go lint
         uses: golangci/golangci-lint-action@v9
         with:
+          # Pinned: an unpinned action installs whatever "latest" is on release
+          # day, which makes lint results change with no code change. Bump
+          # deliberately.
+          version: v2.13.1
           working-directory: agent
           args: --timeout=30m
       
@@ -107,6 +111,8 @@ jobs:
       - name: Go lint
         uses: golangci/golangci-lint-action@v9
         with:
+          # Pinned — see the agent lint step above.
+          version: v2.13.1
           working-directory: server
           args: --timeout=30m
       
