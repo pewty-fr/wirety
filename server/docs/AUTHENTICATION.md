@@ -136,6 +136,7 @@ Ensure the client includes these scopes:
 - `openid` - Required for OIDC
 - `profile` - For user profile information
 - `email` - For user email
+- `offline_access` - For refresh tokens (assigned to new Keycloak clients by default); without it sessions end when the first id_token expires
 
 ### 4. Token Settings
 Configure token lifespans as needed:

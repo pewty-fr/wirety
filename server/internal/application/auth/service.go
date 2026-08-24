@@ -368,12 +368,16 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	data.Set("refresh_token", refreshToken)
 	data.Set("client_id", s.config.ClientID)
 	data.Set("client_secret", s.config.ClientSecret)
-	// Request openid scope so that providers like Azure Entra ID include an
-	// id_token (a standard JWT) in the refresh response.  Without this, Azure
-	// returns only an opaque access_token which cannot be validated as a JWT,
-	// causing ValidateToken to fail, the session to be deleted, and the user to
-	// be forced to log in again — creating a new session on every expiry.
-	data.Set("scope", "openid profile email")
+	// Request the same scopes as at login (minus offline_access, which only has
+	// meaning on the authorization request — see AuthConfig.RefreshScopes).  The
+	// openid scope makes providers like Azure Entra ID include an id_token (a
+	// standard JWT) in the refresh response.  Without this, Azure returns only an
+	// opaque access_token which cannot be validated as a JWT, causing
+	// ValidateToken to fail, the session to be deleted, and the user to be forced
+	// to log in again — creating a new session on every expiry.
+	if scopes := s.config.RefreshScopes(); scopes != "" {
+		data.Set("scope", scopes)
+	}
 
 	// Make request to token endpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, discovery.TokenEndpoint, strings.NewReader(data.Encode()))
