@@ -1,6 +1,6 @@
 module wirety
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/gin-contrib/cors v1.7.7
@@ -17,7 +17,7 @@ require (
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
 	github.com/swaggo/swag v1.16.6
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 )
 
 require (
