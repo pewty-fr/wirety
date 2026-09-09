@@ -35,14 +35,14 @@ iptables FORWARD DROP (WIRETY_JUMP chain)
              (e.g. server1.wg.example.com)
                   │
                   ▼
-             DNS: internal VPN domain → captive portal IP
+             DNS returns the resource's REAL IP (not the portal IP)
                   │
-                  ▼
-             HTTP/HTTPS request → jump peer WG IP:80/443
+                  ├── HTTP  → forwarded, then DNAT'd on :80 to the portal
+                  └── HTTPS → forwarded, blocked with a TCP reset
+                              (not intercepted — no cert, no HSTS error)
         │
         ▼
 Captive portal HTTP server (listening on <wg-ip>:80)
-Captive portal HTTPS server (listening on <wg-ip>:443, self-signed)
         │
         ▼
 302 redirect → https://<server>/captive-portal?token=cpt_...&redirect=<original-url>
@@ -71,7 +71,7 @@ Peer has full network access
 
 ## Agent Setup
 
-The captive portal HTTP and HTTPS servers start automatically when the agent receives its first policy. No extra configuration is required beyond what is already needed for jump peer operation.
+The captive portal HTTP server starts automatically when the agent receives its first policy. No extra configuration is required beyond what is already needed for jump peer operation.
 
 The only optional flag is `-portal-url` (or `CAPTIVE_PORTAL_URL` env), which defaults to `<SERVER_URL>/captive-portal`.
 
@@ -84,10 +84,10 @@ wirety-agent -server https://wirety.example.com -token <TOKEN> \
   -portal-url https://wirety.example.com/captive-portal
 ```
 
-The agent listens directly on the WireGuard interface IP on both port 80 and port 443 (e.g. `10.255.0.1:80` and `10.255.0.1:443`). No DNAT rule or `route_localnet` sysctl is required.
+The agent listens directly on the WireGuard interface IP on port 80 (e.g. `10.255.0.1:80`). No DNAT-to-localhost rule or `route_localnet` sysctl is required. The captive portal does **not** run an HTTPS listener — unauthenticated HTTPS to an internal resource is blocked with a TCP reset rather than intercepted (see [HTTPS handling](#https-handling)).
 
 :::caution Port availability
-The agent binds to **port 80 and port 443** on the WireGuard interface IP. Ensure nothing else is already listening on those address/port combinations on the jump peer host.
+The agent binds to **port 80** on the WireGuard interface IP. Ensure nothing else is already listening on that address/port combination on the jump peer host.
 :::
 
 ## OS Captive Portal Detection
@@ -125,20 +125,25 @@ The agent's DNS server resolves well-known probe domains to the jump peer's Wire
 
 AAAA queries for all probe domains return NODATA to force IPv4, preventing peers that prefer IPv6 from bypassing interception.
 
-#### Internal VPN domain interception
+#### Internal VPN domain resolution
 
-For unauthenticated peers, all DNS queries for **internal VPN domain names** (peer hostnames, route FQDNs) are resolved to the captive portal IP instead of the real peer IP. This means any attempt to reach a private resource redirects the peer to the authentication page.
+DNS queries for **internal VPN domain names** (peer hostnames, route FQDNs) always resolve to the resource's **real IP** — the same answer for authenticated and unauthenticated peers. DNS is **not** the access boundary; the jump peer's iptables is. An unauthenticated peer that learns the real IP still cannot reach the resource:
 
-For **full-tunnel peers** the agent is more aggressive: every external A/AAAA query from an unauthenticated full-tunnel peer is also redirected to the captive portal IP. This is necessary because full-tunnel peers route every external connection through the jump peer — without DNS interception their browser would resolve real IPs and have its connections dropped silently by the FORWARD chain, with no captive-portal redirect ever firing. The agent learns each peer's `AllowedIPs` from the heartbeat (`local_allowed_ips`) so it can apply this redirection only to the peers that need it. Split-tunnel peers continue to use external DNS normally — their external traffic doesn't cross the jump peer anyway.
+- **HTTPS** (`:443`) → forwarded → the `WIRETY_JUMP` chain rejects it with a TCP reset. The connection fails fast with no certificate involved — so there is never an HSTS error, even for HSTS-only apps.
+- **HTTP** (`:80`) → forwarded → a nat `PREROUTING` DNAT redirects it to the local captive portal, which serves the `302` to the authentication page.
+
+Resolving the real IP (never the portal IP) means the browser never caches the portal IP for an internal hostname, so once the peer authenticates the resource is reachable **immediately** — there is no stale-DNS window to wait out (browsers such as Firefox cache for ~60 s regardless of TTL).
+
+For **full-tunnel peers** the agent is more aggressive: every external A/AAAA query from an unauthenticated full-tunnel peer is redirected to the captive portal IP. This is necessary because full-tunnel peers route every external connection through the jump peer — without this their browser would resolve real IPs and have its connections dropped silently by the FORWARD chain, with no captive-portal redirect ever firing. The agent learns each peer's `AllowedIPs` from the heartbeat (`local_allowed_ips`) so it applies this only to the peers that need it. Split-tunnel peers use external DNS normally — their external traffic doesn't cross the jump peer anyway.
 
 ```
 Unauthenticated peer resolves server1.wg.example.com
-  → DNS returns 10.255.0.1 (captive portal IP, TTL 5s)
-  → HTTP/HTTPS request hits captive portal server
-  → Redirect to authentication page
+  → DNS returns 10.255.0.2 (real peer IP)
+  → HTTP  → DNAT'd to the captive portal → redirect to auth page
+  → HTTPS → TCP reset (blocked by iptables, not intercepted)
 
 Authenticated peer resolves server1.wg.example.com
-  → DNS returns 10.255.0.2 (real peer IP, TTL 60s)
+  → DNS returns 10.255.0.2 (real peer IP)
   → Connection goes to the private resource directly
 ```
 
@@ -146,9 +151,9 @@ Authenticated peer resolves server1.wg.example.com
 Both probe interception and internal domain interception only work when the WireGuard config sets `DNS = <jump-peer-wg-ip>` so the peer uses the jump peer's DNS server.
 :::
 
-### HTTP and HTTPS probe responses
+### HTTP probe responses
 
-Both the HTTP server (`:80`) and the HTTPS server (`:443`) handle intercepted requests with the same logic:
+The HTTP server (`:80`) handles intercepted requests with this logic:
 
 | Peer state | Behaviour |
 |-----------|-----------|
@@ -165,31 +170,21 @@ OS-specific success responses (served to authenticated peers):
 | Firefox | `/success.txt` | `200` + `success\n` |
 | GNOME / Debian | any | `204 No Content` |
 
-## HTTPS Captive Portal Server
+## HTTPS handling
 
-The agent runs a self-signed HTTPS server on `<wg-ip>:443` alongside the HTTP server. This handles unauthenticated peers attempting HTTPS access to internal VPN resources.
+The captive portal is **HTTP-only** — the agent does not run an HTTPS listener and never intercepts a peer's TLS connection. An unauthenticated peer that attempts HTTPS to an internal resource has its connection **reset** (`WIRETY_JUMP` rejects `:443` with a TCP reset). The browser fails fast, with no certificate exchanged.
 
-### Self-signed certificate
+This is a deliberate design choice. Injecting a captive portal into an HTTPS session for the app's own hostname would require serving a certificate the client trusts for that hostname — i.e. a TLS man-in-the-middle. An earlier version did this with an in-memory self-signed certificate, but it was unavoidably broken:
 
-The certificate is generated in memory at agent startup (never written to disk) and covers:
+- For **HSTS-preloaded** hosts (every major SSO provider, and any app that sends `Strict-Transport-Security`) the browser hard-blocks the mismatched certificate with **no bypass** — an unrecoverable error page.
+- For HTTPS-only internal apps it forced a downgrade to `http://` after authentication, which those apps reject.
 
-- **IP SAN** — the WireGuard interface IP
-- **Wildcard DNS SAN** — `*.<vpnDomain>` (e.g. `*.wg.example.com`) so internal peer hostnames match the cert
+Removing the interception means **no HSTS dead-ends** and HTTPS-only apps keep working. Portal discovery for unauthenticated peers is carried entirely over HTTP:
 
-The VPN domain for the wildcard is taken from the DNS configuration pushed by the server.
+- **OS captive-portal detection** — the OS probes (plain HTTP) are DNS-intercepted to the jump peer and answered on `:80`, raising the native "Sign in to network" banner. The `:443` TCP reset additionally nudges iOS/Android to run their detection.
+- **The dashboard sign-in popup** — the Wirety web app polls each device's state and, when one needs sign-in, offers an on-demand link to the portal (over HTTP).
 
-### Browser behaviour
-
-Because the certificate is self-signed (not issued by a trusted CA), browsers show a security warning. The behaviour differs depending on the domain:
-
-| Domain type | Browser behaviour |
-|-------------|------------------|
-| **Internal VPN domain** (e.g. `server1.wg.example.com`) | Warning page with "Proceed anyway" option — user can bypass and be redirected to the captive portal |
-| **Public domain in HSTS preload list** (e.g. `google.com`) | Hard-blocked — no bypass available. Peers using HTTPS-only browsers will need to try an HTTP URL or use the direct captive portal URL |
-
-:::info HTTPS limitation
-Intercepting HTTPS for public HSTS-preloaded domains is not feasible: browsers hard-block such connections regardless of certificate content. The HTTPS server is primarily useful for internal VPN domains. For peers using full-tunnel mode, the OS captive portal detection (which uses plain HTTP probes) handles the redirect without any certificate interaction.
-:::
+Once the peer authenticates, DNS resolves the app to its **real IP** and HTTPS works untouched — the portal is never in the TLS path.
 
 ## Ownership Enforcement
 
@@ -249,7 +244,7 @@ The `WIRETY_JUMP` chain on the jump peer enforces a strict three-tier model for 
 | **Authenticated** | Peers in the captive-portal whitelist whose live WireGuard endpoint matches the IP:port recorded at authentication time | Full network access (subject to the policy chain) |
 | **Pending Auth** | Peers that have been issued a captive-portal token in the last 10 minutes but have not yet completed SSO | External HTTPS only — enough for the OIDC redirect chain (Slack/GitHub/Google), nothing else |
 | **Quarantined** | Peers that abandoned 3 consecutive token issuances without completing SSO | Nothing. Even the captive portal redirect is suppressed until quarantine expires (1 h) or an admin clears it |
-| **Default** (no token, not quarantined) | New peer that just connected | Only DNS to the jump peer and the captive-portal HTTP/HTTPS server on the jump peer's WG IP — enough to trigger the redirect |
+| **Default** (no token, not quarantined) | New peer that just connected | Only DNS to the jump peer and the captive-portal HTTP server on the jump peer's WG IP — enough to trigger the redirect (HTTPS is reset until the peer authenticates) |
 
 This replaces the previous design where unauthenticated peers had unrestricted external HTTPS access (intended for the OIDC redirect, but also a usable internet bypass). The grant is now per-peer and time-bounded.
 
@@ -349,9 +344,8 @@ Background cleanup tasks (server):
 | OS captive portal popup does not appear (split-tunnel) | Peer's WireGuard config may not set `DNS = <jump-peer-wg-ip>`. Without this, probe domains and internal domain queries bypass the tunnel DNS. Check the peer's WireGuard config. |
 | OS captive portal popup does not appear (full-tunnel) | CNA/NCSI fires automatically for full-tunnel peers. If it does not trigger, try disconnecting and reconnecting to WireGuard. |
 | OS captive portal popup persists after authentication | DNS TTL (5–10s) may not have expired yet. Wait a few seconds; the next probe will receive a success response. |
-| Internal domain resolves to captive portal IP after authentication | Stale DNS cache on the peer. The short TTL (5s) should expire quickly. Flush the DNS cache manually if needed (`sudo dscacheutil -flushcache` on macOS). |
-| Port 80 or 443 already in use on jump peer | Something else is bound to `<wg-ip>:80` or `<wg-ip>:443`. The agent logs an error and the captive portal will not function. |
-| Browser hard-blocks HTTPS redirect for external domain | Expected — public HSTS-preloaded domains cannot be intercepted. Use the direct captive portal URL, or try an HTTP URL or an internal VPN domain URL to trigger the redirect. |
+| Port 80 already in use on jump peer | Something else is bound to `<wg-ip>:80`. The agent logs an error and the captive portal will not function. |
+| HTTPS to an internal resource fails before authentication | Expected — the captive portal does not intercept HTTPS; unauthenticated `:443` is reset. Trigger the portal over HTTP, or use the dashboard sign-in popup. After authenticating, HTTPS works normally. |
 
 ## Reverse Proxy and Virtual Host Isolation
 

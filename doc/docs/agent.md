@@ -164,8 +164,7 @@ export NAT_INTERFACES=ens6
 | WireGuard kernel/module | Interface creation |
 | curl / TLS libs | Enrollment requests |
 | Sufficient permissions | Configure network interface, run iptables |
-| Port 80 free on WireGuard interface IP | Captive portal HTTP server binds to `<wg-ip>:80` |
-| Port 443 free on WireGuard interface IP | Captive portal HTTPS server binds to `<wg-ip>:443` (self-signed cert) |
+| Port 80 free on WireGuard interface IP | Captive portal HTTP server binds to `<wg-ip>:80` (there is no HTTPS listener — unauthenticated `:443` is reset by iptables, not intercepted) |
 | `nf_conntrack` kernel module | Conntrack state matching in captive portal firewall rules |
 | `xt_string` kernel module | SNI / Host-header vhost isolation in captive portal firewall rules |
 

@@ -164,8 +164,7 @@ export NAT_INTERFACES=ens6
 | Kernel/module WireGuard | Création de l'interface |
 | curl / bibliothèques TLS | Requêtes d'inscription |
 | Permissions suffisantes | Configurer l'interface réseau, exécuter iptables |
-| Port 80 libre sur l'IP de l'interface WireGuard | Le serveur HTTP du portail captif s'attache à `<wg-ip>:80` |
-| Port 443 libre sur l'IP de l'interface WireGuard | Le serveur HTTPS du portail captif s'attache à `<wg-ip>:443` (certificat auto-signé) |
+| Port 80 libre sur l'IP de l'interface WireGuard | Le serveur HTTP du portail captif s'attache à `<wg-ip>:80` (il n'y a pas de listener HTTPS — le `:443` non authentifié est coupé par iptables, non intercepté) |
 | Module kernel `nf_conntrack` | Correspondance d'état conntrack dans les règles pare-feu du portail captif |
 | Module kernel `xt_string` | Isolation vhost SNI / en-tête Host dans les règles pare-feu du portail captif |
 
