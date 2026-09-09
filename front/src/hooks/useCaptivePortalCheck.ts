@@ -66,7 +66,12 @@ export function useCaptivePortalCheck(): CaptivePortalNetworkInfo[] {
   const { data: networks = [] } = useNetworks();
   // Pull all peers — page size 1000 is fine for any realistic deployment and
   // saves us from having to paginate inside the hook.
-  const { data: peersData } = usePeers(1, 1000);
+  //
+  // Poll every 10s (vs the 20s default) so that when a device authenticates
+  // through the captive portal, the alert clears — and when a new device needs
+  // sign-in, the alert appears — within ~10s while the dashboard is open, with
+  // no manual refresh. The modal that consumes this hook is mounted app-wide.
+  const { data: peersData } = usePeers(1, 1000, 10000);
 
   // Wrap in useMemo so the array reference is stable across renders when the
   // underlying data hasn't changed; otherwise the `|| []` fallback creates a
@@ -80,7 +85,7 @@ export function useCaptivePortalCheck(): CaptivePortalNetworkInfo[] {
   // 30 s matches the same cadence PeersPage uses for its connectivity badge.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30 * 1000);
+    const id = setInterval(() => setNow(Date.now()), 10 * 1000);
     return () => clearInterval(id);
   }, []);
 

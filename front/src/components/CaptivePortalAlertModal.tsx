@@ -11,6 +11,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import Modal from './Modal';
 import { useCaptivePortalCheck } from '../hooks/useCaptivePortalCheck';
+import { useAttention } from '../hooks/useAttention';
 import api from '../api/client';
 
 // sessionStorage key for "user dismissed the modal in this browser session".
@@ -62,6 +63,14 @@ export default function CaptivePortalAlertModal() {
   // authenticated" to "something needs auth" — a fresh problem deserves a
   // fresh prompt even within the same session.
   const hasAlerts = networks.length > 0;
+  const anySuspicious = networks.some(n => n.hasSuspiciousActivity);
+
+  // Draw the user's attention when a device needs sign-in: a one-shot beep and,
+  // while the dashboard tab is in the background, a flashing tab title. This
+  // fires whenever there are alerts, independent of whether the modal itself is
+  // dismissed — a backgrounded operator should still notice.
+  useAttention(hasAlerts, anySuspicious ? '🔴 Suspicious activity' : '🔴 Sign-in required');
+
   const [prevHadAlerts, setPrevHadAlerts] = useState(hasAlerts);
   useEffect(() => {
     if (hasAlerts && !prevHadAlerts) {
@@ -82,12 +91,11 @@ export default function CaptivePortalAlertModal() {
   };
 
   const isOpen = hasAlerts && !dismissed;
-  const anySuspicious = networks.some(n => n.hasSuspiciousActivity);
 
-  // Build the captive-portal URL for each network.  HTTP not HTTPS because
-  // the captive portal HTTPS listener uses a self-signed cert (browser would
-  // reject); HTTP works fine since window.open() to HTTP from an HTTPS page
-  // is allowed (mixed-content blocking only applies to in-page resource loads).
+  // Build the captive-portal URL for each network.  HTTP not HTTPS: the captive
+  // portal is served over plain HTTP only (there is no HTTPS listener — it would
+  // require MITMing the peer's TLS). window.open() to HTTP from an HTTPS page is
+  // allowed (mixed-content blocking only applies to in-page resource loads).
   const networkLinks = useMemo(
     () =>
       networks.map(n => ({
