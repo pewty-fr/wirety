@@ -33,6 +33,15 @@ func TestStackSmoke(t *testing.T) {
 	if net.ID == "" {
 		t.Fatal("created network has no ID")
 	}
+	// Regression: the postgres INSERT used to drop domain_suffix, so a custom
+	// private zone silently fell back to ".internal".
+	got, err := st.admin.getNetwork(ctx, net.ID)
+	if err != nil {
+		t.Fatalf("get network: %v", err)
+	}
+	if got.DomainSuffix != "smoke.internal" {
+		t.Fatalf("domain_suffix not persisted: got %q, want %q", got.DomainSuffix, "smoke.internal")
+	}
 
 	// A jump peer create returns an enrollment token — proves peer + IPAM work.
 	jump, err := st.admin.createPeer(ctx, net.ID, createPeerReq{

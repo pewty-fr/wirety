@@ -3,11 +3,14 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,6 +57,11 @@ type stack struct {
 	dexTokenURL  string // http://127.0.0.1:<port>/dex/token
 	dexAuthURL   string // http://127.0.0.1:<port>/dex/auth
 	serverOrigin string // http://127.0.0.1:<port>  (server root, for /auth/token & captive portal)
+
+	// Host-side host:port of the in-network "dex:5556" / "server:8080", used by
+	// inNetworkClient to speak in-network URLs from the test process.
+	dexHostPort    string
+	serverHostPort string
 
 	admin *apiClient
 }
@@ -178,7 +186,8 @@ func setupStack(ctx context.Context, t *testing.T) *stack {
 	if err != nil {
 		t.Fatalf("server mapped port: %v", err)
 	}
-	st.serverOrigin = fmt.Sprintf("http://%s:%s", serverHost, serverPort.Port())
+	st.serverHostPort = net.JoinHostPort(serverHost, serverPort.Port())
+	st.serverOrigin = "http://" + st.serverHostPort
 	st.apiBaseURL = st.serverOrigin + "/api/v1"
 
 	dexHost, _ := dex.Host(ctx)
@@ -186,8 +195,9 @@ func setupStack(ctx context.Context, t *testing.T) *stack {
 	if err != nil {
 		t.Fatalf("dex mapped port: %v", err)
 	}
-	st.dexTokenURL = fmt.Sprintf("http://%s:%s/dex/token", dexHost, dexPort.Port())
-	st.dexAuthURL = fmt.Sprintf("http://%s:%s/dex/auth", dexHost, dexPort.Port())
+	st.dexHostPort = net.JoinHostPort(dexHost, dexPort.Port())
+	st.dexTokenURL = "http://" + st.dexHostPort + "/dex/token"
+	st.dexAuthURL = "http://" + st.dexHostPort + "/dex/auth"
 
 	// Obtain the admin Bearer (first user seen → administrator) and build the client.
 	token, err := dexPasswordToken(ctx, st.dexTokenURL, dexClientID, dexClientSecret, adminEmail, adminPassword)
@@ -198,6 +208,11 @@ func setupStack(ctx context.Context, t *testing.T) *stack {
 	if err := st.admin.health(ctx); err != nil {
 		t.Fatalf("server health: %v", err)
 	}
+	// Register the admin now: users are created on their first authenticated
+	// call, and only the first one is promoted to administrator.
+	if _, err := st.admin.me(ctx); err != nil {
+		t.Fatalf("register admin: %v", err)
+	}
 	return st
 }
 
@@ -207,6 +222,7 @@ func setupStack(ctx context.Context, t *testing.T) *stack {
 func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string) testcontainers.Container {
 	t.Helper()
 	root := repoRoot(t)
+	logs := &logBuffer{}
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			FromDockerfile: testcontainers.FromDockerfile{
@@ -227,37 +243,43 @@ func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string) 
 				"-token", token,
 				"-log-level", "debug",
 			},
-			WaitingFor: wait.ForLog("starting DNS server").WithStartupTimeout(60 * time.Second),
+			// Stream logs continuously into a buffer: a one-shot Logs() read at
+			// cleanup time proved to come back truncated in CI.
+			LogConsumerCfg: &testcontainers.LogConsumerConfig{Consumers: []testcontainers.LogConsumer{logs}},
+			WaitingFor:     wait.ForLog("starting DNS server").WithStartupTimeout(60 * time.Second),
 		},
 		Started: true,
 	})
 	if err != nil {
-		if c != nil {
-			dumpLogs(t, c, "jump-agent")
-		}
+		t.Logf("===== jump-agent logs =====\n%s", logs.String())
 		t.Fatalf("start jump agent: %v", err)
 	}
 	t.Cleanup(func() {
 		// Agent logs are the first thing needed to debug a CI failure.
 		if t.Failed() {
-			dumpLogs(t, c, "jump-agent")
+			t.Logf("===== jump-agent logs =====\n%s===== end jump-agent logs =====", logs.String())
 		}
 		_ = c.Terminate(context.Background())
 	})
 	return c
 }
 
-// dumpLogs writes a container's logs to the test output.
-func dumpLogs(t *testing.T, c testcontainers.Container, name string) {
-	t.Helper()
-	rc, err := c.Logs(context.Background())
-	if err != nil {
-		t.Logf("%s logs unavailable: %v", name, err)
-		return
-	}
-	defer rc.Close()
-	b, _ := io.ReadAll(rc)
-	t.Logf("===== %s logs =====\n%s\n===== end %s logs =====", name, b, name)
+// logBuffer is a testcontainers.LogConsumer that accumulates container output.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logBuffer) Accept(entry testcontainers.Log) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.buf.Write(entry.Content)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
 }
 
 // startPrivateService runs an nginx container on the harness network to stand in

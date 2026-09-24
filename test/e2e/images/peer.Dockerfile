@@ -5,7 +5,9 @@
 # Runs as root + needs NET_ADMIN to create the wg interface. Sleeps forever so
 # the test drives it via `docker exec`.
 FROM alpine:3.24
+# bash: wg-quick is a bash script.
 RUN apk add --no-cache \
+    bash \
     wireguard-tools \
     iproute2 \
     curl \

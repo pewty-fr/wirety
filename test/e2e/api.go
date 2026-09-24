@@ -156,6 +156,24 @@ func (c *apiClient) createNetwork(ctx context.Context, req network) (network, er
 	return out, err
 }
 
+func (c *apiClient) getNetwork(ctx context.Context, networkID string) (network, error) {
+	var out network
+	err := c.do(ctx, http.MethodGet, "/networks/"+networkID, nil, &out)
+	return out, err
+}
+
+// user is the subset of /users/me the harness needs.
+type user struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+func (c *apiClient) me(ctx context.Context) (user, error) {
+	var out user
+	err := c.do(ctx, http.MethodGet, "/users/me", nil, &out)
+	return out, err
+}
+
 // createPeerReq mirrors domain.PeerCreateRequest for the fields the harness uses.
 type createPeerReq struct {
 	Name       string `json:"name"`

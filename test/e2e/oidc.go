@@ -3,15 +3,16 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
-	"regexp"
 	"strings"
+	"time"
 )
 
 // dexPasswordToken obtains an OIDC id_token from Dex using the resource-owner
@@ -60,126 +61,196 @@ func dexPasswordToken(ctx context.Context, dexTokenURL, clientID, clientSecret, 
 	return tok.IDToken, nil
 }
 
-// wiretySession performs the browser-less OIDC authorization-code flow against
-// Dex and exchanges the resulting code at the Wirety server's /auth/token
-// endpoint, yielding an authenticated *http.Client (cookie jar holding the
-// wirety_session cookie). That session is what the captive-portal /authenticate
-// endpoint requires.
+// inNetworkClient returns an HTTP client for the host-side test process that
+// speaks the in-network URLs (http://dex:5556, http://server:8080) exactly as a
+// browser on a VPN peer would: the dialer rewrites those host:port pairs to the
+// containers' mapped ports. This keeps Dex redirects (which carry the issuer
+// host) and the agent's captive-portal redirect URL usable verbatim.
 //
-// The flow emulates a browser:
-//  1. GET the server's authorize redirect target on Dex (authorizeURL).
-//  2. Dex serves an HTML login form; POST the static credentials to it.
-//  3. Dex redirects to the client redirect_uri with ?code=… — we capture the
-//     code from the Location header instead of following it.
-//  4. POST {code, redirect_uri} to the Wirety server's /auth/token; the server
-//     exchanges the code with Dex server-to-server and sets the session cookie.
-//
-// NOTE: this is the most environment-sensitive helper in the harness (it parses
-// Dex's login page). It is exercised only by the captive-portal subtest.
-func wiretySession(ctx context.Context, serverBaseURL, dexAuthURL, dexIssuerHostPort, clientID, redirectURI, username, password string) (*http.Client, error) {
-	jar, _ := cookiejar.New(nil)
-	// Do not auto-follow the final redirect to redirect_uri (which is not a real
-	// page) — we want to read the `code` from the Location header.
-	client := &http.Client{
-		Jar: jar,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if strings.HasPrefix(req.URL.String(), redirectURI) {
+// Redirects are never followed past stopAt (a URL prefix); the response
+// carrying that Location is returned instead. Empty stopAt disables following
+// altogether.
+func (s *stack) inNetworkClient(stopAt string) *http.Client {
+	hostMap := map[string]string{
+		"dex:5556":    s.dexHostPort,
+		"server:8080": s.serverHostPort,
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if mapped, ok := hostMap[addr]; ok {
+					addr = mapped
+				}
+				return dialer.DialContext(ctx, network, addr)
+			},
+		},
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			if stopAt == "" || strings.HasPrefix(req.URL.String(), stopAt) {
 				return http.ErrUseLastResponse
 			}
 			return nil
 		},
 	}
+}
 
-	// 1. Kick off the authorization request directly against Dex.
+// wiretySession performs the browser-less OIDC authorization-code flow against
+// Dex and exchanges the code at the Wirety server's /auth/token endpoint, the
+// same way the frontend does. It returns the session hash (the value of the
+// wirety_session cookie), which captive-portal /authenticate requires.
+//
+//  1. GET Dex /auth → Dex redirects to its local-password login page.
+//  2. POST the credentials to that page (skipApprovalScreen is on), Dex
+//     redirects to redirect_uri?code=… — captured, not followed.
+//  3. POST {code, redirect_uri} to /api/v1/auth/token; the server exchanges the
+//     code with Dex server-to-server and creates the session.
+func (s *stack) wiretySession(ctx context.Context, username, password string) (string, error) {
+	client := s.inNetworkClient(dexRedirectURI)
+
 	authQ := url.Values{
-		"client_id":     {clientID},
-		"redirect_uri":  {redirectURI},
+		"client_id":     {dexClientID},
+		"redirect_uri":  {dexRedirectURI},
 		"response_type": {"code"},
 		"scope":         {"openid profile email"},
 		"state":         {"e2e-state"},
 		"nonce":         {"e2e-nonce"},
 	}
-	authReq, err := http.NewRequestWithContext(ctx, http.MethodGet, dexAuthURL+"?"+authQ.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dexIssuer+"/auth?"+authQ.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	resp, err := client.Do(authReq)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("dex authorize: %w", err)
+		return "", fmt.Errorf("dex authorize: %w", err)
 	}
-	loginHTML, _ := io.ReadAll(resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
-	loginActionURL := resp.Request.URL // Dex redirected to its /auth/local?req=… login page
-
-	// 2. POST credentials to the login form's action. Dex's local login form
-	// posts back to the same URL (the ?req=… carries the auth state).
-	loginForm := url.Values{"login": {username}, "password": {password}}
-	code, err := dexSubmitLoginAndCaptureCode(ctx, client, loginActionURL.String(), string(loginHTML), loginForm, redirectURI)
-	if err != nil {
-		return nil, err
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("dex authorize: expected login page, got status %d", resp.StatusCode)
 	}
+	loginURL := resp.Request.URL.String() // …/dex/auth/local/login?back=&state=…
 
-	// 4. Exchange the code for a Wirety session.
-	tokenBody, _ := json.Marshal(map[string]string{"code": code, "redirect_uri": redirectURI})
-	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost, serverBaseURL+"/auth/token", strings.NewReader(string(tokenBody)))
-	if err != nil {
-		return nil, err
-	}
-	tokenReq.Header.Set("Content-Type", "application/json")
-	tokenResp, err := client.Do(tokenReq)
-	if err != nil {
-		return nil, fmt.Errorf("wirety /auth/token: %w", err)
-	}
-	defer func() { _ = tokenResp.Body.Close() }()
-	if tokenResp.StatusCode < 200 || tokenResp.StatusCode >= 300 {
-		b, _ := io.ReadAll(tokenResp.Body)
-		return nil, fmt.Errorf("wirety /auth/token: status %d: %s", tokenResp.StatusCode, string(b))
-	}
-	return client, nil
-}
-
-var dexApproveRe = regexp.MustCompile(`action="([^"]*/approval[^"]*)"`)
-
-// dexSubmitLoginAndCaptureCode submits the Dex login form, follows the optional
-// approval step, and returns the authorization `code` captured from the redirect
-// to redirectURI.
-func dexSubmitLoginAndCaptureCode(ctx context.Context, client *http.Client, loginURL, _loginHTML string, form url.Values, redirectURI string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
+	form := url.Values{"login": {username}, "password": {password}}
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := client.Do(req)
+	resp, err = client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("dex login submit: %w", err)
+		return "", fmt.Errorf("dex login: %w", err)
 	}
-	// If Dex redirected straight to the client with a code, capture it.
-	if code := codeFromLocation(resp); code != "" {
-		_ = resp.Body.Close()
-		return code, nil
-	}
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-
-	// Otherwise an approval page may be shown; approve it.
-	if m := dexApproveRe.FindStringSubmatch(string(bodyBytes)); m != nil {
-		approveURL := resolveRef(resp.Request.URL, m[1])
-		areq, err := http.NewRequestWithContext(ctx, http.MethodPost, approveURL, strings.NewReader(url.Values{"approval": {"approve"}}.Encode()))
-		if err != nil {
-			return "", err
-		}
-		areq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		aresp, err := client.Do(areq)
-		if err != nil {
-			return "", fmt.Errorf("dex approval: %w", err)
-		}
-		defer func() { _ = aresp.Body.Close() }()
-		if code := codeFromLocation(aresp); code != "" {
-			return code, nil
-		}
-		return "", fmt.Errorf("dex approval: no code in redirect to %s", redirectURI)
+	code := codeFromLocation(resp)
+	if code == "" {
+		return "", fmt.Errorf("dex login: no authorization code (status %d, location %q): %.300s",
+			resp.StatusCode, resp.Header.Get("Location"), body)
 	}
-	return "", fmt.Errorf("dex login: no code and no approval form (unexpected login response)")
+
+	tokenBody, _ := json.Marshal(map[string]string{"code": code, "redirect_uri": dexRedirectURI})
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, "http://server:8080/api/v1/auth/token", bytes.NewReader(tokenBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("wirety /auth/token: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ = io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("wirety /auth/token: status %d: %s", resp.StatusCode, body)
+	}
+	var tok struct {
+		SessionHash string `json:"session_hash"`
+	}
+	if err := json.Unmarshal(body, &tok); err != nil || tok.SessionHash == "" {
+		return "", fmt.Errorf("wirety /auth/token: no session_hash in %s", body)
+	}
+	return tok.SessionHash, nil
+}
+
+// captivePortalLogin plays the browser's part of the captive-portal flow for a
+// redirect URL issued by the agent (http://server:8080/api/v1/captive-portal/
+// start?token=…): hit /start to receive the browser-binding cookie, then POST
+// /authenticate with that cookie + the user's session.
+func (s *stack) captivePortalLogin(ctx context.Context, startURL, sessionHash string) error {
+	token, cpState, err := s.captivePortalStart(ctx, startURL)
+	if err != nil {
+		return err
+	}
+	return s.captivePortalAuthenticate(ctx, token, sessionHash, cpState)
+}
+
+// captivePortalStart GETs the /start bouncer and returns the captive token and
+// the wirety_cp_state browser-binding cookie it sets.
+func (s *stack) captivePortalStart(ctx context.Context, startURL string) (token, cpState string, err error) {
+	u, err := url.Parse(startURL)
+	if err != nil {
+		return "", "", fmt.Errorf("parse start url %q: %w", startURL, err)
+	}
+	token = u.Query().Get("token")
+	if token == "" {
+		return "", "", fmt.Errorf("start url %q has no token", startURL)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, startURL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	resp, err := s.inNetworkClient("").Do(req) // never follow: we only want the cookie
+	if err != nil {
+		return "", "", fmt.Errorf("captive-portal start: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		return "", "", fmt.Errorf("captive-portal start: status %d", resp.StatusCode)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == "wirety_cp_state" {
+			cpState = c.Value
+		}
+	}
+	if cpState == "" {
+		return "", "", fmt.Errorf("captive-portal start: no wirety_cp_state cookie set")
+	}
+	return token, cpState, nil
+}
+
+// captivePortalAuthenticate POSTs /authenticate. Cookies are set by hand
+// because the server marks wirety_cp_state Secure and the harness is plain HTTP
+// (a cookie jar would refuse to send it back). An empty cpState or sessionHash
+// omits that cookie, for negative tests.
+func (s *stack) captivePortalAuthenticate(ctx context.Context, token, sessionHash, cpState string) error {
+	body, _ := json.Marshal(map[string]string{"captive_token": token})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://server:8080/api/v1/captive-portal/authenticate", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var cookies []string
+	if sessionHash != "" {
+		cookies = append(cookies, "wirety_session="+sessionHash)
+	}
+	if cpState != "" {
+		cookies = append(cookies, "wirety_cp_state="+cpState)
+	}
+	if len(cookies) > 0 {
+		req.Header.Set("Cookie", strings.Join(cookies, "; "))
+	}
+	resp, err := s.inNetworkClient("").Do(req)
+	if err != nil {
+		return fmt.Errorf("captive-portal authenticate: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("captive-portal authenticate: status %d: %s", resp.StatusCode, respBody)
+	}
+	return nil
 }
 
 func codeFromLocation(resp *http.Response) string {
@@ -192,12 +263,4 @@ func codeFromLocation(resp *http.Response) string {
 		return ""
 	}
 	return u.Query().Get("code")
-}
-
-func resolveRef(base *url.URL, ref string) string {
-	r, err := url.Parse(ref)
-	if err != nil {
-		return ref
-	}
-	return base.ResolveReference(r).String()
 }
