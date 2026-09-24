@@ -66,8 +66,8 @@ the first allowed by policy — and a DNS record `app` for it) and runs:
 | Subtest | Proves |
 |---------|--------|
 | `policy_to_iptables` | The server-side policy materialises on the agent as a `WIRETY_POLICY` `ACCEPT` from peer-a's IP to the allowed service, nothing opens the denied one, and the chain is default-deny. **This is the "control the iptables added from the server" assertion.** |
-| `private_dns` | The agent's DNS server serves the private-zone FQDN (`app.corp.e2e.internal`) and, because the query comes from an **unauthenticated** source, answers with the captive-portal IP (the jump WG IP) instead of the real service IP. |
-| `captive_portal_connectivity` | peer-a brings its tunnel up. **Before auth**: DNS points at the portal, HTTP is intercepted with a 302 to `/captive-portal/start`, and `WIRETY_JUMP` does not whitelist it. The user then signs in with Dex and completes the portal flow as a browser would. **After auth**: `WIRETY_JUMP` sends peer-a to `WIRETY_POLICY`, the allowed service answers 200 through the tunnel, DNS returns the real IP, and the routed-but-not-allowed service stays unreachable. |
+| `private_dns` | The agent's DNS server resolves the private-zone FQDN (`app.corp.e2e.internal`) to the **real** service IP even for an unauthenticated source (DNS is not the access boundary, iptables is), while an OS captive-portal probe host (`captive.apple.com`) is steered to the portal. |
+| `captive_portal_connectivity` | peer-a brings its tunnel up. **Before auth**: DNS gives the real service IP, yet HTTP to it is intercepted with a 302 to `/captive-portal/start`; the probe host points at the portal; `WIRETY_JUMP` does not whitelist peer-a. The user then signs in with Dex and completes the portal flow as a browser would. **After auth**: `WIRETY_JUMP` sends peer-a to `WIRETY_POLICY`, the allowed service answers 200 through the tunnel, the probe host is no longer steered to the portal, and the routed-but-not-allowed service stays unreachable. |
 
 `TestE2EIPv6` runs the same topology **dual-stack**: the docker network gets an
 IPv6 ULA subnet, the Wirety network a `cidr_v6`, and the routes, DNS record and
@@ -76,7 +76,7 @@ policy carry both families.
 | Subtest | Proves |
 |---------|--------|
 | `policy_to_ip6tables` | The IPv6 policy materialises as a `WIRETY6_POLICY` `ACCEPT` from peer-a's IPv6 to the service's IPv6, nothing opens the denied service, and the chain is default-deny. |
-| `captive_portal_dual_stack` | **Before auth**: `A` points at the portal and `AAAA` is suppressed, HTTP to the service's **IPv6** address is intercepted (no IPv6 bypass), and `WIRETY6_JUMP` does not whitelist peer-a. The user authenticates the token that was issued for the **IPv6** address. **After auth**: both `WIRETY_JUMP` and `WIRETY6_JUMP` open, the service answers 200 over IPv6 and IPv4, `AAAA` returns the real IPv6 over both DNS transports, and the denied service stays unreachable over IPv6. |
+| `captive_portal_dual_stack` | **Before auth**: `A`/`AAAA` return the real addresses, HTTP to the service's **IPv6** address is intercepted (no IPv6 bypass), the probe host queried over the agent's **IPv6** DNS listener points at the portal, and `WIRETY6_JUMP` does not whitelist peer-a. The user authenticates the token that was issued for the **IPv6** address. **After auth**: both `WIRETY_JUMP` and `WIRETY6_JUMP` open, the service answers 200 over IPv6 and IPv4, the probe host is released over IPv6 too, and the denied service stays unreachable over IPv6. |
 
 Three tests need no WireGuard and run anywhere Docker runs:
 

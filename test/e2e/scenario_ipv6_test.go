@@ -15,10 +15,9 @@ import (
 // records and policy all carry IPv6 as well as IPv4.
 //
 // It asserts the IPv6 half of every guarantee — WIRETY6_* chains programmed
-// from policy, AAAA records steered by authentication state, IPv6 traffic
-// gated then allowed/denied by policy — and the dual-stack auth path: the
-// peer's first intercepted request goes over IPv6, and authenticating that
-// token must open both families.
+// from policy, AAAA records served, IPv6 traffic gated then allowed/denied by
+// policy — and the dual-stack auth path: the peer's first intercepted request
+// goes over IPv6, and authenticating that token must open both families.
 func TestE2EIPv6(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -150,10 +149,12 @@ func TestE2EIPv6(t *testing.T) {
 		mustExec(ctx, t, peer, "wg-quick", "up", "wg0")
 
 		// --- before authentication ------------------------------------------
-		// AAAA is suppressed for unauthenticated peers so clients fall back to
-		// IPv4 and meet the captive portal; A points at the portal.
-		digEventually(ctx, t, peer, jumpWgIP, fqdn, "A", jumpWgIP)
-		digEventually(ctx, t, peer, jumpWgIP, fqdn, "AAAA", "")
+		// Both families resolve to the real service addresses (DNS is not the
+		// gate); the OS probe host is steered to the portal, including when
+		// the query reaches the agent over its IPv6 DNS listener.
+		digEventually(ctx, t, peer, jumpWgIP, fqdn, "A", svcIP)
+		digEventually(ctx, t, peer, jumpWgIP, fqdn, "AAAA", svcIP6)
+		digEventually(ctx, t, peer, jumpWgIP6, captiveProbeHost, "A", jumpWgIP)
 
 		// IPv6 must not bypass the gate: HTTP to the service's IPv6 address is
 		// intercepted by the captive portal, exactly like IPv4.
@@ -205,11 +206,13 @@ func TestE2EIPv6(t *testing.T) {
 			})
 		}
 
-		// AAAA now returns the real IPv6 — over both DNS transports (the agent
-		// also listens on its WireGuard IPv6 address).
-		digEventually(ctx, t, peer, jumpWgIP, fqdn, "AAAA", svcIP6)
+		// Records are served over the agent's IPv6 DNS listener too...
 		digEventually(ctx, t, peer, jumpWgIP6, fqdn, "AAAA", svcIP6)
 		digEventually(ctx, t, peer, jumpWgIP6, fqdn, "A", svcIP)
+		// ...and the probe host is released for the now-authenticated peer even
+		// when it asks over IPv6: the agent must map the peer's IPv6 source to
+		// its IPv4-keyed whitelist entry.
+		digEventuallyNot(ctx, t, peer, jumpWgIP6, captiveProbeHost, "A", jumpWgIP)
 
 		// The routed-but-not-allowed service stays blocked over IPv6.
 		if status, _, err := httpProbe(ctx, peer, "http://["+deniedIP6+"]/"); err != nil {

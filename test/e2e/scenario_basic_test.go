@@ -145,19 +145,24 @@ func TestE2E(t *testing.T) {
 	t.Run("private_dns", func(t *testing.T) {
 		// Query the agent's DNS server (bound to the WG IP) from inside the jump
 		// container. The query's source is the jump's own WG IP, which is NOT an
-		// authenticated peer, so the agent must answer with the captive-portal IP
-		// (= the jump WG IP) instead of the record's real IP. This proves both
-		// that the private zone holds the record (an unknown name would be
-		// forwarded upstream, not rewritten) and that unauthenticated peers are
-		// steered to the portal. Real-IP resolution after authentication is
-		// asserted by the captive-portal subtest.
-		out := digEventually(ctx, t, jump, jumpWgIP, fqdn, "A", jumpWgIP)
+		// authenticated peer.
+		//
+		// Private-zone records resolve to their REAL address whatever the
+		// peer's auth state: access control is the jump's iptables, not DNS, so
+		// a browser never caches the portal IP for an internal name.
+		out := digEventually(ctx, t, jump, jumpWgIP, fqdn, "A", svcIP)
 		t.Logf("dig %s @%s (unauthenticated) => %s", fqdn, jumpWgIP, out)
+
+		// OS captive-portal probe hosts are the one thing DNS still steers to
+		// the portal for unauthenticated peers, to trip the OS "Sign in to
+		// network" prompt.
+		digEventually(ctx, t, jump, jumpWgIP, captiveProbeHost, "A", jumpWgIP)
 	})
 
 	// ==== Subtest 3: captive-portal auth + gated connectivity ==============
 	// A plain WireGuard peer brings its tunnel up and is gated by the jump:
-	// HTTP is intercepted by the captive portal and DNS points at the portal.
+	// HTTP is intercepted by the captive portal even though DNS gives it the
+	// real service IP, and OS probe hosts point at the portal.
 	// The user then signs in (Dex OIDC) and completes the portal flow exactly
 	// as a browser would; the server whitelists the peer, the agent opens the
 	// WIRETY_JUMP gate, and the policy decides what is reachable.
@@ -177,8 +182,10 @@ func TestE2E(t *testing.T) {
 		mustExec(ctx, t, peer, "wg-quick", "up", "wg0")
 
 		// --- before authentication ------------------------------------------
-		// DNS: the private name resolves to the captive portal.
-		digEventually(ctx, t, peer, jumpWgIP, fqdn, "A", jumpWgIP)
+		// DNS: the private name resolves to the real service IP (the gate is
+		// iptables, asserted below); the OS probe host resolves to the portal.
+		digEventually(ctx, t, peer, jumpWgIP, fqdn, "A", svcIP)
+		digEventually(ctx, t, peer, jumpWgIP, captiveProbeHost, "A", jumpWgIP)
 
 		// HTTP to the (policy-allowed) service is intercepted by the agent's
 		// captive portal, which issues a token and redirects to the server.
@@ -229,8 +236,11 @@ func TestE2E(t *testing.T) {
 			return nil
 		})
 
-		// DNS now returns the real service IP.
+		// DNS still returns the real service IP, and the OS probe host is no
+		// longer steered to the portal (several probe hosts are real,
+		// HSTS-preloaded sites such as www.apple.com).
 		digEventually(ctx, t, peer, jumpWgIP, fqdn, "A", svcIP)
+		digEventuallyNot(ctx, t, peer, jumpWgIP, captiveProbeHost, "A", jumpWgIP)
 
 		// The routed-but-not-allowed service stays blocked by WIRETY_POLICY.
 		if status, _, err := httpProbe(ctx, peer, "http://"+deniedIP+"/"); err != nil {
@@ -240,6 +250,10 @@ func TestE2E(t *testing.T) {
 		}
 	})
 }
+
+// captiveProbeHost is an OS captive-portal probe hostname the agent's DNS
+// steers to the portal for unauthenticated peers only.
+const captiveProbeHost = "captive.apple.com"
 
 // clientConfig adapts a server-generated config for the plain peer container:
 // the jump endpoint is replaced by the agent container's address (the jump
