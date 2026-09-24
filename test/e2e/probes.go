@@ -11,19 +11,20 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// digEventually queries dnsServer for an A record of name from inside c until
-// the answer is exactly want, and returns it.
-func digEventually(ctx context.Context, t *testing.T, c testcontainers.Container, dnsServer, name, want string) string {
+// digEventually queries dnsServer for a qtype ("A", "AAAA") record of name from
+// inside c until the answer is exactly want ("" = an empty answer, e.g. a
+// suppressed AAAA), and returns it.
+func digEventually(ctx context.Context, t *testing.T, c testcontainers.Container, dnsServer, name, qtype, want string) string {
 	t.Helper()
 	var got string
 	eventually(t, defaultSyncTimeout, defaultPollInterval, func() error {
-		code, out, err := execInContainer(ctx, c, "dig", "+short", "+time=2", "+tries=1", "@"+dnsServer, name, "A")
+		code, out, err := execInContainer(ctx, c, "dig", "+short", "+time=2", "+tries=1", "@"+dnsServer, name, qtype)
 		got = strings.TrimSpace(out)
 		if err != nil {
 			return err
 		}
 		if code != 0 || got != want {
-			return fmt.Errorf("dig %s @%s: want %s (exit %d): %q", name, dnsServer, want, code, got)
+			return fmt.Errorf("dig %s %s @%s: want %q (exit %d): %q", qtype, name, dnsServer, want, code, got)
 		}
 		return nil
 	})
@@ -35,7 +36,8 @@ func digEventually(ctx context.Context, t *testing.T, c testcontainers.Container
 // refused yields status "000" (curl's convention) rather than an error; err is
 // reserved for failures to run the probe at all.
 func httpProbe(ctx context.Context, c testcontainers.Container, url string) (status, location string, err error) {
-	_, out, err := execInContainer(ctx, c, "curl", "-s", "-o", "/dev/null", "--max-time", "5",
+	// -g: accept IPv6 literals such as http://[fd00::1]/ unescaped.
+	_, out, err := execInContainer(ctx, c, "curl", "-g", "-s", "-o", "/dev/null", "--max-time", "5",
 		"-w", "%{http_code} %{redirect_url}", url)
 	if err != nil {
 		return "", "", err

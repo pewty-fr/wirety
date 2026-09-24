@@ -104,9 +104,21 @@ func hasRule(dump string, fragments ...string) bool {
 // fragment, then returns the final dump.
 func requireRuleEventually(ctx context.Context, t *testing.T, c testcontainers.Container, chain string, fragments ...string) string {
 	t.Helper()
+	return requireRuleEventuallyWith(ctx, t, c, dumpChain, chain, fragments...)
+}
+
+// requireRule6Eventually is requireRuleEventually for an ip6tables chain.
+func requireRule6Eventually(ctx context.Context, t *testing.T, c testcontainers.Container, chain string, fragments ...string) string {
+	t.Helper()
+	return requireRuleEventuallyWith(ctx, t, c, dumpChain6, chain, fragments...)
+}
+
+func requireRuleEventuallyWith(ctx context.Context, t *testing.T, c testcontainers.Container,
+	dump func(context.Context, testcontainers.Container, string) (string, error), chain string, fragments ...string) string {
+	t.Helper()
 	var final string
 	eventually(t, defaultSyncTimeout, defaultPollInterval, func() error {
-		out, err := dumpChain(ctx, c, chain)
+		out, err := dump(ctx, c, chain)
 		if err != nil {
 			return err
 		}

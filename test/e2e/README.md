@@ -47,7 +47,7 @@ cd test/e2e
 go test -tags e2e -timeout 25m -v ./...
 
 # No WireGuard needed — runs anywhere Docker runs (incl. Docker Desktop):
-go test -tags e2e -run 'TestStackSmoke|TestCaptivePortalServerFlow' -v ./...
+go test -tags e2e -run 'TestStackSmoke|TestCaptivePortalServerFlow' -v ./...  # incl. ...FlowIPv6
 ```
 
 First run builds four images (server, agent, dex, peer); subsequent runs reuse
@@ -67,7 +67,16 @@ the first allowed by policy — and a DNS record `app` for it) and runs:
 | `private_dns` | The agent's DNS server serves the private-zone FQDN (`app.corp.e2e.internal`) and, because the query comes from an **unauthenticated** source, answers with the captive-portal IP (the jump WG IP) instead of the real service IP. |
 | `captive_portal_connectivity` | peer-a brings its tunnel up. **Before auth**: DNS points at the portal, HTTP is intercepted with a 302 to `/captive-portal/start`, and `WIRETY_JUMP` does not whitelist it. The user then signs in with Dex and completes the portal flow as a browser would. **After auth**: `WIRETY_JUMP` sends peer-a to `WIRETY_POLICY`, the allowed service answers 200 through the tunnel, DNS returns the real IP, and the routed-but-not-allowed service stays unreachable. |
 
-Two tests need no WireGuard and run anywhere Docker runs:
+`TestE2EIPv6` runs the same topology **dual-stack**: the docker network gets an
+IPv6 ULA subnet, the Wirety network a `cidr_v6`, and the routes, DNS record and
+policy carry both families.
+
+| Subtest | Proves |
+|---------|--------|
+| `policy_to_ip6tables` | The IPv6 policy materialises as a `WIRETY6_POLICY` `ACCEPT` from peer-a's IPv6 to the service's IPv6, nothing opens the denied service, and the chain is default-deny. |
+| `captive_portal_dual_stack` | **Before auth**: `A` points at the portal and `AAAA` is suppressed, HTTP to the service's **IPv6** address is intercepted (no IPv6 bypass), and `WIRETY6_JUMP` does not whitelist peer-a. The user authenticates the token that was issued for the **IPv6** address. **After auth**: both `WIRETY_JUMP` and `WIRETY6_JUMP` open, the service answers 200 over IPv6 and IPv4, `AAAA` returns the real IPv6 over both DNS transports, and the denied service stays unreachable over IPv6. |
+
+Three tests need no WireGuard and run anywhere Docker runs:
 
 - `TestStackSmoke` checks the plumbing: images, DB, OIDC, REST, and that a custom
   `domain_suffix` is persisted.
@@ -75,13 +84,15 @@ Two tests need no WireGuard and run anywhere Docker runs:
   jump's enrollment token) and the browser, and checks the gates on whitelisting:
   the browser-binding cookie (phishing defense) and peer ownership, then the
   happy path.
+- `TestCaptivePortalServerFlowIPv6` does the same for a dual-stack peer whose
+  captive token was issued for its IPv6 address.
 
 ## Next increments
 
 1. **Full vs partial encapsulation**: peers with `0.0.0.0/0` vs split routes;
    assert DNS interception of external names and the default-route differences.
 2. **Isolated vs shared peers**: peer-to-peer reachability per the isolation flag.
-3. **IPv6 / dual-stack**: mirror the scenario with `cidr_v6` + `WIRETY6_*`.
+3. **IPv6-only networks** (no IPv4 `cidr`).
 
 ## Layout
 
@@ -93,6 +104,7 @@ test/e2e/
   iptables.go       exec + poll helpers to assert iptables chains inside the agent
   probes.go         dig / curl probes run inside containers
   scenario_basic_test.go   the full scenario (TestE2E)
+  scenario_ipv6_test.go    the dual-stack scenario (TestE2EIPv6)
   captive_flow_test.go     server-side captive-portal flow, no WireGuard
   smoke_test.go     non-WireGuard spine check (TestStackSmoke)
   images/

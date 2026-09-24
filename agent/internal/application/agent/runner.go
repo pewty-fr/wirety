@@ -308,6 +308,9 @@ func extractEndpointIP(endpoint string) string {
 // If no endpoint constraint was stored (empty string — legacy entry or SSO
 // disabled), only whitelist membership is checked.
 func (r *Runner) isAuthenticated(peerIP string) bool {
+	// The whitelist is keyed by IPv4; a dual-stack peer's IPv6 address counts
+	// as its IPv4 (the firewall does the same via extendWhitelistWithIPv6).
+	peerIP = r.ipv4ForIPv6(peerIP)
 	r.whitelistMu.RLock()
 	expectedEndpoint, ok := r.whitelist[peerIP]
 	r.whitelistMu.RUnlock()
@@ -415,6 +418,25 @@ func (r *Runner) updateIPv4ToIPv6Map(peers []dom.DNSPeer) {
 	r.ipv4ToIPv6Mu.Lock()
 	r.ipv4ToIPv6 = m
 	r.ipv4ToIPv6Mu.Unlock()
+}
+
+// ipv4ForIPv6 returns the IPv4 WireGuard address of the peer owning the given
+// IPv6 WireGuard address, or ip unchanged when it is IPv4 or unknown.
+func (r *Runner) ipv4ForIPv6(ip string) string {
+	if !strings.Contains(ip, ":") {
+		return ip
+	}
+	r.ipv4ToIPv6Mu.RLock()
+	defer r.ipv4ToIPv6Mu.RUnlock()
+	for v4, v6 := range r.ipv4ToIPv6 {
+		if idx := strings.IndexByte(v6, '/'); idx != -1 {
+			v6 = v6[:idx]
+		}
+		if v6 == ip {
+			return v4
+		}
+	}
+	return ip
 }
 
 // extendWhitelistWithIPv6 appends IPv6 WireGuard addresses for each whitelisted

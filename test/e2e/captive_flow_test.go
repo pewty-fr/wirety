@@ -94,3 +94,60 @@ func TestCaptivePortalServerFlow(t *testing.T) {
 		t.Fatalf("authenticate as owner: %v", err)
 	}
 }
+
+// TestCaptivePortalServerFlowIPv6 covers a dual-stack peer whose first
+// intercepted request arrived over IPv6 (an IPv6 literal URL, or an AAAA record
+// cached from before the tunnel came up): the agent then mints the captive
+// token with the peer's IPv6 WireGuard address, and the owner must still be
+// able to authenticate with it.
+func TestCaptivePortalServerFlowIPv6(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+
+	st := setupStack(ctx, t)
+
+	userTok, err := dexPasswordToken(ctx, st.dexTokenURL, dexClientID, dexClientSecret, userEmail, userPassword)
+	if err != nil {
+		t.Fatalf("dex user token: %v", err)
+	}
+	owner, err := newAPIClient(st.apiBaseURL, userTok).me(ctx)
+	if err != nil {
+		t.Fatalf("user /me: %v", err)
+	}
+
+	net, err := st.admin.createNetwork(ctx, network{Name: "cp6", CIDR: "10.94.0.0/24", CIDRv6: "fd94::/64"})
+	if err != nil {
+		t.Fatalf("create network: %v", err)
+	}
+	jump, err := st.admin.createPeer(ctx, net.ID, createPeerReq{
+		Name: "jump-1", IsJump: true, UseAgent: true, Endpoint: "10.255.255.254", ListenPort: 51820,
+	})
+	if err != nil {
+		t.Fatalf("create jump peer: %v", err)
+	}
+	peerA, err := st.admin.createPeer(ctx, net.ID, createPeerReq{Name: "peer-a", OwnerID: owner.ID})
+	if err != nil {
+		t.Fatalf("create peer: %v", err)
+	}
+	if peerA.AddressV6 == "" {
+		t.Fatalf("dual-stack peer has no IPv6 address: %+v", peerA)
+	}
+
+	agent := newAPIClient(st.apiBaseURL, jump.Token)
+	var cpt struct {
+		Token string `json:"token"`
+	}
+	if err := agent.do(ctx, http.MethodPost, "/captive-portal/token", map[string]string{
+		"peer_ip": stripPrefix(peerA.AddressV6), "peer_endpoint": "172.30.0.9:40000",
+	}, &cpt); err != nil {
+		t.Fatalf("create captive token: %v", err)
+	}
+
+	session, err := st.wiretySession(ctx, userEmail, userPassword)
+	if err != nil {
+		t.Fatalf("oidc login: %v", err)
+	}
+	if err := st.captivePortalLogin(ctx, "http://server:8080/api/v1/captive-portal/start?token="+cpt.Token, session); err != nil {
+		t.Fatalf("authenticate with an IPv6-issued token: %v", err)
+	}
+}

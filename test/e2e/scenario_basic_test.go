@@ -151,7 +151,7 @@ func TestE2E(t *testing.T) {
 		// forwarded upstream, not rewritten) and that unauthenticated peers are
 		// steered to the portal. Real-IP resolution after authentication is
 		// asserted by the captive-portal subtest.
-		out := digEventually(ctx, t, jump, jumpWgIP, fqdn, jumpWgIP)
+		out := digEventually(ctx, t, jump, jumpWgIP, fqdn, "A", jumpWgIP)
 		t.Logf("dig %s @%s (unauthenticated) => %s", fqdn, jumpWgIP, out)
 	})
 
@@ -178,7 +178,7 @@ func TestE2E(t *testing.T) {
 
 		// --- before authentication ------------------------------------------
 		// DNS: the private name resolves to the captive portal.
-		digEventually(ctx, t, peer, jumpWgIP, fqdn, jumpWgIP)
+		digEventually(ctx, t, peer, jumpWgIP, fqdn, "A", jumpWgIP)
 
 		// HTTP to the (policy-allowed) service is intercepted by the agent's
 		// captive portal, which issues a token and redirects to the server.
@@ -230,7 +230,7 @@ func TestE2E(t *testing.T) {
 		})
 
 		// DNS now returns the real service IP.
-		digEventually(ctx, t, peer, jumpWgIP, fqdn, svcIP)
+		digEventually(ctx, t, peer, jumpWgIP, fqdn, "A", svcIP)
 
 		// The routed-but-not-allowed service stays blocked by WIRETY_POLICY.
 		if status, _, err := httpProbe(ctx, peer, "http://"+deniedIP+"/"); err != nil {

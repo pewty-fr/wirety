@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
+	mobynet "github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	tcnetwork "github.com/testcontainers/testcontainers-go/network"
@@ -64,7 +67,22 @@ type stack struct {
 	serverHostPort string
 
 	admin *apiClient
+
+	// ipv6 is set when the docker network is dual-stack (withIPv6).
+	ipv6 bool
 }
+
+// stackOption customises setupStack.
+type stackOption func(*stack)
+
+// withIPv6 makes the docker network dual-stack (ULA subnet e2eIPv6Subnet), so
+// containers get IPv6 addresses and IPv6 can be routed through the jump peer.
+func withIPv6() stackOption {
+	return func(s *stack) { s.ipv6 = true }
+}
+
+// e2eIPv6Subnet is the docker network's IPv6 subnet in dual-stack stacks.
+const e2eIPv6Subnet = "fd00:e2e:6::/64"
 
 // repoRoot resolves the repository root from this test file's location
 // (test/e2e -> ../..), so Dockerfile build contexts are stable regardless of cwd.
@@ -80,11 +98,24 @@ func repoRoot(t *testing.T) string {
 // setupStack brings up network + postgres + dex + server, waits for readiness,
 // and returns a stack with an admin API client. Cleanup is registered via
 // t.Cleanup.
-func setupStack(ctx context.Context, t *testing.T) *stack {
+func setupStack(ctx context.Context, t *testing.T, opts ...stackOption) *stack {
 	t.Helper()
 	root := repoRoot(t)
+	st := &stack{}
+	for _, o := range opts {
+		o(st)
+	}
 
-	nw, err := tcnetwork.New(ctx)
+	var netOpts []tcnetwork.NetworkCustomizer
+	if st.ipv6 {
+		netOpts = append(netOpts,
+			tcnetwork.WithEnableIPv6(),
+			tcnetwork.WithIPAM(&mobynet.IPAM{Config: []mobynet.IPAMConfig{
+				{Subnet: netip.MustParsePrefix(e2eIPv6Subnet)},
+			}}),
+		)
+	}
+	nw, err := tcnetwork.New(ctx, netOpts...)
 	if err != nil {
 		t.Fatalf("create network: %v", err)
 	}
@@ -178,7 +209,7 @@ func setupStack(ctx context.Context, t *testing.T) *stack {
 	}
 	t.Cleanup(func() { _ = server.Terminate(context.Background()) })
 
-	st := &stack{net: nw, pg: pg, dex: dex, server: server}
+	st.net, st.pg, st.dex, st.server = nw, pg, dex, server
 
 	// Resolve host-reachable endpoints.
 	serverHost, _ := server.Host(ctx)
@@ -230,10 +261,11 @@ func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string) 
 				Dockerfile: "Dockerfile.e2e",
 				KeepImage:  true,
 			},
-			Networks:       []string{s.net.Name},
-			NetworkAliases: map[string][]string{s.net.Name: {"jump"}},
-			Privileged:     true,
-			CapAdd:         []string{"NET_ADMIN", "SYS_MODULE"},
+			Networks:           []string{s.net.Name},
+			NetworkAliases:     map[string][]string{s.net.Name: {"jump"}},
+			Privileged:         true,
+			CapAdd:             []string{"NET_ADMIN", "SYS_MODULE"},
+			HostConfigModifier: s.wgHostConfig,
 			Env: map[string]string{
 				"LOG_LEVEL": "debug",
 			},
@@ -262,6 +294,37 @@ func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string) 
 		_ = c.Terminate(context.Background())
 	})
 	return c
+}
+
+// wgHostConfig enables IPv6 inside WireGuard containers of a dual-stack
+// stack: Docker leaves it disabled for interfaces created after start (wg0),
+// so wg-quick could not assign the tunnel's IPv6 address.
+func (s *stack) wgHostConfig(hc *container.HostConfig) {
+	if !s.ipv6 {
+		return
+	}
+	hc.Sysctls = map[string]string{
+		"net.ipv6.conf.all.disable_ipv6":     "0",
+		"net.ipv6.conf.default.disable_ipv6": "0",
+	}
+}
+
+// containerIPv6 returns a container's IPv6 address on the stack network.
+func (s *stack) containerIPv6(ctx context.Context, t *testing.T, c testcontainers.Container) string {
+	t.Helper()
+	dc, ok := c.(*testcontainers.DockerContainer)
+	if !ok {
+		t.Fatalf("containerIPv6: unexpected container type %T", c)
+	}
+	inspect, err := dc.Inspect(ctx)
+	if err != nil {
+		t.Fatalf("inspect container: %v", err)
+	}
+	ep, ok := inspect.NetworkSettings.Networks[s.net.Name]
+	if !ok || !ep.GlobalIPv6Address.IsValid() {
+		t.Fatalf("container has no IPv6 address on network %s", s.net.Name)
+	}
+	return ep.GlobalIPv6Address.String()
 }
 
 // logBuffer is a testcontainers.LogConsumer that accumulates container output.
@@ -319,10 +382,11 @@ func (s *stack) startPeer(ctx context.Context, t *testing.T, alias string) testc
 				Dockerfile: "peer.Dockerfile",
 				KeepImage:  true,
 			},
-			Networks:       []string{s.net.Name},
-			NetworkAliases: map[string][]string{s.net.Name: {alias}},
-			Privileged:     true,
-			CapAdd:         []string{"NET_ADMIN"},
+			Networks:           []string{s.net.Name},
+			NetworkAliases:     map[string][]string{s.net.Name: {alias}},
+			Privileged:         true,
+			CapAdd:             []string{"NET_ADMIN"},
+			HostConfigModifier: s.wgHostConfig,
 			// `sleep infinity` emits no logs; readiness = able to exec.
 			WaitingFor: wait.ForExec([]string{"true"}).WithStartupTimeout(20 * time.Second),
 		},
