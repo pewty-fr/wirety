@@ -34,8 +34,14 @@ func (r *NetworkRepository) CreateNetwork(ctx context.Context, n *network.Networ
 	if n.DNS == nil {
 		n.DNS = []string{}
 	}
-	_, err := r.db.ExecContext(ctx, `INSERT INTO networks (id,name,cidr,cidr_v6,dns,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		n.ID, n.Name, n.CIDR, nullableString(n.CIDRv6), pq.Array(n.DNS), n.CreatedAt, n.UpdatedAt)
+	// The column is NOT NULL DEFAULT 'internal'; mirror that default for callers
+	// that leave the suffix empty.
+	domainSuffix := n.DomainSuffix
+	if domainSuffix == "" {
+		domainSuffix = "internal"
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT INTO networks (id,name,cidr,cidr_v6,dns,created_at,updated_at,domain_suffix) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		n.ID, n.Name, n.CIDR, nullableString(n.CIDRv6), pq.Array(n.DNS), n.CreatedAt, n.UpdatedAt, domainSuffix)
 	if err != nil {
 		return fmt.Errorf("create network: %w", err)
 	}

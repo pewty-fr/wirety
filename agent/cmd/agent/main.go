@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	dnsadapter "wirety/agent/internal/adapters/dns"
 	"wirety/agent/internal/adapters/firewall"
 	"wirety/agent/internal/adapters/wg"
@@ -106,24 +107,6 @@ func main() {
 	}
 	log.Info().Str("ipv4", wgIP).Str("ipv6", wgIPv6).Msg("parsed WireGuard interface addresses")
 	dnsServer := dnsadapter.NewServer("", []dom.DNSPeer{})
-	if wgIP != "" {
-		dnsListenAddr := net.JoinHostPort(wgIP, "53")
-		log.Info().Str("addr", dnsListenAddr).Msg("starting DNS server (IPv4)")
-		go func() {
-			if err := dnsServer.Start(dnsListenAddr); err != nil {
-				log.Error().Err(err).Msg("dns server (IPv4) exited")
-			}
-		}()
-	}
-	if wgIPv6 != "" {
-		dnsListenAddr6 := net.JoinHostPort(wgIPv6, "53")
-		log.Info().Str("addr", dnsListenAddr6).Msg("starting DNS server (IPv6)")
-		go func() {
-			if err := dnsServer.Start(dnsListenAddr6); err != nil {
-				log.Error().Err(err).Msg("dns server (IPv6) exited")
-			}
-		}()
-	}
 
 	// Use peer name as interface name - sanitize for valid interface names
 	iface := sanitizeInterfaceName(peerName)
@@ -146,6 +129,17 @@ func main() {
 		log.Fatal().Err(err).Msg("failed applying initial config from resolve")
 	}
 	log.Info().Msg("initial configuration applied successfully")
+
+	// Start the DNS listeners only now: they bind to the WireGuard address, which
+	// does not exist until the interface has been brought up above. On a fresh
+	// host binding earlier fails with EADDRNOTAVAIL and DNS stays dead until the
+	// agent restarts. The retry loop also covers slow interface bring-up.
+	if wgIP != "" {
+		go serveDNS(dnsServer, net.JoinHostPort(wgIP, "53"), "IPv4")
+	}
+	if wgIPv6 != "" {
+		go serveDNS(dnsServer, net.JoinHostPort(wgIPv6, "53"), "IPv6")
+	}
 
 	wsServer := server
 	if len(server) > 7 && server[:7] == "http://" {
@@ -208,6 +202,21 @@ func main() {
 
 	runner.Start(stop)
 	log.Info().Msg("agent stopped")
+}
+
+// serveDNS runs the DNS server on addr, retrying with capped backoff whenever
+// the listener fails (e.g. the WireGuard address is not assigned yet).
+func serveDNS(srv *dnsadapter.Server, addr, family string) {
+	backoff := time.Second
+	for {
+		log.Info().Str("addr", addr).Msgf("starting DNS server (%s)", family)
+		err := srv.Start(addr)
+		log.Error().Err(err).Str("addr", addr).Dur("retry_in", backoff).Msgf("dns server (%s) exited", family)
+		time.Sleep(backoff)
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
 }
 
 // configureLogger sets the global zerolog level and output format.

@@ -1,0 +1,45 @@
+# Dex config for the e2e harness. The issuer is the in-docker-network hostname
+# so the wirety-server (also on the network) validates tokens against a URL it
+# can actually reach. The host-side test client fetches tokens via Dex's mapped
+# port; token contents (incl. `iss`) are identical regardless of how they were
+# fetched.
+issuer: http://dex:5556/dex
+
+storage:
+  type: sqlite3
+  config:
+    file: /tmp/dex.db
+
+web:
+  http: 0.0.0.0:5556
+  allowedOrigins: ['*']
+
+oauth2:
+  # Skip the consent screen so the browser-less code flow needs one fewer step.
+  skipApprovalScreen: true
+  passwordConnector: local
+
+staticClients:
+  - id: wirety
+    name: Wirety E2E
+    secret: wirety-secret
+    redirectURIs:
+      - 'http://localhost:5173/'
+      - 'http://127.0.0.1:5173/'
+
+enablePasswordDB: true
+
+# Password is "password" (standard Dex example bcrypt hash).
+staticPasswords:
+  - email: "admin@example.com"
+    hash: "$2a$10$L0VOQg16IhCY.0QNLGpnQ.1xK1V/9y3uye6EUeXbO2ffuhzvogX6u"
+    username: "admin"
+    userID: "e2e-admin-0000-0000-000000000001"
+  - email: "user@example.com"
+    hash: "$2a$10$L0VOQg16IhCY.0QNLGpnQ.1xK1V/9y3uye6EUeXbO2ffuhzvogX6u"
+    username: "user"
+    userID: "e2e-user-0000-0000-000000000002"
+
+logger:
+  level: info
+  format: text

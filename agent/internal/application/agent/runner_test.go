@@ -583,3 +583,26 @@ func TestStartWithConnectionError(t *testing.T) {
 
 	// Should not panic despite connection errors
 }
+
+// A dual-stack peer authenticates once (the whitelist is keyed by its IPv4);
+// requests from its IPv6 WireGuard address must count as authenticated too.
+func TestIsAuthenticatedDualStack(t *testing.T) {
+	runner := NewRunner(nil, nil, nil, nil, "ws://localhost:8080", "wg0", "", "")
+	runner.updateIPv4ToIPv6Map([]dom.DNSPeer{
+		{Name: "peer-a", IP: "10.0.0.2", IPv6: "fd00::2/128"},
+		{Name: "peer-b", IP: "10.0.0.3", IPv6: "fd00::3"},
+	})
+	runner.updateWhitelist([]string{"10.0.0.2"})
+
+	for ip, want := range map[string]bool{
+		"10.0.0.2": true,
+		"fd00::2":  true,  // IPv6 of the authenticated peer
+		"10.0.0.3": false, // other peer, not authenticated
+		"fd00::3":  false,
+		"fd00::9":  false, // unknown address
+	} {
+		if got := runner.isAuthenticated(ip); got != want {
+			t.Errorf("isAuthenticated(%q) = %v, want %v", ip, got, want)
+		}
+	}
+}

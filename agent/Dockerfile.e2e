@@ -1,0 +1,25 @@
+# E2E test image for the agent. Identical build to Dockerfile.multiarch but runs
+# as ROOT and adds diagnostic tools — a jump/agent container in the e2e harness
+# needs root + NET_ADMIN to create the WireGuard interface and program iptables,
+# and the tests exec `iptables`/`wg`/`ip` inside it to assert state.
+FROM golang:1.26-alpine AS builder
+WORKDIR /build
+RUN apk add --no-cache git ca-certificates
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o wirety-agent ./cmd/agent
+
+FROM alpine:3.24
+RUN apk add --no-cache \
+    wireguard-tools \
+    iptables \
+    ip6tables \
+    iproute2 \
+    curl \
+    bind-tools \
+    && rm -rf /var/cache/apk/*
+WORKDIR /app
+COPY --from=builder /build/wirety-agent /app/wirety-agent
+# Runs as root (default) — required for wg-quick + iptables.
+ENTRYPOINT ["/app/wirety-agent"]

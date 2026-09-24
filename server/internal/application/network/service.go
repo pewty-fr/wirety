@@ -1308,17 +1308,7 @@ func (s *Service) PreviewCaptivePortalToken(ctx context.Context, captiveToken, s
 	if err != nil {
 		return nil, fmt.Errorf("look up peer: %w", err)
 	}
-	var matchedPeer *network.Peer
-	for _, p := range peers {
-		addr := p.Address
-		if idx := strings.Index(addr, "/"); idx != -1 {
-			addr = addr[:idx]
-		}
-		if addr == cpt.PeerIP {
-			matchedPeer = p
-			break
-		}
-	}
+	matchedPeer := findPeerByVPNIP(peers, cpt.PeerIP)
 	if matchedPeer == nil {
 		return nil, fmt.Errorf("peer not found in network")
 	}
@@ -1456,17 +1446,7 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	if err != nil {
 		return nil, fmt.Errorf("failed to look up peer: %w", err)
 	}
-	var matchedPeer *network.Peer
-	for _, p := range peers {
-		addr := p.Address
-		if idx := strings.Index(addr, "/"); idx != -1 {
-			addr = addr[:idx]
-		}
-		if addr == cpt.PeerIP {
-			matchedPeer = p
-			break
-		}
-	}
+	matchedPeer := findPeerByVPNIP(peers, cpt.PeerIP)
 	if matchedPeer == nil {
 		return nil, fmt.Errorf("peer not found in network")
 	}
@@ -1482,7 +1462,13 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	// Whitelist the peer — also triggers WebSocket notification to jump peer.
 	// AddCaptivePortalWhitelist is idempotent (ON CONFLICT DO NOTHING), so repeated
 	// calls for the same peer are safe.
-	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, cpt.PeerIP, cpt.PeerEndpoint); err != nil {
+	//
+	// The token carries whichever address the agent intercepted, which is the
+	// peer's IPv6 when a dual-stack peer's first request went over IPv6. The
+	// whitelist is keyed by the IPv4 address whenever the peer has one: the
+	// agent checks authentication by IPv4 and derives the IPv6 entry from it.
+	whitelistIP := peerWhitelistIP(matchedPeer, cpt.PeerIP)
+	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, whitelistIP, cpt.PeerEndpoint); err != nil {
 		return nil, fmt.Errorf("failed to whitelist peer: %w", err)
 	}
 
@@ -1500,7 +1486,7 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	// doubt and remove the physical-interface block.  If the same source was
 	// truly malicious, it will still need to authenticate again the next time
 	// it attempts a takeover (and will accumulate strikes if it can't).
-	_ = s.repo.ClearEndpointDenylistForPeer(ctx, cpt.NetworkID, cpt.PeerIP)
+	_ = s.repo.ClearEndpointDenylistForPeer(ctx, cpt.NetworkID, whitelistIP)
 
 	// Do NOT delete the token here. The redirect server caches the token for up to
 	// 9 minutes (tokenTTL) to avoid creating a new DB token on every intercepted
@@ -1848,21 +1834,11 @@ func (s *Service) CleanupExpiredCaptivePortalTokens(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		var peerID string
-		for _, p := range peers {
-			addr := p.Address
-			if idx := strings.IndexByte(addr, '/'); idx != -1 {
-				addr = addr[:idx]
-			}
-			if addr == t.PeerIP {
-				peerID = p.ID
-				break
-			}
-		}
-		if peerID == "" {
+		p := findPeerByVPNIP(peers, t.PeerIP)
+		if p == nil {
 			continue
 		}
-		_ = s.RecordCaptivePortalAuthFailure(ctx, t.NetworkID, peerID)
+		_ = s.RecordCaptivePortalAuthFailure(ctx, t.NetworkID, p.ID)
 	}
 	// Now actually drop the rows.
 	return s.repo.CleanupExpiredCaptivePortalTokens(ctx)
@@ -1986,6 +1962,38 @@ func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, netw
 // For example, "10.255.238.0/22" is rejected because the network address is
 // "10.255.236.0/22" — accepting host addresses silently causes IPAM prefix
 // mismatches and confusing peer IP allocations.
+// findPeerByVPNIP returns the peer whose WireGuard IPv4 or IPv6 address is ip
+// (addresses are stored with a prefix length, ip is bare), or nil.
+func findPeerByVPNIP(peers []*network.Peer, ip string) *network.Peer {
+	for _, p := range peers {
+		for _, addr := range []string{p.Address, p.AddressV6} {
+			if addr == "" {
+				continue
+			}
+			if idx := strings.IndexByte(addr, '/'); idx != -1 {
+				addr = addr[:idx]
+			}
+			if addr == ip {
+				return p
+			}
+		}
+	}
+	return nil
+}
+
+// peerWhitelistIP is the address a captive-portal whitelist entry is keyed by:
+// the peer's IPv4 when it has one (the agent derives the IPv6 entry from it),
+// else the intercepted address (IPv6-only peers).
+func peerWhitelistIP(p *network.Peer, interceptedIP string) string {
+	if p.Address == "" {
+		return interceptedIP
+	}
+	if idx := strings.IndexByte(p.Address, '/'); idx != -1 {
+		return p.Address[:idx]
+	}
+	return p.Address
+}
+
 func validateNetworkCIDR(cidr string) error {
 	ip, ipnet, err := net.ParseCIDR(cidr)
 	if err != nil {
