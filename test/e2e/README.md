@@ -34,8 +34,10 @@ build tag, so it never runs as part of `go test ./...` in the server or agent.
 - **Linux host** with **Docker** and the **WireGuard kernel module**
   (`sudo modprobe wireguard`). The jump/peer containers are privileged and
   create real `wg` interfaces using the host kernel module.
-- Docker Desktop on macOS/Windows generally **cannot** run the WireGuard parts
-  (its VM kernel usually lacks the module). The smoke test (below) still works.
+- Docker Desktop on macOS runs the full suite too when its VM kernel ships
+  WireGuard (recent versions do; check with
+  `docker run --rm --privileged alpine ip link add wg9 type wireguard`).
+  Without it, the tests below that need no WireGuard still run.
 - Go ≥ 1.26.
 
 ## Running

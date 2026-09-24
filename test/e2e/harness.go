@@ -263,9 +263,7 @@ func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string) 
 			},
 			Networks:           []string{s.net.Name},
 			NetworkAliases:     map[string][]string{s.net.Name: {"jump"}},
-			Privileged:         true,
-			CapAdd:             []string{"NET_ADMIN", "SYS_MODULE"},
-			HostConfigModifier: s.wgHostConfig,
+			HostConfigModifier: s.wgHostConfig("NET_ADMIN", "SYS_MODULE"),
 			Env: map[string]string{
 				"LOG_LEVEL": "debug",
 			},
@@ -296,16 +294,24 @@ func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string) 
 	return c
 }
 
-// wgHostConfig enables IPv6 inside WireGuard containers of a dual-stack
-// stack: Docker leaves it disabled for interfaces created after start (wg0),
-// so wg-quick could not assign the tunnel's IPv6 address.
-func (s *stack) wgHostConfig(hc *container.HostConfig) {
-	if !s.ipv6 {
-		return
-	}
-	hc.Sysctls = map[string]string{
-		"net.ipv6.conf.all.disable_ipv6":     "0",
-		"net.ipv6.conf.default.disable_ipv6": "0",
+// wgHostConfig is the host config of containers that create WireGuard
+// interfaces: privileged with the given capabilities and, in a dual-stack
+// stack, IPv6 enabled for interfaces created after start (Docker leaves it
+// disabled, so wg-quick could not assign the tunnel's IPv6 address).
+//
+// Privileges must be set here rather than through ContainerRequest.Privileged
+// / CapAdd: testcontainers only applies those deprecated fields when no
+// HostConfigModifier is given.
+func (s *stack) wgHostConfig(caps ...string) func(*container.HostConfig) {
+	return func(hc *container.HostConfig) {
+		hc.Privileged = true
+		hc.CapAdd = caps
+		if s.ipv6 {
+			hc.Sysctls = map[string]string{
+				"net.ipv6.conf.all.disable_ipv6":     "0",
+				"net.ipv6.conf.default.disable_ipv6": "0",
+			}
+		}
 	}
 }
 
@@ -384,9 +390,7 @@ func (s *stack) startPeer(ctx context.Context, t *testing.T, alias string) testc
 			},
 			Networks:           []string{s.net.Name},
 			NetworkAliases:     map[string][]string{s.net.Name: {alias}},
-			Privileged:         true,
-			CapAdd:             []string{"NET_ADMIN"},
-			HostConfigModifier: s.wgHostConfig,
+			HostConfigModifier: s.wgHostConfig("NET_ADMIN"),
 			// `sleep infinity` emits no logs; readiness = able to exec.
 			WaitingFor: wait.ForExec([]string{"true"}).WithStartupTimeout(20 * time.Second),
 		},
