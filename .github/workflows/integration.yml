@@ -8,8 +8,10 @@ on:
     branches:
       - main
     paths:
-      - 'server/internal/application/policy/**'
-      - 'agent/internal/adapters/firewall/**'
+      - 'server/**'
+      - 'agent/**'
+      - 'dex/**'
+      - 'test/e2e/**'
       - '.github/workflows/integration.yml'
   push:
     branches:
@@ -68,3 +70,38 @@ jobs:
       - name: Run agent firewall integration tests (root)
         # sudo is needed for iptables; PATH is forwarded so the Go binary is found.
         run: sudo env "PATH=$PATH" go test -v -tags integration ./internal/adapters/firewall/...
+
+  # ── Full end-to-end tests (testcontainers) ────────────────────────────────
+  # Stands up the whole stack in Docker — postgres, Dex (OIDC), the server, a
+  # jump peer running the agent, plain WireGuard peers and a private service —
+  # and asserts the iptables state the agent programs from server policy,
+  # WireGuard connectivity, the captive-portal auth flow and private DNS.
+  #
+  # Requires Docker (present on ubuntu-latest) AND the WireGuard kernel module
+  # (privileged containers create real wg interfaces). ubuntu-latest ships it.
+  test-e2e:
+    name: E2E — testcontainers
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./test/e2e
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '>=1.26.0'
+          cache-dependency-path: test/e2e/go.sum
+
+      - name: Load WireGuard kernel module
+        run: |
+          sudo modprobe wireguard
+          lsmod | grep -q wireguard && echo "wireguard module loaded"
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run e2e tests
+        # Builds the server/agent/dex/peer images and runs the full scenario.
+        # 25m budget covers first-time image builds on a cold runner.
+        run: go test -tags e2e -timeout 25m -v ./...
