@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	tcnetwork "github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -231,10 +232,32 @@ func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string) 
 		Started: true,
 	})
 	if err != nil {
+		if c != nil {
+			dumpLogs(t, c, "jump-agent")
+		}
 		t.Fatalf("start jump agent: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Terminate(context.Background()) })
+	t.Cleanup(func() {
+		// Agent logs are the first thing needed to debug a CI failure.
+		if t.Failed() {
+			dumpLogs(t, c, "jump-agent")
+		}
+		_ = c.Terminate(context.Background())
+	})
 	return c
+}
+
+// dumpLogs writes a container's logs to the test output.
+func dumpLogs(t *testing.T, c testcontainers.Container, name string) {
+	t.Helper()
+	rc, err := c.Logs(context.Background())
+	if err != nil {
+		t.Logf("%s logs unavailable: %v", name, err)
+		return
+	}
+	defer rc.Close()
+	b, _ := io.ReadAll(rc)
+	t.Logf("===== %s logs =====\n%s\n===== end %s logs =====", name, b, name)
 }
 
 // startPrivateService runs an nginx container on the harness network to stand in
@@ -292,7 +315,9 @@ func (s *stack) startPeer(ctx context.Context, t *testing.T, alias string) testc
 
 // execInContainer runs a command in a container and returns combined output.
 func execInContainer(ctx context.Context, c testcontainers.Container, cmd ...string) (int, string, error) {
-	code, reader, err := c.Exec(ctx, cmd)
+	// Multiplexed strips Docker's 8-byte stream-frame headers so callers get
+	// plain stdout+stderr text they can compare exactly.
+	code, reader, err := c.Exec(ctx, cmd, tcexec.Multiplexed())
 	if err != nil {
 		return code, "", err
 	}

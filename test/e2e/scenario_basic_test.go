@@ -121,21 +121,27 @@ func TestE2E(t *testing.T) {
 	// ==== Subtest 2: private DNS zone resolution ============================
 	t.Run("private_dns", func(t *testing.T) {
 		fqdn := fmt.Sprintf("%s.%s.%s", dnsRec.Name, net.Name, net.DomainSuffix) // app.corp.e2e.internal
-		// Query the agent's own DNS server (bound to the WG IP) from inside the
-		// jump container. Unauthenticated resolution returns the record's real IP.
+		// Query the agent's DNS server (bound to the WG IP) from inside the jump
+		// container. The query's source is the jump's own WG IP, which is NOT an
+		// authenticated peer, so the agent must answer with the captive-portal IP
+		// (= the jump WG IP) instead of the record's real IP. This proves both
+		// that the private zone holds the record (an unknown name would be
+		// forwarded upstream, not rewritten) and that unauthenticated peers are
+		// steered to the portal. Real-IP resolution after authentication is
+		// asserted by the captive-portal subtest.
 		var out string
 		eventually(t, defaultSyncTimeout, defaultPollInterval, func() error {
-			code, o, err := execInContainer(ctx, jump, "dig", "+short", "@"+jumpWgIP, fqdn, "A")
-			out = o
+			code, o, err := execInContainer(ctx, jump, "dig", "+short", "+time=2", "+tries=1", "@"+jumpWgIP, fqdn, "A")
+			out = strings.TrimSpace(o)
 			if err != nil {
 				return err
 			}
-			if code != 0 || !strings.Contains(o, svcIP) {
-				return fmt.Errorf("dig did not resolve %s to %s (exit %d): %q", fqdn, svcIP, code, o)
+			if code != 0 || out != jumpWgIP {
+				return fmt.Errorf("dig %s: want captive-portal IP %s (exit %d): %q", fqdn, jumpWgIP, code, out)
 			}
 			return nil
 		})
-		t.Logf("dig %s @%s => %s", fqdn, jumpWgIP, strings.TrimSpace(out))
+		t.Logf("dig %s @%s (unauthenticated) => %s", fqdn, jumpWgIP, out)
 	})
 
 	// ==== Subtest 3: captive-portal auth + gated connectivity ==============

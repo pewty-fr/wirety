@@ -64,7 +64,7 @@ and a group/policy that **allows peer-a → the private service**) and runs:
 | Subtest | Proves |
 |---------|--------|
 | `policy_to_iptables` | The server-side policy materialises on the agent as a `WIRETY_POLICY` `ACCEPT` from peer-a's IP to the service CIDR, and the chain is default-deny. **This is the "control the iptables added from the server" assertion.** |
-| `private_dns` | The agent's DNS server resolves the private-zone FQDN (`app.corp.e2e.internal`) to the record's real IP. |
+| `private_dns` | The agent's DNS server serves the private-zone FQDN (`app.corp.e2e.internal`) and, because the query comes from an **unauthenticated** source, answers with the captive-portal IP (the jump WG IP) instead of the real service IP. |
 | `captive_portal_connectivity` | Brings peer-a's WireGuard tunnel up. **Extension point** — see below. |
 
 `TestStackSmoke` validates the non-WireGuard spine only (images, DB, OIDC,
