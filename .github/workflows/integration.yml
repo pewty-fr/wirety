@@ -104,4 +104,27 @@ jobs:
       - name: Run e2e tests
         # Builds the server/agent/dex/peer images and runs the full scenario.
         # 25m budget covers first-time image builds on a cold runner.
-        run: go test -tags e2e -timeout 25m -v ./...
+        run: |
+          set -o pipefail
+          go test -tags e2e -timeout 25m -v ./... 2>&1 | tee e2e.log
+
+      # The web log viewer only renders what is on screen, so copying from it
+      # drops lines. Put the test output (minus testcontainers lifecycle noise)
+      # in the job summary and keep the full log as an artifact.
+      - name: Summarize e2e output
+        if: failure()
+        run: |
+          {
+            echo '## E2E test output'
+            echo '```'
+            grep -v -E '^[0-9/]+ [0-9:]+ (🐳|✅|⏳|🔔|🚫)' e2e.log | tail -n 1500
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload e2e log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-log
+          path: test/e2e/e2e.log
+          if-no-files-found: ignore

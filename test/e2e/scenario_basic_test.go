@@ -128,10 +128,8 @@ func TestE2E(t *testing.T) {
 
 		// The allow-app policy must materialise as a FORWARD ACCEPT from peer-a's
 		// IP to the private service CIDR, inside WIRETY_POLICY.
-		policyDump := requireChainEventually(ctx, t, jump, "WIRETY_POLICY", regPeerIP, svcIP)
-		if !strings.Contains(policyDump, "ACCEPT") {
-			t.Fatalf("WIRETY_POLICY has no ACCEPT rule for the allow policy:\n%s", policyDump)
-		}
+		policyDump := requireRuleEventually(ctx, t, jump, "WIRETY_POLICY",
+			"-s "+regPeerIP+"/32", "-d "+svcCIDR, "-j ACCEPT")
 		// Nothing may open the denied service.
 		if strings.Contains(policyDump, deniedIP) {
 			t.Fatalf("WIRETY_POLICY references the denied service %s:\n%s", deniedIP, policyDump)
@@ -199,10 +197,10 @@ func TestE2E(t *testing.T) {
 		t.Logf("unauthenticated HTTP intercepted → %s", startURL)
 
 		// The gate is still closed for peer-a.
-		gate := "-s " + regPeerIP + "/32 -j WIRETY_POLICY"
+		gate := []string{"-s " + regPeerIP + "/32", "-j WIRETY_POLICY"}
 		if dump, err := dumpChain(ctx, jump, "WIRETY_JUMP"); err != nil {
 			t.Fatalf("dump WIRETY_JUMP: %v", err)
-		} else if strings.Contains(dump, gate) {
+		} else if hasRule(dump, gate...) {
 			t.Fatalf("peer-a is whitelisted before authenticating:\n%s", dump)
 		}
 
@@ -217,7 +215,7 @@ func TestE2E(t *testing.T) {
 
 		// --- after authentication -------------------------------------------
 		// The server pushes the whitelist; the agent opens the gate for peer-a.
-		requireChainEventually(ctx, t, jump, "WIRETY_JUMP", gate)
+		requireRuleEventually(ctx, t, jump, "WIRETY_JUMP", gate...)
 
 		// The allowed service is now reachable end-to-end through the tunnel.
 		eventually(t, defaultSyncTimeout, defaultPollInterval, func() error {

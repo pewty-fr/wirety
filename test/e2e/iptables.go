@@ -4,6 +4,8 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -80,6 +82,37 @@ func requireChainEventually(ctx context.Context, t *testing.T, c testcontainers.
 		final = out
 		if !containsAll(out, contains...) {
 			return &execError{chain: chain, code: 0, out: "missing expected rules in:\n" + out}
+		}
+		return nil
+	})
+	return final
+}
+
+// hasRule reports whether one rule (line) of an `iptables -S` dump contains
+// every fragment. iptables normalises rule order ("-s X -i if -j T"), so a
+// rule must be matched by its parts rather than as one substring.
+func hasRule(dump string, fragments ...string) bool {
+	for _, line := range strings.Split(dump, "\n") {
+		if containsAll(line, fragments...) {
+			return true
+		}
+	}
+	return false
+}
+
+// requireRuleEventually polls until chain holds a rule containing every
+// fragment, then returns the final dump.
+func requireRuleEventually(ctx context.Context, t *testing.T, c testcontainers.Container, chain string, fragments ...string) string {
+	t.Helper()
+	var final string
+	eventually(t, defaultSyncTimeout, defaultPollInterval, func() error {
+		out, err := dumpChain(ctx, c, chain)
+		if err != nil {
+			return err
+		}
+		final = out
+		if !hasRule(out, fragments...) {
+			return &execError{chain: chain, code: 0, out: fmt.Sprintf("no rule matching %q in:\n%s", fragments, out)}
 		}
 		return nil
 	})
