@@ -368,10 +368,8 @@ write_files:
     content: |
       # Required for connection tracking (ESTABLISHED/RELATED rules)
       nf_conntrack
-      # xtables compatibility layer — allows xt_string to work with iptables-nft
+      # xtables compatibility layer for iptables-nft
       nft_compat
-      # Required for iptables string matching (SNI / Host-header vhost isolation)
-      xt_string
 
   # Sysctl tuning: IP forwarding, security hardening, TCP performance
   - path: /etc/sysctl.d/99-wirety.conf
@@ -527,7 +525,6 @@ write_files:
       systemctl enable --now fail2ban
 
 runcmd:
-  - modprobe xt_string || true
   - modprobe nf_conntrack || true
   - sysctl --system
   - /usr/local/bin/install-wirety.sh
@@ -607,7 +604,7 @@ The `--skip-tls-verify` flag disables TLS certificate validation for the connect
 | SKIP_TLS_VERIFY | Disable TLS verification | `false` | No |
 | LOG_LEVEL | Log verbosity: `trace`\|`debug`\|`info`\|`warn`\|`error`\|`fatal` | `info` | No |
 | LOG_FORMAT | Log output format: `text`\|`json` | `text` | No |
-| AUDIT_LOG | Emit JSON audit events to stdout | `false` | No |
+| AUDIT_LOG | Emit audit events to stdout, in the `LOG_FORMAT` format | `false` | No |
 
 ## Monitoring
 

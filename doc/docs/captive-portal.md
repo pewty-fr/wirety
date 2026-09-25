@@ -351,71 +351,62 @@ Background cleanup tasks (server):
 
 When the Wirety server is deployed behind a reverse proxy that also serves other applications on the same IP and port, unauthenticated peers could reach those other apps before completing captive portal authentication.
 
-The agent mitigates this with three layers of filtering applied in `WIRETY_JUMP`:
+For an HTTPS server the agent closes this with an **SNI proxy** on the jump peer:
 
-| Layer | Rule | Protects against |
-|-------|------|-----------------|
-| **IP** | Destination must match the resolved server IP | Unrelated servers |
-| **Port** | `--dport` derived from the server URL scheme (`443` for https, `80` for http, or explicit) | Other ports on the same server |
-| **Hostname** | L7 string match on the virtual hostname | Other vhosts behind the same reverse proxy |
+1. In `nat PREROUTING`, connections from **unauthenticated** peers to the server's IP:port are redirected (`WIRETY_SNI` / `WIRETY6_SNI` chains) to the proxy on `<wg-ip>:3129` (`HTTPS_PROXY_PORT`). Authenticated peers are excluded and keep reaching the server directly.
+2. The proxy reads the TLS ClientHello and checks its **SNI** (Server Name Indication, sent in clear) against the allowed host names: `SERVER_HOST`, the hosts of `SERVER_URL` and `CAPTIVE_PORTAL_URL`, and the OIDC issuer host (the IdP often shares the same ingress).
+3. An allowed connection is relayed byte for byte to the server. Anything else — another vhost, no SNI, non-TLS — is closed.
 
-### Hostname filtering
-
-For HTTPS, the TLS **SNI** (Server Name Indication) is sent cleartext inside the TLS ClientHello. The agent uses an iptables `string` match to verify the SNI matches the Wirety hostname before allowing the connection.
-
-For HTTP, the `Host:` request header is matched in the same way.
-
-Because string matching only works on the first packet of a TCP session, a conntrack `ESTABLISHED,RELATED` rule at the top of `WIRETY_JUMP` allows subsequent packets of already-accepted sessions through without re-checking the hostname.
+The proxy **never decrypts** anything: TLS stays end to end between the peer and the server, and the peer sees the server's own certificate.
 
 ```
-Rule 0:  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-Rule 1a: -d <serverIP> -p tcp --dport 443 -m string --algo bm --string "wirety.example.com" -j ACCEPT  (HTTPS)
-Rule 1b: -d <serverIP> -p tcp --dport 80  -m string --algo bm --string "Host: wirety.example.com" -j ACCEPT  (HTTP)
-Rule 2:  -s <whitelistedPeerIP> -j WIRETY_POLICY  (authenticated peers)
-Rule 3:  -j DROP                                   (everyone else)
+nat WIRETY_SNI:   -s <authenticatedPeerIP> -j RETURN
+                  -d <serverIP> -p tcp --dport 443 -j REDIRECT --to-ports 3129
+filter WIRETY_JUMP:
+  Rule 0:  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  Rule 1:  -d <serverIP> -p tcp --dport 443 -j ACCEPT   (authenticated peers — unauthenticated ones were redirected above)
+  Rule 2:  -s <authenticatedPeerIP> -j WIRETY_POLICY
+  Rule 3:  -j DROP                                       (everyone else)
 ```
+
+Before authentication the peer can therefore sign in on `https://wirety.example.com`, while `https://docs.example.com` on the same ingress IP is refused. After authentication the policy applies as usual.
 
 ### Limitations
 
-**String-match evasion:** The `xt_string` kernel module scans the raw packet payload. A peer who crafts a packet containing the Wirety hostname as arbitrary data while using a different TLS SNI could pass the filter. The reverse proxy's own routing would still use the correct SNI, but the filtered IP-layer connection would be accepted. This is a soft boundary, not a cryptographic one.
+**Plain-HTTP server or no host name:** SNI only exists for TLS. With an `http://` `SERVER_URL`, or when no host name is known (bare-IP `SERVER_URL` without `SERVER_HOST` or a hostname in `CAPTIVE_PORTAL_URL`), the proxy is disabled and every vhost on the server's IP:port is reachable before authentication. The agent logs a warning at startup in the latter case.
 
-**Bare-IP server URL:** If `SERVER_URL` is set to a bare IP address (e.g. `http://10.0.0.7`) instead of a hostname, no SNI/Host matching is possible — the agent falls back to port-only filtering, and all vhosts on that IP:port are reachable before authentication. Use a hostname in `SERVER_URL` whenever possible. See [`SERVER_HOST`](agent#reverse-proxy--no-dns-access-server_host) for connecting by IP while still enabling hostname filtering.
-
-**Module unavailability:** If the `xt_string` kernel module is not loaded, the agent logs a warning and falls back to port-only filtering automatically.
+**Encrypted Client Hello (ECH):** a client using ECH hides the real SNI; the proxy then sees the public name only and refuses the connection unless that name is allowed. Internal hosts do not publish ECH configurations, so browsers send a plain SNI to them.
 
 ## Kernel Module Requirements
 
-The captive portal firewall rules depend on two kernel modules:
+The captive portal firewall rules depend on these kernel modules:
 
 | Module | Purpose |
 |--------|---------|
 | `nf_conntrack` | Conntrack state matching — allows ongoing TCP sessions to pass without re-checking every packet |
-| `nft_compat` | xtables compatibility layer for `iptables-nft` — allows `xt_string` to be used through the nf_tables backend. No-op on legacy iptables. |
-| `xt_string` | Payload string matching — SNI / Host-header vhost isolation. Works on both legacy iptables and `iptables-nft` (via `nft_compat`). |
+| `nft_compat` | xtables compatibility layer for `iptables-nft` (xtables matches through the nf_tables backend). No-op on legacy iptables. |
+
+Virtual-host isolation needs no kernel module: it is done by the agent's SNI proxy in user space (see [Reverse Proxy and Virtual Host Isolation](#reverse-proxy-and-virtual-host-isolation)).
 
 **The agent loads these automatically at startup** via `modprobe`. No manual action is required on most systems — the modules ship with the kernel on all mainstream distros (Debian, Ubuntu, RHEL, Alpine).
-
-:::info iptables-nft
-On modern Debian/Ubuntu systems `iptables` is `iptables-nft` by default. The `nft_compat` module bridges the xtables extension interface into nftables, making `xt_string` available on both backends. If `nft_compat` or `xt_string` cannot be loaded, the agent falls back to port-only filtering automatically.
-:::
 
 If a module fails to load, the agent logs a warning and continues with degraded behaviour:
 
 ```
 WARN  failed to load kernel module — functionality may be degraded
-      module=xt_string purpose="payload string matching (SNI / Host-header vhost isolation)"
+      module=nf_conntrack purpose="conntrack state matching (ESTABLISHED/RELATED)"
 ```
 
 To make the modules persist across reboots independently of the agent:
 
 ```bash
 # Debian / Ubuntu
-echo -e "nf_conntrack\nxt_string" >> /etc/modules
+echo -e "nf_conntrack\nnft_compat" >> /etc/modules
 
 # RHEL / CentOS / Fedora
 cat > /etc/modules-load.d/wirety.conf <<EOF
 nf_conntrack
-xt_string
+nft_compat
 EOF
 ```
 

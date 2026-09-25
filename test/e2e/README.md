@@ -78,6 +78,12 @@ policy carry both families.
 | `policy_to_ip6tables` | The IPv6 policy materialises as a `WIRETY6_POLICY` `ACCEPT` from peer-a's IPv6 to the service's IPv6, nothing opens the denied service, and the chain is default-deny. |
 | `captive_portal_dual_stack` | **Before auth**: `A`/`AAAA` return the real addresses, HTTP to the service's **IPv6** address is intercepted (no IPv6 bypass), the probe host queried over the agent's **IPv6** DNS listener points at the portal, and `WIRETY6_JUMP` does not whitelist peer-a. The user authenticates the token that was issued for the **IPv6** address. **After auth**: both `WIRETY_JUMP` and `WIRETY6_JUMP` open, the service answers 200 over IPv6 and IPv4, the probe host is released over IPv6 too, and the denied service stays unreachable over IPv6. |
 
+`TestE2ESNIProxy` puts the server behind a **shared TLS ingress** (one IP:443
+serving the Wirety host and another app) and runs the agent the way it is
+deployed behind an ingress (`-server https://<ip> -server-host … -portal-url …`).
+Before auth the peer reaches the Wirety host through the agent's SNI proxy but
+not the other app on the same IP:443; after auth it reaches both.
+
 Three tests need no WireGuard and run anywhere Docker runs:
 
 - `TestStackSmoke` checks the plumbing: images, DB, OIDC, REST, and that a custom
@@ -107,6 +113,7 @@ test/e2e/
   probes.go         dig / curl probes run inside containers
   scenario_basic_test.go   the full scenario (TestE2E)
   scenario_ipv6_test.go    the dual-stack scenario (TestE2EIPv6)
+  scenario_sni_test.go     shared-ingress vhost isolation (TestE2ESNIProxy)
   captive_flow_test.go     server-side captive-portal flow, no WireGuard
   smoke_test.go     non-WireGuard spine check (TestStackSmoke)
   images/

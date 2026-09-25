@@ -4,7 +4,7 @@ title: Logs d'audit
 sidebar_position: 11
 ---
 
-Wirety émet des logs d'audit structurés pour chaque action liée à la sécurité sur le serveur et chaque agent. Les logs d'audit sont distincts des logs opérationnels de l'application : ils sont toujours en JSON, toujours sur **stdout**, et conçus pour l'ingestion par des systèmes d'agrégation de logs (Loki, Elasticsearch, Splunk, etc.).
+Wirety émet des logs d'audit structurés pour chaque action liée à la sécurité sur le serveur et chaque agent. Les logs d'audit sont distincts des logs opérationnels de l'application : ils sont toujours sur **stdout** et conçus pour l'ingestion par des systèmes d'agrégation de logs (Loki, Elasticsearch, Splunk, etc.). Le serveur les écrit toujours en JSON ; un agent les écrit au format de son `--log-format` (`LOG_FORMAT`), pour qu'un agent en format texte ne mélange pas de lignes JSON dans son journal — lancez l'agent avec `--log-format json` pour envoyer ses événements d'audit à un agrégateur.
 
 ## Activer les logs d'audit
 
@@ -22,7 +22,7 @@ Lorsque `AUDIT_LOG` est `false` (valeur par défaut), le logger d'audit est un v
 
 ## Format des logs
 
-Chaque événement d'audit est une seule ligne JSON sur `stdout` :
+Chaque événement d'audit est une seule ligne sur `stdout` — en JSON pour le serveur et pour les agents lancés avec `--log-format json` :
 
 ```json
 {

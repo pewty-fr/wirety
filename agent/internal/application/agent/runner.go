@@ -126,6 +126,10 @@ type Runner struct {
 	// IPv4 address is authenticated via the captive portal.
 	ipv4ToIPv6   map[string]string
 	ipv4ToIPv6Mu sync.RWMutex
+
+	// issuerHostsSink receives the OIDC issuer host pushed by the server (the
+	// pre-authentication SNI proxy must allow it). Nil when there is no proxy.
+	issuerHostsSink func([]string)
 	// wgIPToEndpoint maps each peer's WireGuard private IP to its current public
 	// endpoint as reported by `wg show endpoints` ("ip:port", no stripping).
 	// Refreshed every 300 ms by the heartbeat goroutine so that isAuthenticated
@@ -417,6 +421,13 @@ func (r *Runner) updateIPv4ToIPv6Map(peers []dom.DNSPeer) {
 	r.ipv4ToIPv6Mu.Lock()
 	r.ipv4ToIPv6 = m
 	r.ipv4ToIPv6Mu.Unlock()
+}
+
+// SetIssuerHostsSink registers a callback receiving the host name of the OIDC
+// issuer pushed by the server, so the pre-authentication SNI proxy lets it
+// through (the IdP may share the Wirety server's reverse proxy).
+func (r *Runner) SetIssuerHostsSink(fn func([]string)) {
+	r.issuerHostsSink = fn
 }
 
 // ipv4ForIPv6 returns the IPv4 WireGuard address of the peer owning the given
@@ -828,6 +839,14 @@ func (r *Runner) Start(stop <-chan struct{}) {
 				audit.Agent(r.peerID, r.networkID).
 					Str("action", "config.sync").
 					Msg("audit")
+			}
+
+			// Let the OIDC issuer through the pre-authentication SNI proxy: the
+			// IdP may share the Wirety server's reverse proxy.
+			if payload.OAuthIssuer != "" && r.issuerHostsSink != nil {
+				if u, err := url.Parse(payload.OAuthIssuer); err == nil && u.Hostname() != "" {
+					r.issuerHostsSink([]string{u.Hostname()})
+				}
 			}
 
 			// Handle DNS server: start once, update on subsequent messages

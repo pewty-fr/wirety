@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"time"
 	dnsadapter "wirety/agent/internal/adapters/dns"
 	"wirety/agent/internal/adapters/firewall"
+	"wirety/agent/internal/adapters/sniproxy"
 	"wirety/agent/internal/adapters/wg"
 	"wirety/agent/internal/adapters/ws"
 	app "wirety/agent/internal/application/agent"
@@ -48,7 +50,7 @@ func main() {
 
 	flag.StringVar(&logLevel, "log-level", logLevel, "Log verbosity: trace|debug|info|warn|error|fatal (env: LOG_LEVEL)")
 	flag.StringVar(&logFormat, "log-format", logFormat, "Log output format: text|json (env: LOG_FORMAT)")
-	flag.BoolVar(&auditEnabled, "audit-log", auditEnabled, "Emit JSON audit events to stdout (env: AUDIT_LOG)")
+	flag.BoolVar(&auditEnabled, "audit-log", auditEnabled, "Emit audit events to stdout, in the -log-format format (env: AUDIT_LOG)")
 	flag.StringVar(&server, "server", server, "Server base URL (no trailing /)")
 	flag.StringVar(&token, "token", token, "Enrollment token")
 	flag.StringVar(&configPath, "config", configPath, "Path to wireguard config file")
@@ -61,7 +63,7 @@ func main() {
 
 	// Apply log settings now that flags are resolved.
 	configureLogger(logLevel, logFormat)
-	audit.Init(auditEnabled)
+	audit.Init(auditEnabled, logFormat)
 
 	// Default portal URL: captive portal page served by the same Wirety server
 	if portalURL == "" {
@@ -134,11 +136,12 @@ func main() {
 	// does not exist until the interface has been brought up above. On a fresh
 	// host binding earlier fails with EADDRNOTAVAIL and DNS stays dead until the
 	// agent restarts. The retry loop also covers slow interface bring-up.
-	if wgIP != "" {
-		go serveDNS(dnsServer, net.JoinHostPort(wgIP, "53"), "IPv4")
-	}
-	if wgIPv6 != "" {
-		go serveDNS(dnsServer, net.JoinHostPort(wgIPv6, "53"), "IPv6")
+	for family, ip := range map[string]string{"IPv4": wgIP, "IPv6": wgIPv6} {
+		if ip == "" {
+			continue
+		}
+		addr := net.JoinHostPort(ip, "53")
+		go serveWithRetry("DNS server ("+family+")", addr, func() error { return dnsServer.Start(addr) })
 	}
 
 	wsServer := server
@@ -165,9 +168,30 @@ func main() {
 	fwAdapter.SetProxyPorts(httpPortInt, httpsPortInt)
 	fwAdapter.SetServerURL(server) // Allow peers to reach Wirety server before authentication
 
-	// Load required kernel modules (nf_conntrack, xt_string) before the first
-	// iptables sync. Best-effort: failures are logged and the agent continues with
-	// degraded vhost isolation rather than refusing to start.
+	// Unauthenticated peers reach an HTTPS Wirety server through the SNI proxy,
+	// which only lets its own host names through — not every other virtual host
+	// sharing its IP:port (shared reverse proxy / ingress).
+	sniProxy := newSNIProxy(server, serverHost, portalURL)
+	if sniProxy != nil {
+		fwAdapter.EnableSNIProxy()
+		for family, ip := range map[string]string{"IPv4": wgIP, "IPv6": wgIPv6} {
+			if ip == "" {
+				continue
+			}
+			addr := net.JoinHostPort(ip, strconv.Itoa(httpsPortInt))
+			go serveWithRetry("SNI proxy ("+family+")", addr, func() error {
+				l, err := net.Listen("tcp", addr)
+				if err != nil {
+					return err
+				}
+				return sniProxy.Serve(l)
+			})
+		}
+	}
+
+	// Load required kernel modules (nf_conntrack, nft_compat) before the first
+	// iptables sync. Best-effort: failures are logged and the agent continues
+	// rather than refusing to start.
 	fwAdapter.EnsureKernelModules()
 
 	runner := app.NewRunner(wsClient, writer, dnsServer, fwAdapter, wsURL, iface, peerID, networkID)
@@ -184,6 +208,10 @@ func main() {
 	}
 	runner.SetHeaders(wsHeaders)
 	runner.SetCaptivePortal(server, token, portalURL, httpClient)
+	if sniProxy != nil {
+		// The IdP may share the server's reverse proxy: let its host through too.
+		runner.SetIssuerHostsSink(sniProxy.SetDynamicHosts)
+	}
 
 	// Set the initial peer name in the runner
 	runner.SetCurrentPeerName(peerName)
@@ -204,19 +232,63 @@ func main() {
 	log.Info().Msg("agent stopped")
 }
 
-// serveDNS runs the DNS server on addr, retrying with capped backoff whenever
-// the listener fails (e.g. the WireGuard address is not assigned yet).
-func serveDNS(srv *dnsadapter.Server, addr, family string) {
+// serveWithRetry runs serve, restarting it with capped backoff whenever it
+// fails (e.g. the WireGuard address is not assigned yet).
+func serveWithRetry(what, addr string, serve func() error) {
 	backoff := time.Second
 	for {
-		log.Info().Str("addr", addr).Msgf("starting DNS server (%s)", family)
-		err := srv.Start(addr)
-		log.Error().Err(err).Str("addr", addr).Dur("retry_in", backoff).Msgf("dns server (%s) exited", family)
+		log.Info().Str("addr", addr).Msgf("starting %s", what)
+		err := serve()
+		log.Error().Err(err).Str("addr", addr).Dur("retry_in", backoff).Msgf("%s exited", what)
 		time.Sleep(backoff)
 		if backoff < 30*time.Second {
 			backoff *= 2
 		}
 	}
+}
+
+// newSNIProxy returns the pre-authentication SNI proxy for an HTTPS server,
+// allowing the server's host names (--server-host, the server URL host, the
+// portal URL host). It returns nil for a plain-HTTP server, or when no host
+// name is known — an IP alone cannot be matched against the TLS server name.
+func newSNIProxy(serverURL, serverHost, portalURL string) *sniproxy.Proxy {
+	u, err := url.Parse(serverURL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return nil
+	}
+	var hosts []string
+	for _, h := range []string{hostOnly(serverHost), u.Hostname(), urlHost(portalURL)} {
+		if h != "" && net.ParseIP(h) == nil {
+			hosts = append(hosts, h)
+		}
+	}
+	if len(hosts) == 0 {
+		log.Warn().Str("server", serverURL).
+			Msg("no host name known for the Wirety server (set --server-host): cannot filter by TLS server name, every virtual host on its IP:port is reachable before authentication")
+		return nil
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	log.Info().Strs("allowed_hosts", hosts).Msg("SNI proxy enabled for unauthenticated peers")
+	return sniproxy.New(net.JoinHostPort(u.Hostname(), port), hosts)
+}
+
+// hostOnly strips an optional ":port" from a host.
+func hostOnly(h string) string {
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		return host
+	}
+	return h
+}
+
+func urlHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // configureLogger sets the global zerolog level and output format.

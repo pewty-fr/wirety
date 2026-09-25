@@ -51,7 +51,7 @@ Options:
         Format de sortie des logs : text|json
         (env: LOG_FORMAT, défaut: text)
   -audit-log
-        Émet des événements d'audit JSON sur stdout
+        Émet des événements d'audit sur stdout, au format de -log-format
         (env: AUDIT_LOG, défaut: false)
 ```
 
@@ -126,19 +126,18 @@ Le remplacement `SERVER_HOST` est appliqué à **toutes** les connexions sortant
 - Connexion WebSocket (`/api/v1/ws`)
 - Création de token du portail captif (`/api/v1/captive-portal/token`)
 
-### Isolation vhost du portail captif avec `SERVER_HOST`
+### Isolation vhost du portail captif
 
-Les règles iptables du portail captif dérivent le hostname virtuel pour le filtrage SNI/Host depuis `SERVER_URL`, et non depuis `SERVER_HOST`. Lorsque `SERVER_URL` contient une IP brute (ex. `http://10.0.0.7`), l'agent ne peut pas effectuer de filtrage au niveau du hostname et revient à un filtrage par port uniquement — les autres hôtes virtuels sur la même IP:port deviennent accessibles avant la fin de l'authentification.
+Quand le serveur est en HTTPS, les peers non authentifiés l'atteignent via le **proxy SNI** de l'agent, qui ne laisse passer que les noms d'hôte de Wirety : les autres hôtes virtuels partageant l'IP:port du serveur (reverse proxy / ingress partagé) restent inaccessibles tant que le peer ne s'est pas authentifié. Les noms autorisés sont `SERVER_HOST`, l'hôte de `SERVER_URL` et celui de `CAPTIVE_PORTAL_URL` (les IP sont ignorées), plus l'hôte de l'issuer OIDC transmis par le serveur.
 
-Pour bénéficier à la fois de l'accès sans DNS **et** de l'isolation par hostname, utilisez un hostname résolvable dans `SERVER_URL` et omettez `SERVER_HOST` :
+Un `SERVER_URL` en IP brute convient tant qu'un nom d'hôte est connu via `SERVER_HOST` ou `CAPTIVE_PORTAL_URL` :
 
 ```bash
-# Recommandé : DNS résout wirety.internal → 10.0.0.7
-# L'agent se connecte à l'IP, le filtrage SNI/Host utilise "wirety.internal"
-wirety-agent -server http://wirety.internal -token <TOKEN>
+# Se connecte à 10.0.0.7 ; seul "wirety.internal" est joignable avant authentification
+wirety-agent -server https://10.0.0.7 -server-host wirety.internal -token <TOKEN>
 ```
 
-Si le DNS est réellement indisponible, `SERVER_HOST` + un `SERVER_URL` en IP brute fonctionne — vous perdez simplement l'isolation vhost pour les peers non authentifiés. Consultez la documentation du portail captif pour les implications de sécurité complètes.
+Avec un serveur en HTTP simple, ou si aucun nom d'hôte n'est connu, il n'y a rien sur quoi filtrer : tous les hôtes virtuels de l'IP:port du serveur sont joignables avant authentification (l'agent journalise un avertissement). Consultez la documentation du portail captif pour les détails.
 
 ## Détection des interfaces NAT
 
@@ -166,9 +165,9 @@ export NAT_INTERFACES=ens6
 | Permissions suffisantes | Configurer l'interface réseau, exécuter iptables |
 | Port 80 libre sur l'IP de l'interface WireGuard | Le serveur HTTP du portail captif s'attache à `<wg-ip>:80` (il n'y a pas de listener HTTPS — le `:443` non authentifié est coupé par iptables, non intercepté) |
 | Module kernel `nf_conntrack` | Correspondance d'état conntrack dans les règles pare-feu du portail captif |
-| Module kernel `xt_string` | Isolation vhost SNI / en-tête Host dans les règles pare-feu du portail captif |
+| Port 3129 libre sur l'IP de l'interface WireGuard | Proxy SNI pour les peers non authentifiés (serveur HTTPS uniquement ; modifiable via `HTTPS_PROXY_PORT`) |
 
-L'agent appelle `modprobe nf_conntrack` et `modprobe xt_string` automatiquement au démarrage. Ces modules sont inclus avec le kernel sur toutes les distributions grand public et ne nécessitent pas d'installation manuelle. Si l'un des modules est indisponible, l'agent journalise un avertissement et continue avec une isolation vhost du portail captif dégradée.
+L'agent appelle `modprobe nf_conntrack` automatiquement au démarrage (et `nft_compat` sur les systèmes `iptables-nft`). Ces modules sont inclus avec le kernel sur toutes les distributions grand public et ne nécessitent pas d'installation manuelle. Si l'un d'eux est indisponible, l'agent journalise un avertissement et continue.
 
 ## Journalisation
 
