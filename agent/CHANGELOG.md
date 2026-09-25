@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.2](https://github.com/pewty-fr/wirety/compare/wirety-agent/v3.1.1...wirety-agent/v3.1.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* remove mitm ([#377](https://github.com/pewty-fr/wirety/issues/377)) ([5e64045](https://github.com/pewty-fr/wirety/commit/5e640455cb75c9bd3249750323ebcd12aa3e86c5))
+
 ## [3.1.1](https://github.com/pewty-fr/wirety/compare/wirety-agent/v3.1.0...wirety-agent/v3.1.1) (2026-07-02)
 
 
