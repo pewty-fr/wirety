@@ -10,18 +10,8 @@ package captiveportal
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
-	"io"
-	stdlog "log"
-	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -117,12 +107,6 @@ type Server struct {
 	// could be stale from a previous connection (e.g. DB cleared without a push).
 	policyReceived bool
 	policyMu       sync.RWMutex
-	// lookupPeerIP resolves an internal VPN hostname to its real WireGuard IP.
-	// When set, authenticated peers are proxied directly to the real backend
-	// instead of being served the meta-refresh "Connecting…" page, which avoids
-	// the infinite-loop caused by browsers (especially Firefox) ignoring TTL=1
-	// and caching DNS for up to 60 seconds.
-	lookupPeerIP func(host string) string
 	// lookupEndpoint resolves a peer's WireGuard private IP to its current
 	// public endpoint ("ip:port", strict).  When set, the token request sent
 	// to the server includes the peer's full public endpoint so the server
@@ -155,14 +139,6 @@ func NewServer(serverURL, authToken, portalURL, networkID, peerID string, httpCl
 // success responses so the OS dismisses the captive portal notification after login.
 func (s *Server) SetAuthChecker(fn func(peerIP string) bool) {
 	s.isAuthenticated = fn
-}
-
-// SetPeerIPLookup sets a function that resolves an internal VPN hostname to its
-// real WireGuard IP. When set, authenticated peers whose browser DNS cache still
-// points to the jump peer are transparently proxied to the real backend instead
-// of being shown the "Connecting…" meta-refresh page.
-func (s *Server) SetPeerIPLookup(fn func(host string) string) {
-	s.lookupPeerIP = fn
 }
 
 // SetEndpointLookup sets a function that returns the current public endpoint
@@ -228,108 +204,14 @@ func (s *Server) Start(addr string) error {
 	return http.ListenAndServe(addr, s) // #nosec G114
 }
 
-// StartTLS begins listening on addr with a self-signed certificate covering the
-// given IP and optional VPN domain wildcard. It uses the same ServeHTTP handler
-// as the plain HTTP server.
-//
-// Unlike external domains (google.com, etc.) which are HSTS-preloaded and hard-
-// blocked by browsers, internal VPN domains are not preloaded — browsers show a
-// "certificate not trusted" warning that the user can bypass. This is sufficient
-// to redirect unauthenticated peers that attempt HTTPS access to a private resource.
-func (s *Server) StartTLS(addr, ip, vpnDomain string) error {
-	cert, err := generateSelfSignedCert(ip, vpnDomain)
-	if err != nil {
-		return fmt.Errorf("generate self-signed cert: %w", err)
-	}
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	}
-	ln, err := tls.Listen("tcp", addr, tlsCfg)
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
-	srv := &http.Server{
-		Handler:   s,
-		TLSConfig: tlsCfg,
-		// Suppress the firehose of "TLS handshake error … bad certificate /
-		// unknown certificate" log lines emitted by net/http for every
-		// unauthenticated peer browsing to an HTTPS site that DNS redirected
-		// here.  These are EXPECTED — the captive portal serves a self-signed
-		// cert that won't match the requested SNI (google.com, etc.), the
-		// browser correctly aborts the handshake, and we'd see a log line per
-		// blocked HTTPS request otherwise.  We route the http.Server's error
-		// logger through a filter that keeps real server errors but drops the
-		// per-handshake noise.
-		ErrorLog: stdlog.New(&filteredHandshakeWriter{}, "", 0),
-	}
-	log.Info().Str("addr", addr).Str("portal_url", s.portalURL).Msg("captive portal HTTPS server starting (self-signed)")
-	return srv.Serve(ln)
-}
-
-// filteredHandshakeWriter is an io.Writer that drops the noisy per-connection
-// TLS handshake errors net/http emits when a browser aborts the handshake
-// (e.g. because our self-signed cert doesn't match the requested SNI).  Other
-// log lines are forwarded to zerolog at debug level.
-type filteredHandshakeWriter struct{}
-
-func (filteredHandshakeWriter) Write(p []byte) (int, error) {
-	msg := string(bytes.TrimRight(p, "\n"))
-	// Skip the expected handshake-aborted noise.
-	if strings.Contains(msg, "TLS handshake error") &&
-		(strings.Contains(msg, "bad certificate") ||
-			strings.Contains(msg, "unknown certificate") ||
-			strings.Contains(msg, "remote error") ||
-			strings.Contains(msg, "EOF") ||
-			strings.Contains(msg, "connection reset by peer")) {
-		return len(p), nil
-	}
-	log.Debug().Str("source", "captive_portal_https").Msg(msg)
-	return len(p), nil
-}
-
-// generateSelfSignedCert creates an ECDSA P-256 certificate valid for 10 years.
-// The cert covers the WG IP as a SAN IP, and — if vpnDomain is non-empty — a
-// wildcard DNS SAN (*.<vpnDomain>) so that internal peer hostnames match without
-// a domain-mismatch warning (the cert is still self-signed and untrusted, but the
-// browser's "proceed anyway" path becomes available for internal VPN domains that
-// are not in the HSTS preload list).
-func generateSelfSignedCert(ip, vpnDomain string) (tls.Certificate, error) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate key: %w", err)
-	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate serial: %w", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "Wirety Captive Portal"},
-		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	if parsed := net.ParseIP(ip); parsed != nil {
-		tmpl.IPAddresses = []net.IP{parsed}
-	}
-	if vpnDomain != "" {
-		tmpl.DNSNames = []string{vpnDomain, "*." + vpnDomain}
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("create cert: %w", err)
-	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyDER, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("marshal key: %w", err)
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	return tls.X509KeyPair(certPEM, keyPEM)
-}
-
+// NOTE: the captive portal used to also run an HTTPS (:443) listener with a
+// self-signed cert (StartTLS + generateSelfSignedCert). That was a TLS MITM —
+// it served the portal's cert under whatever SNI the browser requested — and it
+// produced unrecoverable HSTS errors for preloaded hosts and http:// returns for
+// HTTPS-only apps. It has been removed: the portal is HTTP-only. Unauthenticated
+// HTTPS to an internal resource now fails fast with a TCP reset instead of being
+// intercepted, and portal discovery is carried by the OS captive-portal probes
+// (HTTP) plus the dashboard sign-in popup. See runner.go for the rationale.
 
 // ServeHTTP handles all HTTP requests arriving on the WireGuard interface port 80.
 //
@@ -350,36 +232,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// (e.g. the DB was cleared without a WebSocket push between the old and new
 	// connection), so we fall through and treat the peer as unauthenticated.
 	if s.isPolicyReceived() && s.isAuthenticated != nil && s.isAuthenticated(peerIP) {
+		// A known OS captive-portal probe → return the success response so the OS
+		// dismisses its "Sign in to network" banner. This still matters even
+		// though internal domains no longer resolve to the portal IP: the OS may
+		// have cached a probe host → portal IP from before the peer authenticated.
 		if serveProbeSuccess(w, r) {
 			log.Debug().Str("peer_ip", peerIP).Str("host", r.Host).Str("path", r.URL.Path).
 				Msg("captive portal: authenticated peer probe — returning success")
 			return
 		}
-		// The peer is authenticated but the browser's DNS cache may still point to
-		// this jump peer (browsers like Firefox ignore TTL=1 and cache for up to 60 s).
-		//
-		// Strategy: if we know the real backend IP, proxy the request there directly
-		// so the user gets their content immediately.  The browser will eventually
-		// resolve DNS to the real IP and bypass us entirely.
-		//
-		// Fallback: if no lookup is configured or the hostname is unknown, serve the
-		// old meta-refresh page and hope the DNS cache expires before the next hit.
-		host := r.Host
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
-		}
-		if s.lookupPeerIP != nil {
-			if realIP := s.lookupPeerIP(host); realIP != "" {
-				log.Debug().Str("peer_ip", peerIP).Str("host", r.Host).Str("real_ip", realIP).
-					Msg("captive portal: authenticated peer — proxying to real backend")
-				s.proxyToBackend(w, r, realIP)
-				return
-			}
-		}
-		// Fallback: serve meta-refresh (DNS lookup unavailable or host not found).
-		log.Debug().Str("peer_ip", peerIP).Str("host", r.Host).
-			Msg("captive portal: authenticated peer — serving DNS-flush refresh page (no real IP known)")
-		serveConnectingPage(w, r)
+		// Any other request from an already-authenticated peer that reached the
+		// portal directly — the dashboard "Sign in" popup or a bookmarked portal
+		// URL. There is nothing to proxy: internal domains now resolve to their
+		// real IP and an authenticated peer's traffic is forwarded straight to the
+		// backend (never DNAT'd here). So we just show a terminal "you're
+		// connected" page. We deliberately do NOT meta-refresh/redirect — doing so
+		// looped forever when the target was the jump peer's own IP.
+		serveConnectedPage(w, r)
 		return
 	}
 
@@ -433,117 +302,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectTarget, http.StatusFound)
 }
 
-// hop-by-hop headers that must not be forwarded through a proxy.
-var hopByHopHeaders = map[string]struct{}{
-	"connection": {}, "keep-alive": {}, "proxy-authenticate": {},
-	"proxy-authorization": {}, "te": {}, "trailers": {},
-	"transfer-encoding": {}, "upgrade": {},
-}
-
-// proxyToBackend forwards the request transparently to realIP, following any
-// same-host redirects (e.g. HTTP→HTTPS) internally so the browser never sees
-// an intermediate redirect that would loop back through the captive portal.
-//
-// Problem without this: the real backend often redirects HTTP→HTTPS.
-// httputil.ReverseProxy forwards that 301 to the browser. The browser follows
-// it back to the jump peer (DNS still cached), gets another 301, detects a loop.
-//
-// Solution: use a custom http.Client whose CheckRedirect rewrites same-host
-// redirect URLs to use realIP directly.  The client follows the full redirect
-// chain and returns the final content to the browser in one shot.
-func (s *Server) proxyToBackend(w http.ResponseWriter, r *http.Request, realIP string) {
-	originalHost := r.Host
-	originalHostname := originalHost
-	if h, _, err := net.SplitHostPort(originalHost); err == nil {
-		originalHostname = h
-	}
-
-	// Allow HTTPS connections to the real backend even when its TLS cert is
-	// issued for the VPN hostname rather than the raw WireGuard IP.
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 — internal VPN
-	}
-
-	client := &http.Client{
-		Transport: transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return http.ErrUseLastResponse
-			}
-			// Rewrite same-host redirects (e.g. http://vpn-host/ → https://vpn-host/)
-			// to always target realIP so they never loop back through the captive portal.
-			if req.URL.Hostname() == originalHostname {
-				port := req.URL.Port()
-				if port != "" {
-					req.URL.Host = net.JoinHostPort(realIP, port)
-				} else {
-					req.URL.Host = realIP
-				}
-				req.Host = originalHost // preserve vhost routing on the real backend
-			}
-			return nil
-		},
-	}
-
-	// Send the initial request to the real backend over HTTP (or HTTPS when the
-	// incoming request was already HTTPS).
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	targetURL := fmt.Sprintf("%s://%s%s", scheme, realIP, r.RequestURI)
-
-	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
-	if err != nil {
-		log.Debug().Err(err).Msg("captive portal: could not build proxy request, falling back to meta-refresh")
-		serveConnectingPage(w, r)
-		return
-	}
-	proxyReq.Host = originalHost
-	for k, vv := range r.Header {
-		if _, skip := hopByHopHeaders[strings.ToLower(k)]; !skip {
-			proxyReq.Header[k] = vv
-		}
-	}
-
-	resp, err := client.Do(proxyReq)
-	if err != nil {
-		log.Debug().Err(err).Str("real_ip", realIP).
-			Msg("captive portal: proxy to real backend failed, falling back to meta-refresh")
-		serveConnectingPage(w, r)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Forward the final response (after all redirects have been followed).
-	for k, vv := range resp.Header {
-		if _, skip := hopByHopHeaders[strings.ToLower(k)]; !skip {
-			for _, v := range vv {
-				w.Header().Add(k, v)
-			}
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
-}
-
-// serveConnectingPage renders a meta-refresh fallback for authenticated peers
-// when the real backend IP is not known or the proxy attempt failed.
-func serveConnectingPage(w http.ResponseWriter, r *http.Request) {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	target := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.RequestURI)
+// serveConnectedPage renders a terminal page for an already-authenticated peer
+// that reached the captive portal directly (the dashboard "Sign in" popup, or a
+// bookmarked portal URL). There is nothing to do — internal apps resolve to
+// their real IP and are forwarded straight to the backend — so we just tell the
+// user they're connected. We do NOT meta-refresh or redirect: when the target
+// was the jump peer's own IP that looped forever.
+func serveConnectedPage(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><head>`+
-		`<meta http-equiv="refresh" content="2; url=%s">`+
-		`<title>Connecting…</title></head>`+
+	_, _ = fmt.Fprint(w, `<!DOCTYPE html><html><head><title>Connected</title></head>`+
 		`<body style="font-family:sans-serif;text-align:center;padding-top:4em">`+
-		`<p>Authenticated. Connecting to your destination…</p>`+
-		`<p><a href="%s">Click here if not redirected automatically.</a></p>`+
-		`</body></html>`, target, target)
+		`<h1>✓ You are connected</h1>`+
+		`<p>You can close this tab and access the network.</p>`+
+		`</body></html>`)
 }
 
 // serveProbeSuccess writes the OS-specific "connected" response for known

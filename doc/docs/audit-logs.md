@@ -4,7 +4,7 @@ title: Audit Logs
 sidebar_position: 11
 ---
 
-Wirety emits structured audit logs for every security-relevant action across the server and every agent. Audit logs are separate from the application's operational logs: they are always JSON, always on **stdout**, and designed for ingestion by log aggregation systems (Loki, Elasticsearch, Splunk, etc.).
+Wirety emits structured audit logs for every security-relevant action across the server and every agent. Audit logs are separate from the application's operational logs: they always go to **stdout** and are designed for ingestion by log aggregation systems (Loki, Elasticsearch, Splunk, etc.). The server always writes them as JSON; an agent writes them in its `--log-format` (`LOG_FORMAT`), so that a text-format agent does not mix JSON lines into its journal — run the agent with `--log-format json` when shipping its audit events to an aggregator.
 
 ## Enabling Audit Logs
 
@@ -22,7 +22,7 @@ When `AUDIT_LOG` is `false` (the default) the audit logger is a true no-op — n
 
 ## Log Format
 
-Every audit event is a single JSON line on `stdout`:
+Every audit event is a single line on `stdout` — JSON for the server and for agents running with `--log-format json`:
 
 ```json
 {

@@ -36,7 +36,12 @@ export function useNetwork(networkId: string, enabled: boolean = true) {
 }
 
 // Peers Query
-export function usePeers(page: number, pageSize: number) {
+// refetchMs controls the background auto-refresh cadence. It defaults to 20s
+// (list views). When multiple components observe the same peers query, React
+// Query polls at the SHORTEST requested interval — so the captive-portal alert
+// can ask for 10s (to notice a sign-in quickly) without forcing list views to
+// poll faster than they need.
+export function usePeers(page: number, pageSize: number, refetchMs: number = 20000) {
   return useQuery({
     queryKey: queryKeys.peers(page, pageSize),
     queryFn: async () => {
@@ -46,7 +51,7 @@ export function usePeers(page: number, pageSize: number) {
         total: response.total || 0,
       };
     },
-    refetchInterval: 20000, // auto refresh every 20s for list view statuses
+    refetchInterval: refetchMs,
     refetchIntervalInBackground: true,
   });
 }

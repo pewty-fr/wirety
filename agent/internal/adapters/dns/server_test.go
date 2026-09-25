@@ -179,6 +179,60 @@ func TestHandleDNSWithLocalRecords(t *testing.T) {
 	}
 }
 
+// TestInternalDomainResolvesRealIPForUnauthenticated locks in the post-MITM-
+// removal behavior: internal VPN records resolve to their REAL address for
+// unauthenticated peers too (never the captive-portal IP), for both A and AAAA.
+// This means the browser never caches the portal IP for an internal hostname, so
+// once the peer authenticates the resource is reachable immediately. Access
+// control is enforced by the jump peer's iptables, not by DNS.
+func TestInternalDomainResolvesRealIPForUnauthenticated(t *testing.T) {
+	server := NewServer("test.com", []dom.DNSPeer{
+		{Name: "peer1", IP: "10.0.0.1", IPv6: "fd00::1"},
+	})
+	server.SetCaptivePortalIP("10.255.0.1")
+	// Nobody is authenticated → the querying peer is treated as unauthenticated.
+	server.SetAuthChecker(func(string) bool { return false })
+
+	portalIP := net.ParseIP("10.255.0.1")
+
+	query := func(qtype uint16) *dns.Msg {
+		m := new(dns.Msg)
+		m.SetQuestion(dns.Fqdn("peer1.test.com"), qtype)
+		w := &mockResponseWriter{remoteAddr: &net.UDPAddr{IP: net.ParseIP("10.0.0.5"), Port: 12345}}
+		server.handleDNS(w, m)
+		return w.msg
+	}
+
+	// A → real IPv4, NEVER the portal IP.
+	a := query(dns.TypeA)
+	if a == nil || len(a.Answer) != 1 {
+		t.Fatalf("A: expected 1 answer, got %v", a)
+	}
+	rec, ok := a.Answer[0].(*dns.A)
+	if !ok {
+		t.Fatalf("A: expected an A record, got %T", a.Answer[0])
+	}
+	if rec.A.Equal(portalIP) {
+		t.Errorf("A: internal domain resolved to portal IP %s for an unauthenticated peer (regression — should be the real IP)", portalIP)
+	}
+	if !rec.A.Equal(net.ParseIP("10.0.0.1")) {
+		t.Errorf("A: expected real IP 10.0.0.1, got %s", rec.A)
+	}
+
+	// AAAA → real IPv6 (no longer suppressed for unauthenticated peers).
+	aaaa := query(dns.TypeAAAA)
+	if aaaa == nil || len(aaaa.Answer) != 1 {
+		t.Fatalf("AAAA: expected 1 answer, got %v", aaaa)
+	}
+	rec6, ok := aaaa.Answer[0].(*dns.AAAA)
+	if !ok {
+		t.Fatalf("AAAA: expected an AAAA record, got %T", aaaa.Answer[0])
+	}
+	if !rec6.AAAA.Equal(net.ParseIP("fd00::1")) {
+		t.Errorf("AAAA: expected real IPv6 fd00::1, got %s", rec6.AAAA)
+	}
+}
+
 // TestProbeDomainInterceptionGatedOnAuth locks in the fix for the HSTS bug:
 // well-known captive-portal probe hosts (which include real, HSTS-preloaded
 // sites like www.apple.com) must be redirected to the portal ONLY while the
