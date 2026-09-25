@@ -221,4 +221,31 @@ func TestE2EIPv6(t *testing.T) {
 			t.Fatalf("denied service answered HTTP %s over IPv6; WIRETY6_POLICY should drop it", status)
 		}
 	})
+
+	// ==== Subtest 3: interface addresses follow the config ================
+	// The jump's WireGuard interface outlives agent restarts, and an existing
+	// interface is updated with `wg syncconf`, which ignores Address lines.
+	// Reproduce an interface that is missing its IPv6 address (as when IPv6 is
+	// enabled on a network whose jump interface already exists), push a new
+	// config, and require the agent to assign the address again.
+	t.Run("interface_addresses_reconciled", func(t *testing.T) {
+		const iface = "jump-1"
+		mustExec(ctx, t, jump, "ip", "-6", "address", "flush", "dev", iface, "scope", "global")
+
+		// Any peer change makes the server push a new config to the jump.
+		if _, err := st.admin.createPeer(ctx, net.ID, createPeerReq{Name: "peer-b", OwnerID: owner.ID}); err != nil {
+			t.Fatalf("create peer-b: %v", err)
+		}
+
+		eventually(t, defaultSyncTimeout, defaultPollInterval, func() error {
+			out := mustExec(ctx, t, jump, "ip", "-6", "-o", "address", "show", "dev", iface, "scope", "global")
+			if !strings.Contains(out, jumpWgIP6+"/") {
+				return fmt.Errorf("%s has no %s after a config push:\n%s", iface, jumpWgIP6, out)
+			}
+			return nil
+		})
+
+		// And the agent's IPv6 DNS listener serves again.
+		digEventually(ctx, t, jump, jumpWgIP6, fqdn, "AAAA", svcIP6)
+	})
 }
