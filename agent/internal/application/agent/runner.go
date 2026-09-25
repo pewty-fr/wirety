@@ -114,7 +114,6 @@ type Runner struct {
 	captivePortalURL string
 	captiveStarted   bool
 	httpClient       *http.Client // shared client (may override Host header)
-	vpnDomain        string       // VPN DNS domain (e.g. "wg.example.com"); used for TLS SAN
 	// whitelist maps authenticated peer WireGuard IPs to the public endpoint IP
 	// that was recorded at authentication time (empty string = no endpoint check,
 	// used for legacy entries or when the jump peer could not resolve the endpoint).
@@ -127,6 +126,10 @@ type Runner struct {
 	// IPv4 address is authenticated via the captive portal.
 	ipv4ToIPv6   map[string]string
 	ipv4ToIPv6Mu sync.RWMutex
+
+	// issuerHostsSink receives the OIDC issuer host pushed by the server (the
+	// pre-authentication SNI proxy must allow it). Nil when there is no proxy.
+	issuerHostsSink func([]string)
 	// wgIPToEndpoint maps each peer's WireGuard private IP to its current public
 	// endpoint as reported by `wg show endpoints` ("ip:port", no stripping).
 	// Refreshed every 300 ms by the heartbeat goroutine so that isAuthenticated
@@ -418,6 +421,13 @@ func (r *Runner) updateIPv4ToIPv6Map(peers []dom.DNSPeer) {
 	r.ipv4ToIPv6Mu.Lock()
 	r.ipv4ToIPv6 = m
 	r.ipv4ToIPv6Mu.Unlock()
+}
+
+// SetIssuerHostsSink registers a callback receiving the host name of the OIDC
+// issuer pushed by the server, so the pre-authentication SNI proxy lets it
+// through (the IdP may share the Wirety server's reverse proxy).
+func (r *Runner) SetIssuerHostsSink(fn func([]string)) {
+	r.issuerHostsSink = fn
 }
 
 // ipv4ForIPv6 returns the IPv4 WireGuard address of the peer owning the given
@@ -831,12 +841,16 @@ func (r *Runner) Start(stop <-chan struct{}) {
 					Msg("audit")
 			}
 
+			// Let the OIDC issuer through the pre-authentication SNI proxy: the
+			// IdP may share the Wirety server's reverse proxy.
+			if payload.OAuthIssuer != "" && r.issuerHostsSink != nil {
+				if u, err := url.Parse(payload.OAuthIssuer); err == nil && u.Hostname() != "" {
+					r.issuerHostsSink([]string{u.Hostname()})
+				}
+			}
+
 			// Handle DNS server: start once, update on subsequent messages
 			if payload.DNS != nil {
-				// Keep vpnDomain in sync for the HTTPS captive portal TLS cert SAN.
-				if payload.DNS.Domain != "" {
-					r.vpnDomain = payload.DNS.Domain
-				}
 				r.dnsServerMu.Lock()
 				if r.dnsServer == nil {
 
@@ -1599,19 +1613,6 @@ func (r *Runner) startCaptivePortalServer() {
 			dns.SetRedirectExclusions(r.captivePortalExcludedHosts())
 		}
 
-		// Wire up peer-IP lookup so the captive portal can proxy authenticated
-		// peers directly to the real backend while the browser's DNS cache is
-		// stale (Firefox ignores TTL=1 and keeps entries for up to 60 s, causing
-		// an infinite "Connecting…" loop without this proxy).
-		type dnsPeerLookup interface {
-			LookupPeerIP(host string) string
-		}
-		if lookup, ok := r.dnsServer.(dnsPeerLookup); ok {
-			srv.SetPeerIPLookup(func(host string) string {
-				return lookup.LookupPeerIP(host)
-			})
-		}
-
 		// Wire up endpoint lookup so the captive portal server can include the
 		// peer's full current public endpoint ("ip:port") in the token request.
 		// The server stores this alongside the WireGuard IP; the jump peer
@@ -1621,22 +1622,29 @@ func (r *Runner) startCaptivePortalServer() {
 		srv.SetEndpointLookup(r.getCurrentEndpointForWgIP)
 	}
 
-	// Start the HTTPS server in a background goroutine. It uses a self-signed cert
-	// covering the WG IP and a wildcard for the VPN domain so that internal peer
-	// hostnames match the cert. Internal VPN domains are not HSTS-preloaded, so
-	// browsers allow the user to bypass the self-signed warning and follow the
-	// redirect — unlike public domains (google.com, etc.) which are hard-blocked.
+	// Captive portal listens on HTTP (:80) only. We intentionally do NOT serve
+	// HTTPS (:443) here anymore.
 	//
-	// We use net.JoinHostPort because IPv6 addresses contain colons and the
-	// "ipv6:port" form is ambiguous; net.JoinHostPort produces "[ipv6]:port".
+	// The old behaviour served a self-signed cert on :443 under whatever SNI the
+	// browser asked for, so an unauthenticated peer hitting https://internal-app
+	// would receive the portal's cert under the app's real hostname. For any
+	// HSTS-preloaded host the browser refuses the bypass and shows an
+	// unrecoverable error, and for HTTPS-only internal apps the post-auth return
+	// landed on http://. That is a TLS MITM and it cannot be made to work without
+	// a cert the client trusts for the app's own hostname.
+	//
+	// Removing the :443 listener means unauthenticated HTTPS to an internal
+	// resource simply fails fast with a TCP reset (closed port on the WG IP, or
+	// the FORWARD reject-with-tcp-reset for the real IP) — no bogus cert, no HSTS
+	// dead-end. Portal discovery is carried entirely by HTTP: the OS
+	// captive-portal probes (DNS-intercepted to :80) raise the "Sign in to
+	// network" banner, and the dashboard's sign-in popup is the on-demand entry
+	// point. Once authenticated, DNS resolves the app to its real IP and HTTPS
+	// works untouched.
+	//
+	// net.JoinHostPort is used because IPv6 addresses contain colons and the
+	// "ipv6:port" form is ambiguous; it produces "[ipv6]:port".
 	if r.wgIP != "" {
-		tlsAddr := net.JoinHostPort(r.wgIP, "443")
-		go func() {
-			if err := srv.StartTLS(tlsAddr, r.wgIP, r.vpnDomain); err != nil {
-				log.Error().Str("addr", tlsAddr).Err(err).Msg("captive portal HTTPS server (IPv4) stopped")
-			}
-		}()
-
 		addr := net.JoinHostPort(r.wgIP, "80")
 		log.Info().Str("addr", addr).Str("portal_url", r.captivePortalURL).Msg("starting captive portal HTTP server (IPv4)")
 		go func() {
@@ -1646,18 +1654,11 @@ func (r *Runner) startCaptivePortalServer() {
 		}()
 	}
 
-	// Spawn the same captive portal endpoints on the IPv6 address (dual-stack
+	// Spawn the same captive portal endpoint on the IPv6 address (dual-stack
 	// deployments).  The same Server instance handles both — the captive portal
 	// is stateless w.r.t. listening address, and `r.RemoteAddr` in handlers
 	// already gives the per-connection peer IP.
 	if r.wgIPv6 != "" {
-		tlsAddr := net.JoinHostPort(r.wgIPv6, "443")
-		go func() {
-			if err := srv.StartTLS(tlsAddr, r.wgIPv6, r.vpnDomain); err != nil {
-				log.Error().Str("addr", tlsAddr).Err(err).Msg("captive portal HTTPS server (IPv6) stopped")
-			}
-		}()
-
 		addr := net.JoinHostPort(r.wgIPv6, "80")
 		log.Info().Str("addr", addr).Str("portal_url", r.captivePortalURL).Msg("starting captive portal HTTP server (IPv6)")
 		go func() {

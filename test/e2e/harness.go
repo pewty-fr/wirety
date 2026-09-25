@@ -250,8 +250,14 @@ func setupStack(ctx context.Context, t *testing.T, opts ...stackOption) *stack {
 // startJumpAgent builds the root agent image and runs it as a privileged jump
 // peer enrolled with the given token. It shares the harness network with alias
 // "jump".
-func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string) testcontainers.Container {
+//
+// serverArgs replaces the default "-server http://server:8080" (e.g. to reach
+// the server through a TLS reverse proxy).
+func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string, serverArgs ...string) testcontainers.Container {
 	t.Helper()
+	if len(serverArgs) == 0 {
+		serverArgs = []string{"-server", "http://server:8080"}
+	}
 	root := repoRoot(t)
 	logs := &logBuffer{}
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -267,12 +273,7 @@ func (s *stack) startJumpAgent(ctx context.Context, t *testing.T, token string) 
 			Env: map[string]string{
 				"LOG_LEVEL": "debug",
 			},
-			// Explicit flags: server URL + enrollment token + syncconf apply method.
-			Cmd: []string{
-				"-server", "http://server:8080",
-				"-token", token,
-				"-log-level", "debug",
-			},
+			Cmd: append(serverArgs, "-token", token, "-log-level", "debug"),
 			// Stream logs continuously into a buffer: a one-shot Logs() read at
 			// cleanup time proved to come back truncated in CI.
 			LogConsumerCfg: &testcontainers.LogConsumerConfig{Consumers: []testcontainers.LogConsumer{logs}},

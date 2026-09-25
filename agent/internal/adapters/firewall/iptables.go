@@ -23,6 +23,7 @@ type Adapter struct {
 	httpPort      int
 	httpsPort     int
 	serverURL     string // Wirety server URL — peers must always be able to reach it
+	sniProxy      bool   // unauthenticated peers reach the server through the SNI proxy on httpsPort
 }
 
 // NewAdapter creates a new firewall adapter.
@@ -37,6 +38,36 @@ func NewAdapter(wgIface string, natIfaces []string) *Adapter {
 	}
 }
 
+// EnableSNIProxy makes unauthenticated peers reach the Wirety server through
+// the local SNI proxy listening on the HTTPS proxy port (see package sniproxy),
+// instead of the server's IP:port being open to them — which would expose
+// every other virtual host behind the same reverse proxy.
+func (a *Adapter) EnableSNIProxy() {
+	a.sniProxy = true
+}
+
+// syncSNIRedirect (re)builds the nat chain that redirects unauthenticated
+// peers' connections to the Wirety server to the local SNI proxy. The redirect
+// happens in PREROUTING, so those connections never reach FORWARD: the
+// server ACCEPT rule in the jump chain only serves authenticated peers (which
+// RETURN here) and plain-HTTP servers (no SNI to filter on).
+func (a *Adapter) syncSNIRedirect(run, runIfNotExists func(...string) error, chain string, ep serverEndpoint, serverIPs, whitelist []string) {
+	_ = run("-t", "nat", "-N", chain)
+	_ = run("-t", "nat", "-F", chain)
+	if !a.sniProxy || !ep.https || len(serverIPs) == 0 {
+		return
+	}
+	for _, ip := range whitelist {
+		_ = run("-t", "nat", "-A", chain, "-s", ip, "-j", "RETURN")
+	}
+	proxyPort := strconv.Itoa(a.httpsPort)
+	for _, ip := range serverIPs {
+		_ = run("-t", "nat", "-A", chain, "-d", ip, "-p", "tcp", "--dport", ep.port, "-j", "REDIRECT", "--to-port", proxyPort)
+	}
+	_ = runIfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-i", a.iface, "-p", "tcp", "-j", chain)
+	_ = runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", proxyPort, "-j", "ACCEPT")
+}
+
 // SetProxyPorts sets the HTTP and HTTPS proxy ports
 func (a *Adapter) SetProxyPorts(httpPort, httpsPort int) {
 	a.httpPort = httpPort
@@ -49,19 +80,18 @@ func (a *Adapter) SetProxyPorts(httpPort, httpsPort int) {
 //
 // Required modules:
 //   - nf_conntrack — conntrack state matching (ESTABLISHED/RELATED).
-//   - nft_compat   — xtables compatibility layer for iptables-nft; allows xt_string
-//     to be used through the nf_tables backend. No-op on legacy iptables.
-//   - xt_string    — payload string matching for SNI / Host-header vhost isolation.
-//     Works on both legacy iptables and iptables-nft (via nft_compat).
-//     If unavailable, Sync() falls back to port-only server ACCEPT rule.
+//   - nft_compat   — xtables compatibility layer for iptables-nft (xtables
+//     matches through the nf_tables backend). No-op on legacy iptables.
+//
+// Virtual-host isolation does not need a kernel module: it is done by the SNI
+// proxy in user space (see syncSNIRedirect).
 func (a *Adapter) EnsureKernelModules() {
 	modules := []struct {
 		name    string
 		purpose string
 	}{
 		{"nf_conntrack", "conntrack state matching (ESTABLISHED/RELATED)"},
-		{"nft_compat", "xtables compatibility layer for iptables-nft (needed for xt_string on nf_tables backend)"},
-		{"xt_string", "payload string matching (SNI / Host-header vhost isolation)"},
+		{"nft_compat", "xtables compatibility layer for iptables-nft"},
 	}
 
 	for _, m := range modules {
@@ -533,13 +563,10 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 	// or any other port that is not intercepted by the DNAT rule: they hit the DROP in
 	// WIRETY_JUMP before any policy rule is ever evaluated.
 	//
-	// When multiple virtual hosts share the same reverse-proxy IP:port, L7 hostname
-	// filtering is applied:
-	//   - HTTPS: iptables string-matches the TLS SNI (cleartext in ClientHello)
-	//   - HTTP:  iptables string-matches the "Host:" header
-	// Only the Wirety virtual host is reachable before authentication; other vhosts
-	// remain blocked. Subsequent packets in an accepted TCP session are allowed via
-	// the ESTABLISHED/RELATED rule without re-checking the hostname.
+	// When multiple virtual hosts share the Wirety server's IP:port (shared reverse
+	// proxy / ingress), unauthenticated peers reach an HTTPS server through the SNI
+	// proxy, which only relays the Wirety host names: the other vhosts stay blocked
+	// until authentication (see syncSNIRedirect).
 
 	chain := "WIRETY_JUMP"
 	policyChain := "WIRETY_POLICY"
@@ -556,12 +583,15 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 	_ = a.run("-A", chain, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
 
 	// Rule 1: allow peers to reach the Wirety server so they can complete captive
-	// portal authentication.  Filtering is applied in three layers:
-	//   a) destination IP  — resolved from the server URL at sync time
-	//   b) destination port — derived from the URL scheme (80 / 443 / explicit)
-	//   c) hostname         — SNI for HTTPS, Host header for HTTP
-	// Layer (c) prevents other virtual hosts on the same reverse-proxy from being
-	// reachable. If the server URL uses a bare IP (no hostname), only (a)+(b) apply.
+	// portal authentication, by destination IP (resolved from the server URL at
+	// sync time) and port (from the URL scheme, or explicit).
+	//
+	// For an HTTPS server with the SNI proxy enabled, unauthenticated peers'
+	// connections are redirected to the proxy in nat PREROUTING (see
+	// syncSNIRedirect) and never reach this rule: the proxy checks the TLS
+	// server name, so the other virtual hosts behind the same IP:port stay
+	// unreachable before authentication. This rule then only serves
+	// authenticated peers.
 	endpoint := a.resolveServerEndpoint()
 	for _, ip := range endpoint.ips {
 		base := []string{"-A", chain, "-i", a.iface, "-d", ip, "-p", "tcp", "--dport", endpoint.port}
@@ -583,10 +613,10 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 		// the SYN had no payload → no match → fell through to the port-443 REJECT
 		// rule → tcp-reset before the TLS handshake could begin.
 		//
-		// We therefore always use destination-IP + port filtering only.
-		// The security trade-off (other vhosts on the same reverse-proxy IP:port
-		// being reachable) is acceptable: the alternative is that unauthenticated
-		// peers cannot complete captive-portal auth at all.
+		// Hostname filtering is therefore done by the SNI proxy (a TCP-level
+		// relay that reads the ClientHello), not here. Without it — plain-HTTP
+		// server, or no hostname known for the server — the other vhosts on the
+		// server's IP:port are reachable before authentication.
 		rule := append(append([]string{}, base...), "-j", "ACCEPT")
 		if err := a.run(rule...); err != nil {
 			log.Warn().Err(err).Str("ip", ip).Str("port", endpoint.port).Msg("failed to add Wirety server ACCEPT rule")
@@ -705,6 +735,9 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 	_ = a.run("-t", "nat", "-A", redirChain, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "80")
 	// Wire the chain into PREROUTING (idempotent).
 	_ = a.runIfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", redirChain)
+
+	// Unauthenticated peers reach the Wirety server through the SNI proxy.
+	a.syncSNIRedirect(a.run, a.runIfNotExists, "WIRETY_SNI", endpoint, endpoint.ips, whitelistIPv4)
 
 	// Attach chain to FORWARD (insert at top, only if not already attached)
 	_ = a.runIfNotExists("-I", "FORWARD", "1", "-j", chain)
@@ -919,6 +952,9 @@ func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint s
 	}
 	_ = a.runIPv6("-t", "nat", "-A", redir6Chain, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "80")
 	_ = a.runIPv6IfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", redir6Chain)
+
+	// Unauthenticated peers reach the Wirety server through the SNI proxy.
+	a.syncSNIRedirect(a.runIPv6, a.runIPv6IfNotExists, "WIRETY6_SNI", endpoint, endpoint.ipsv6, whitelistIPv6)
 
 	// Allow jump-peer services on the WireGuard interface INPUT chain (IPv6).
 	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT")

@@ -22,6 +22,8 @@ Le serveur Wirety fournit des API REST et WebSocket, orchestre les peers, les in
 | `AUTH_ISSUER_URL` | URL du fournisseur OIDC (ex. `https://keycloak.example.com/realms/wirety`) | - |
 | `AUTH_CLIENT_ID` | ID client OIDC | - |
 | `AUTH_CLIENT_SECRET` | Secret client OIDC | - |
+| `AUTH_SCOPES` | Scopes OAuth (séparés par des espaces) demandés à la connexion. Remplace le défaut adapté au fournisseur (`openid profile email offline_access` ; `offline_access` est automatiquement exclu pour Google et Slack). Le scope `offline_access` est ce qui fait émettre un **refresh token** par le fournisseur, pour que les sessions se renouvellent au lieu de se terminer à l'expiration du premier id_token. | selon le fournisseur |
+| `AUTH_AUTHORIZATION_EXTRA_PARAMS` | Paramètres de requête supplémentaires ajoutés à l'URL d'autorisation, sous forme de query string. Nécessaire pour **Google** (`access_type=offline&prompt=consent`) afin d'obtenir un refresh token. | - |
 | `AUTH_JWKS_CACHE_TTL` | Durée du cache JWKS en secondes | `3600` |
 | `AUTH_PASSWORD` | Mot de passe administrateur pour le mode auth simple | généré automatiquement (journalisé au démarrage) |
 | `COOKIE_SECURE` | Active l'attribut `Secure` sur le cookie de session — désactiver uniquement en HTTP local (développement) | `true` |
