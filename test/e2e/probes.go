@@ -12,9 +12,25 @@ import (
 )
 
 // digEventually queries dnsServer for a qtype ("A", "AAAA") record of name from
-// inside c until the answer is exactly want ("" = an empty answer, e.g. a
-// suppressed AAAA), and returns it.
+// inside c until the answer is exactly want ("" = an empty answer), and
+// returns it.
 func digEventually(ctx context.Context, t *testing.T, c testcontainers.Container, dnsServer, name, qtype, want string) string {
+	t.Helper()
+	return digEventuallyMatch(ctx, t, c, dnsServer, name, qtype, fmt.Sprintf("%q", want),
+		func(got string) bool { return got == want })
+}
+
+// digEventuallyNot is digEventually for "any answer except notWant" (e.g. a
+// name that must no longer be steered to the captive portal, whose real
+// upstream answer is not fixed).
+func digEventuallyNot(ctx context.Context, t *testing.T, c testcontainers.Container, dnsServer, name, qtype, notWant string) string {
+	t.Helper()
+	return digEventuallyMatch(ctx, t, c, dnsServer, name, qtype, fmt.Sprintf("anything but %q", notWant),
+		func(got string) bool { return !strings.Contains(got, notWant) })
+}
+
+func digEventuallyMatch(ctx context.Context, t *testing.T, c testcontainers.Container,
+	dnsServer, name, qtype, desc string, ok func(string) bool) string {
 	t.Helper()
 	var got string
 	eventually(t, defaultSyncTimeout, defaultPollInterval, func() error {
@@ -23,8 +39,8 @@ func digEventually(ctx context.Context, t *testing.T, c testcontainers.Container
 		if err != nil {
 			return err
 		}
-		if code != 0 || got != want {
-			return fmt.Errorf("dig %s %s @%s: want %q (exit %d): %q", qtype, name, dnsServer, want, code, got)
+		if code != 0 || !ok(got) {
+			return fmt.Errorf("dig %s %s @%s: want %s (exit %d): %q", qtype, name, dnsServer, desc, code, got)
 		}
 		return nil
 	})

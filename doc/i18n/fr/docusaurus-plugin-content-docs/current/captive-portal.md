@@ -35,14 +35,14 @@ iptables FORWARD DROP (chaîne WIRETY_JUMP)
              (ex. server1.wg.example.com)
                   │
                   ▼
-             DNS : domaine VPN interne → IP portail captif
+             Le DNS renvoie la VRAIE IP de la ressource (pas l'IP du portail)
                   │
-                  ▼
-             Requête HTTP/HTTPS → IP WG du jump peer:80/443
+                  ├── HTTP  → routé, puis redirigé (DNAT) sur :80 vers le portail
+                  └── HTTPS → routé, bloqué par un TCP reset
+                              (non intercepté — pas de certificat, pas d'erreur HSTS)
         │
         ▼
 Serveur HTTP du portail captif (écoute sur <wg-ip>:80)
-Serveur HTTPS du portail captif (écoute sur <wg-ip>:443, certificat auto-signé)
         │
         ▼
 302 redirect → https://<server>/captive-portal?token=cpt_...&redirect=<url-originale>
@@ -71,7 +71,7 @@ Le peer a un accès réseau complet
 
 ## Configuration de l'agent
 
-Les serveurs HTTP et HTTPS du portail captif démarrent automatiquement lorsque l'agent reçoit sa première politique. Aucune configuration supplémentaire n'est requise au-delà de ce qui est déjà nécessaire pour le fonctionnement du jump peer.
+Le serveur HTTP du portail captif démarre automatiquement lorsque l'agent reçoit sa première politique. Aucune configuration supplémentaire n'est requise au-delà de ce qui est déjà nécessaire pour le fonctionnement du jump peer.
 
 Le seul flag optionnel est `-portal-url` (ou `CAPTIVE_PORTAL_URL` env), qui prend par défaut la valeur `<SERVER_URL>/captive-portal`.
 
@@ -84,10 +84,10 @@ wirety-agent -server https://wirety.example.com -token <TOKEN> \
   -portal-url https://wirety.example.com/captive-portal
 ```
 
-L'agent écoute directement sur l'IP de l'interface WireGuard sur les ports 80 et 443 (ex. `10.255.0.1:80` et `10.255.0.1:443`). Aucune règle DNAT ni sysctl `route_localnet` n'est nécessaire.
+L'agent écoute directement sur l'IP de l'interface WireGuard sur le port 80 (ex. `10.255.0.1:80`). Aucune règle DNAT vers localhost ni sysctl `route_localnet` n'est nécessaire. Le portail captif ne fait **pas** tourner de serveur HTTPS — le HTTPS non authentifié vers une ressource interne est bloqué par un TCP reset plutôt qu'intercepté (voir [Gestion du HTTPS](#gestion-du-https)).
 
-:::caution Disponibilité des ports
-L'agent se lie aux **ports 80 et 443** sur l'IP de l'interface WireGuard. S'assurer que rien d'autre n'écoute déjà sur ces combinaisons adresse/port sur l'hôte jump peer.
+:::caution Disponibilité du port
+L'agent se lie au **port 80** sur l'IP de l'interface WireGuard. S'assurer que rien d'autre n'écoute déjà sur cette combinaison adresse/port sur l'hôte jump peer.
 :::
 
 ## Détection du portail captif par l'OS
@@ -125,20 +125,25 @@ Le serveur DNS de l'agent résout les domaines de sonde bien connus vers l'IP Wi
 
 Les requêtes AAAA pour tous les domaines de sonde retournent NODATA pour forcer IPv4, empêchant les peers qui préfèrent IPv6 de contourner l'interception.
 
-#### Interception du domaine VPN interne
+#### Résolution des domaines VPN internes
 
-Pour les peers non authentifiés, toutes les requêtes DNS pour les **noms de domaine VPN internes** (hostnames de peers, FQDNs de routes) sont résolus vers l'IP du portail captif au lieu de la vraie IP du peer. Cela signifie que toute tentative d'atteindre une ressource privée redirige le peer vers la page d'authentification.
+Les requêtes DNS pour les **noms de domaine VPN internes** (hostnames de peers, FQDNs de routes) sont toujours résolues vers la **vraie IP** de la ressource — la même réponse pour les peers authentifiés et non authentifiés. Le DNS n'est **pas** la frontière de contrôle d'accès ; c'est l'iptables du jump peer. Un peer non authentifié qui apprend la vraie IP ne peut toujours pas atteindre la ressource :
 
-Le DNS externe (internet) n'est pas affecté — les peers non authentifiés peuvent toujours naviguer sur le web normalement.
+- **HTTPS** (`:443`) → routé → la chaîne `WIRETY_JUMP` la rejette par un TCP reset. La connexion échoue immédiatement, sans aucun certificat impliqué — il n'y a donc jamais d'erreur HSTS, même pour les applications HTTPS-only.
+- **HTTP** (`:80`) → routé → une règle DNAT `PREROUTING` (nat) la redirige vers le portail captif local, qui sert la `302` vers la page d'authentification.
+
+Résoudre la vraie IP (jamais l'IP du portail) signifie que le navigateur ne met jamais en cache l'IP du portail pour un hostname interne : dès que le peer s'authentifie, la ressource est joignable **immédiatement**, sans fenêtre de cache DNS obsolète à attendre (des navigateurs comme Firefox mettent en cache ~60 s quel que soit le TTL).
+
+Pour les **peers full-tunnel**, l'agent est plus agressif : chaque requête A/AAAA externe d'un peer full-tunnel non authentifié est redirigée vers l'IP du portail captif. C'est nécessaire car les peers full-tunnel routent chaque connexion externe par le jump peer — sans cela, leur navigateur résoudrait les vraies IP et verrait ses connexions abandonnées silencieusement par la chaîne FORWARD, sans qu'aucune redirection vers le portail ne se déclenche. L'agent apprend les `AllowedIPs` de chaque peer via le heartbeat (`local_allowed_ips`) pour n'appliquer cela qu'aux peers concernés. Les peers split-tunnel utilisent le DNS externe normalement — leur trafic externe ne traverse pas le jump peer.
 
 ```
 Peer non authentifié résout server1.wg.example.com
-  → DNS retourne 10.255.0.1 (IP portail captif, TTL 5s)
-  → Requête HTTP/HTTPS atteint le serveur du portail captif
-  → Redirection vers la page d'authentification
+  → DNS retourne 10.255.0.2 (vraie IP du peer)
+  → HTTP  → redirigé (DNAT) vers le portail captif → redirection vers l'auth
+  → HTTPS → TCP reset (bloqué par iptables, non intercepté)
 
 Peer authentifié résout server1.wg.example.com
-  → DNS retourne 10.255.0.2 (vraie IP du peer, TTL 60s)
+  → DNS retourne 10.255.0.2 (vraie IP du peer)
   → La connexion va directement vers la ressource privée
 ```
 
@@ -146,9 +151,9 @@ Peer authentifié résout server1.wg.example.com
 L'interception des sondes et l'interception du domaine interne ne fonctionnent que lorsque la configuration WireGuard définit `DNS = <ip-wg-jump-peer>` pour que le peer utilise le serveur DNS du jump peer.
 :::
 
-### Réponses aux sondes HTTP et HTTPS
+### Réponses aux sondes HTTP
 
-Le serveur HTTP (`:80`) et le serveur HTTPS (`:443`) traitent les requêtes interceptées avec la même logique :
+Le serveur HTTP (`:80`) traite les requêtes interceptées avec cette logique :
 
 | État du peer | Comportement |
 |-------------|--------------|
@@ -165,31 +170,21 @@ Réponses de succès spécifiques à l'OS (servies aux peers authentifiés) :
 | Firefox | `/success.txt` | `200` + `success\n` |
 | GNOME / Debian | tout | `204 No Content` |
 
-## Serveur HTTPS du portail captif
+## Gestion du HTTPS
 
-L'agent exécute un serveur HTTPS auto-signé sur `<wg-ip>:443` aux côtés du serveur HTTP. Cela gère les peers non authentifiés qui tentent un accès HTTPS aux ressources VPN internes.
+Le portail captif est **exclusivement HTTP** — l'agent ne fait pas tourner de listener HTTPS et n'intercepte jamais la connexion TLS d'un peer. Un peer non authentifié qui tente du HTTPS vers une ressource interne voit sa connexion **coupée** (`WIRETY_JUMP` rejette `:443` par un TCP reset). Le navigateur échoue immédiatement, sans échange de certificat.
 
-### Certificat auto-signé
+C'est un choix de conception délibéré. Injecter un portail captif dans une session HTTPS pour le hostname de l'application elle-même exigerait de servir un certificat auquel le client fait confiance pour ce hostname — c'est-à-dire un man-in-the-middle TLS. Une version antérieure faisait cela avec un certificat auto-signé généré en mémoire, mais c'était irrémédiablement cassé :
 
-Le certificat est généré en mémoire au démarrage de l'agent (jamais écrit sur disque) et couvre :
+- Pour les hôtes **préchargés HSTS** (tous les grands fournisseurs SSO, et toute application qui envoie `Strict-Transport-Security`), le navigateur bloque le certificat non concordant **sans aucun contournement** — une page d'erreur irrécupérable.
+- Pour les applications HTTPS-only, cela forçait un retour en `http://` après authentification, que ces applications refusent.
 
-- **IP SAN** — l'IP de l'interface WireGuard
-- **DNS SAN générique** — `*.<vpnDomain>` (ex. `*.wg.example.com`) pour que les hostnames de peers internes correspondent au certificat
+Supprimer l'interception élimine les **impasses HSTS** et laisse fonctionner les applications HTTPS-only. La découverte du portail pour les peers non authentifiés passe entièrement par HTTP :
 
-Le domaine VPN pour le générique est tiré de la configuration DNS poussée par le serveur.
+- **Détection du portail captif par l'OS** — les sondes de l'OS (HTTP en clair) sont interceptées par DNS vers le jump peer et traitées sur `:80`, faisant apparaître la bannière native « Se connecter au réseau ». Le TCP reset sur `:443` incite en plus iOS/Android à lancer leur détection.
+- **Le pop-up de connexion du tableau de bord** — l'application web Wirety interroge l'état de chaque appareil et, quand l'un a besoin de se connecter, propose un lien à la demande vers le portail (en HTTP).
 
-### Comportement du navigateur
-
-Comme le certificat est auto-signé (non émis par une CA de confiance), les navigateurs affichent un avertissement de sécurité. Le comportement diffère selon le domaine :
-
-| Type de domaine | Comportement du navigateur |
-|----------------|---------------------------|
-| **Domaine VPN interne** (ex. `server1.wg.example.com`) | Page d'avertissement avec option "Continuer quand même" — l'utilisateur peut contourner et être redirigé vers le portail captif |
-| **Domaine public dans la liste de préchargement HSTS** (ex. `google.com`) | Bloqué de façon permanente — aucun contournement disponible. Les peers utilisant des navigateurs HTTPS uniquement devront essayer une URL HTTP ou utiliser l'URL directe du portail captif |
-
-:::info Limitation HTTPS
-L'interception HTTPS pour les domaines publics préchargés HSTS n'est pas faisable : les navigateurs bloquent de telles connexions quelle que soit la valeur du certificat. Le serveur HTTPS est principalement utile pour les domaines VPN internes. Pour les peers en mode tunnel complet, la détection du portail captif par l'OS (qui utilise des sondes HTTP en clair) gère la redirection sans interaction avec les certificats.
-:::
+Une fois le peer authentifié, le DNS résout l'application vers sa **vraie IP** et le HTTPS fonctionne sans altération — le portail n'est jamais dans le chemin TLS.
 
 ## Application de la propriété
 
@@ -276,79 +271,69 @@ La liste blanche est par jump peer et stockée dans la table `captive_portal_whi
 | Le popup du portail captif OS n'apparaît pas (tunnel partagé) | La configuration WireGuard du peer ne définit peut-être pas `DNS = <ip-wg-jump-peer>`. Sans cela, les domaines de sonde et les requêtes de domaine interne contournent le DNS du tunnel. Vérifier la configuration WireGuard du peer. |
 | Le popup du portail captif OS n'apparaît pas (tunnel complet) | CNA/NCSI se déclenche automatiquement pour les peers en tunnel complet. Si cela ne se déclenche pas, essayer de déconnecter et reconnecter WireGuard. |
 | Le popup du portail captif OS persiste après l'authentification | Le TTL DNS (5-10s) peut ne pas avoir expiré. Attendre quelques secondes ; la prochaine sonde recevra une réponse de succès. |
-| Le domaine interne se résout vers l'IP du portail captif après l'authentification | Cache DNS périmé sur le peer. Le TTL court (5s) devrait expirer rapidement. Vider le cache DNS manuellement si nécessaire (`sudo dscacheutil -flushcache` sur macOS). |
-| Port 80 ou 443 déjà utilisé sur le jump peer | Quelque chose d'autre est lié à `<wg-ip>:80` ou `<wg-ip>:443`. L'agent journalise une erreur et le portail captif ne fonctionnera pas. |
-| Le navigateur bloque définitivement la redirection HTTPS pour un domaine externe | Normal — les domaines publics préchargés HSTS ne peuvent pas être interceptés. Utiliser l'URL directe du portail captif, ou essayer une URL HTTP ou une URL de domaine VPN interne pour déclencher la redirection. |
+| Port 80 déjà utilisé sur le jump peer | Quelque chose d'autre est lié à `<wg-ip>:80`. L'agent journalise une erreur et le portail captif ne fonctionnera pas. |
+| Le HTTPS vers une ressource interne échoue avant l'authentification | Normal — le portail captif n'intercepte pas le HTTPS ; le `:443` non authentifié est coupé (TCP reset). Déclencher le portail en HTTP, ou utiliser le pop-up de connexion du tableau de bord. Après authentification, le HTTPS fonctionne normalement. |
 
 ## Reverse Proxy et isolation d'hôte virtuel
 
 Lorsque le serveur Wirety est déployé derrière un reverse proxy qui sert également d'autres applications sur la même IP et le même port, les peers non authentifiés pourraient atteindre ces autres applications avant de terminer l'authentification du portail captif.
 
-L'agent atténue cela avec trois couches de filtrage appliquées dans `WIRETY_JUMP` :
+Pour un serveur HTTPS, l'agent ferme cette brèche avec un **proxy SNI** sur le jump peer :
 
-| Couche | Règle | Protège contre |
-|--------|-------|----------------|
-| **IP** | La destination doit correspondre à l'IP du serveur résolue | Serveurs non liés |
-| **Port** | `--dport` dérivé du schéma URL du serveur (`443` pour https, `80` pour http, ou explicite) | Autres ports sur le même serveur |
-| **Hostname** | Correspondance de chaîne L7 sur le hostname virtuel | Autres vhosts derrière le même reverse proxy |
+1. Dans `nat PREROUTING`, les connexions des peers **non authentifiés** vers l'IP:port du serveur sont redirigées (chaînes `WIRETY_SNI` / `WIRETY6_SNI`) vers le proxy sur `<wg-ip>:3129` (`HTTPS_PROXY_PORT`). Les peers authentifiés sont exclus et continuent d'atteindre le serveur directement.
+2. Le proxy lit le ClientHello TLS et compare son **SNI** (Server Name Indication, envoyé en clair) aux noms d'hôte autorisés : `SERVER_HOST`, les hôtes de `SERVER_URL` et `CAPTIVE_PORTAL_URL`, et l'hôte de l'issuer OIDC (l'IdP partage souvent le même ingress).
+3. Une connexion autorisée est relayée octet par octet vers le serveur. Tout le reste — autre vhost, pas de SNI, trafic non TLS — est fermé.
 
-### Filtrage par hostname
-
-Pour HTTPS, le **SNI** TLS (Server Name Indication) est envoyé en clair dans le TLS ClientHello. L'agent utilise une correspondance de chaîne iptables pour vérifier que le SNI correspond au hostname Wirety avant d'autoriser la connexion.
-
-Pour HTTP, l'en-tête de requête `Host:` est mis en correspondance de la même façon.
-
-Comme la correspondance de chaîne ne fonctionne que sur le premier paquet d'une session TCP, une règle conntrack `ESTABLISHED,RELATED` en tête de `WIRETY_JUMP` permet aux paquets suivants de sessions déjà acceptées de passer sans re-vérifier le hostname.
+Le proxy **ne déchiffre jamais rien** : TLS reste de bout en bout entre le peer et le serveur, et le peer voit le certificat du serveur lui-même.
 
 ```
-Règle 0:  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-Règle 1a: -d <serverIP> -p tcp --dport 443 -m string --algo bm --string "wirety.example.com" -j ACCEPT  (HTTPS)
-Règle 1b: -d <serverIP> -p tcp --dport 80  -m string --algo bm --string "Host: wirety.example.com" -j ACCEPT  (HTTP)
-Règle 2:  -s <whitelistedPeerIP> -j WIRETY_POLICY  (peers authentifiés)
-Règle 3:  -j DROP                                   (tous les autres)
+nat WIRETY_SNI:   -s <IPPeerAuthentifié> -j RETURN
+                  -d <serverIP> -p tcp --dport 443 -j REDIRECT --to-ports 3129
+filter WIRETY_JUMP:
+  Règle 0:  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  Règle 1:  -d <serverIP> -p tcp --dport 443 -j ACCEPT   (peers authentifiés — les non authentifiés ont été redirigés ci-dessus)
+  Règle 2:  -s <IPPeerAuthentifié> -j WIRETY_POLICY
+  Règle 3:  -j DROP                                       (tous les autres)
 ```
+
+Avant authentification, le peer peut donc se connecter sur `https://wirety.example.com`, tandis que `https://docs.example.com` sur la même IP d'ingress est refusé. Après authentification, la policy s'applique normalement.
 
 ### Limitations
 
-**Contournement de la correspondance de chaîne :** Le module kernel `xt_string` analyse le contenu brut du paquet. Un peer qui fabrique un paquet contenant le hostname Wirety comme données arbitraires tout en utilisant un SNI TLS différent pourrait passer le filtre. Le routage du reverse proxy utiliserait toujours le bon SNI, mais la connexion au niveau IP serait acceptée. C'est une frontière souple, pas une frontière cryptographique.
+**Serveur en HTTP simple ou sans nom d'hôte :** le SNI n'existe qu'en TLS. Avec un `SERVER_URL` en `http://`, ou si aucun nom d'hôte n'est connu (`SERVER_URL` en IP brute sans `SERVER_HOST` ni hostname dans `CAPTIVE_PORTAL_URL`), le proxy est désactivé et tous les vhosts de l'IP:port du serveur sont joignables avant authentification. Dans ce dernier cas, l'agent journalise un avertissement au démarrage.
 
-**URL serveur en IP brute :** Si `SERVER_URL` est défini sur une IP brute (ex. `http://10.0.0.7`) au lieu d'un hostname, aucune correspondance SNI/Host n'est possible — l'agent revient à un filtrage par port uniquement, et tous les vhosts sur cette IP:port sont accessibles avant l'authentification. Utiliser un hostname dans `SERVER_URL` quand c'est possible. Voir [`SERVER_HOST`](agent#reverse-proxy--accès-sans-dns-server_host) pour la connexion par IP tout en activant le filtrage par hostname.
-
-**Indisponibilité du module :** Si le module kernel `xt_string` n'est pas chargé, l'agent journalise un avertissement et revient automatiquement à un filtrage par port uniquement.
+**Encrypted Client Hello (ECH) :** un client utilisant ECH masque le vrai SNI ; le proxy ne voit alors que le nom public et refuse la connexion, sauf si ce nom est autorisé. Les hôtes internes ne publient pas de configuration ECH, les navigateurs leur envoient donc un SNI en clair.
 
 ## Exigences des modules kernel
 
-Les règles pare-feu du portail captif dépendent de deux modules kernel :
+Les règles pare-feu du portail captif dépendent de ces modules kernel :
 
 | Module | Objectif |
 |--------|---------|
 | `nf_conntrack` | Correspondance d'état conntrack — permet aux sessions TCP en cours de passer sans re-vérifier chaque paquet |
-| `nft_compat` | Couche de compatibilité xtables pour `iptables-nft` — permet à `xt_string` d'être utilisé via le backend nf_tables. Sans effet sur iptables legacy. |
-| `xt_string` | Correspondance de chaîne de charge utile — isolation vhost SNI / en-tête Host. Fonctionne sur iptables legacy et `iptables-nft` (via `nft_compat`). |
+| `nft_compat` | Couche de compatibilité xtables pour `iptables-nft` (matches xtables via le backend nf_tables). Sans effet sur iptables legacy. |
+
+L'isolation des hôtes virtuels ne nécessite aucun module kernel : elle est assurée par le proxy SNI de l'agent, en espace utilisateur.
 
 **L'agent charge ces modules automatiquement au démarrage** via `modprobe`. Aucune action manuelle n'est requise sur la plupart des systèmes — les modules sont livrés avec le kernel sur toutes les distributions grand public (Debian, Ubuntu, RHEL, Alpine).
-
-:::info iptables-nft
-Sur les systèmes Debian/Ubuntu modernes, `iptables` est `iptables-nft` par défaut. Le module `nft_compat` fait le pont entre l'interface d'extension xtables et nftables, rendant `xt_string` disponible sur les deux backends. Si `nft_compat` ou `xt_string` ne peut pas être chargé, l'agent revient automatiquement à un filtrage par port uniquement.
-:::
 
 Si un module échoue à se charger, l'agent journalise un avertissement et continue avec un comportement dégradé :
 
 ```
 WARN  failed to load kernel module — functionality may be degraded
-      module=xt_string purpose="payload string matching (SNI / Host-header vhost isolation)"
+      module=nf_conntrack purpose="conntrack state matching (ESTABLISHED/RELATED)"
 ```
 
 Pour que les modules persistent entre les redémarrages indépendamment de l'agent :
 
 ```bash
 # Debian / Ubuntu
-echo -e "nf_conntrack\nxt_string" >> /etc/modules
+echo -e "nf_conntrack\nnft_compat" >> /etc/modules
 
 # RHEL / CentOS / Fedora
 cat > /etc/modules-load.d/wirety.conf <<EOF
 nf_conntrack
-xt_string
+nft_compat
 EOF
 ```
 

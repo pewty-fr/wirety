@@ -51,7 +51,7 @@ Options:
         Log output format: text|json
         (env: LOG_FORMAT, default: text)
   -audit-log
-        Emit JSON audit events to stdout
+        Emit audit events to stdout, in the -log-format format
         (env: AUDIT_LOG, default: false)
 ```
 
@@ -126,19 +126,18 @@ The `SERVER_HOST` override is applied to **all** outbound connections from the a
 - WebSocket connection (`/api/v1/ws`)
 - Captive portal token creation (`/api/v1/captive-portal/token`)
 
-### Captive portal vhost isolation with `SERVER_HOST`
+### Captive portal vhost isolation
 
-The captive portal iptables rules derive the virtual hostname for SNI/Host filtering from `SERVER_URL`, not from `SERVER_HOST`. When `SERVER_URL` contains a bare IP (e.g. `http://10.0.0.7`), the agent cannot perform hostname-level filtering and falls back to port-only filtering — other virtual hosts on the same IP:port become reachable before authentication completes.
+When the server is HTTPS, unauthenticated peers reach it through the agent's **SNI proxy**, which only lets the Wirety host names through: other virtual hosts sharing the server's IP:port (shared reverse proxy / ingress) stay unreachable until the peer authenticates. The allowed names are `SERVER_HOST`, the host of `SERVER_URL` and the host of `CAPTIVE_PORTAL_URL` (IP literals are ignored), plus the OIDC issuer host pushed by the server.
 
-To get both no-DNS access **and** hostname isolation, use a resolvable hostname in `SERVER_URL` and omit `SERVER_HOST`:
+A bare-IP `SERVER_URL` is fine as long as a host name is known from `SERVER_HOST` or `CAPTIVE_PORTAL_URL`:
 
 ```bash
-# Preferred: DNS resolves wirety.internal → 10.0.0.7
-# Agent connects to IP, SNI/Host filtering uses "wirety.internal"
-wirety-agent -server http://wirety.internal -token <TOKEN>
+# Connects to 10.0.0.7, only "wirety.internal" is reachable before authentication
+wirety-agent -server https://10.0.0.7 -server-host wirety.internal -token <TOKEN>
 ```
 
-If DNS is genuinely unavailable, `SERVER_HOST` + a bare-IP `SERVER_URL` still works — you simply lose vhost isolation for unauthenticated peers. See [Reverse Proxy and Virtual Host Isolation](captive-portal#reverse-proxy-and-virtual-host-isolation) for the full security implications.
+With a plain-HTTP server, or when no host name is known at all, there is nothing to filter on: every virtual host on the server's IP:port is reachable before authentication (the agent logs a warning). See [Reverse Proxy and Virtual Host Isolation](captive-portal#reverse-proxy-and-virtual-host-isolation).
 
 ## NAT Interface Detection
 
@@ -164,12 +163,11 @@ export NAT_INTERFACES=ens6
 | WireGuard kernel/module | Interface creation |
 | curl / TLS libs | Enrollment requests |
 | Sufficient permissions | Configure network interface, run iptables |
-| Port 80 free on WireGuard interface IP | Captive portal HTTP server binds to `<wg-ip>:80` |
-| Port 443 free on WireGuard interface IP | Captive portal HTTPS server binds to `<wg-ip>:443` (self-signed cert) |
+| Port 80 free on WireGuard interface IP | Captive portal HTTP server binds to `<wg-ip>:80` (there is no HTTPS listener — unauthenticated `:443` is reset by iptables, not intercepted) |
 | `nf_conntrack` kernel module | Conntrack state matching in captive portal firewall rules |
-| `xt_string` kernel module | SNI / Host-header vhost isolation in captive portal firewall rules |
+| Port 3129 free on WireGuard interface IP | SNI proxy for unauthenticated peers (HTTPS server only; change with `HTTPS_PROXY_PORT`) |
 
-The agent calls `modprobe nf_conntrack` and `modprobe xt_string` automatically at startup. These modules ship with the kernel on all mainstream distributions and require no manual installation. If either module is unavailable, the agent logs a warning and continues with degraded captive portal vhost isolation. See [Kernel Module Requirements](captive-portal#kernel-module-requirements) for persistence and troubleshooting.
+The agent calls `modprobe nf_conntrack` automatically at startup (and `nft_compat` on `iptables-nft` systems). These modules ship with the kernel on all mainstream distributions and require no manual installation. If one is unavailable, the agent logs a warning and continues. See [Kernel Module Requirements](captive-portal#kernel-module-requirements) for persistence and troubleshooting.
 
 ## Logging
 

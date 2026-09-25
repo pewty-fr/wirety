@@ -256,47 +256,41 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		// 1. Internal VPN domain records (peer names, route FQDNs).
 		//
-		// For authenticated peers:
-		//   - A queries   → real IPv4 peer address (normal behaviour)
-		//   - AAAA queries → real IPv6 peer address when the peer has one; NODATA otherwise
+		// These ALWAYS resolve to their real peer/route address — the same
+		// answer for authenticated and unauthenticated peers:
+		//   - A queries   → real IPv4 address (NODATA if the record is IPv6-only)
+		//   - AAAA queries → real IPv6 address when present; NODATA otherwise
 		//
-		// For unauthenticated peers:
-		//   - A queries   → captive portal IPv4 (redirects to auth page)
-		//   - AAAA queries → NODATA (suppressed so the OS falls back to IPv4 and hits the portal)
+		// We intentionally do NOT redirect unauthenticated peers to the captive
+		// portal IP here. The jump peer's iptables — not DNS — is the access
+		// boundary: an unauthenticated peer that learns the real IP still can't
+		// reach the resource (the FORWARD chain RSTs :443 and DROPs the rest),
+		// while its port-80 traffic is DNAT'd to the captive portal regardless of
+		// destination IP. Serving the real IP (never the portal IP) means the
+		// browser never caches the portal IP for an internal hostname, so once the
+		// peer authenticates the resource is reachable IMMEDIATELY — no waiting for
+		// a stale record to expire (Firefox/Chrome cache for ~60s regardless of
+		// the TTL=1 we used to set on the portal-redirect answer).
 		ipv4, ipv6 := s.lookupPeerAddresses(name)
 		if ipv4 != "" || ipv6 != "" {
-			_, isExcluded := exclusions[name]
-
 			if q.Qtype == dns.TypeA {
 				if ipv4 == "" {
-					// IPv6-only peer — NODATA for A
+					// IPv6-only record — NODATA for A.
 					resolved = true
 					continue
 				}
-				resolvedIP := ipv4
-				ttl := uint32(60)
-				if redirectInternal && !isExcluded {
-					log.Debug().Str("domain", name).Str("peer", peerIP).Str("real_ip", ipv4).Str("portal_ip", portalIP).
-						Msg("DNS: unauthenticated peer — redirecting internal domain to captive portal")
-					resolvedIP = portalIP
-					ttl = 1 // TTL=1s so the browser re-queries after auth
-				}
 				m.Answer = append(m.Answer, &dns.A{
-					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: ttl},
-					A:   net.ParseIP(resolvedIP),
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+					A:   net.ParseIP(ipv4),
 				})
 			} else if q.Qtype == dns.TypeAAAA {
-				if redirectInternal && !isExcluded {
-					// Suppress AAAA for unauthenticated peers — force IPv4 captive portal path.
-					log.Debug().Str("domain", name).Str("peer", peerIP).
-						Msg("DNS: unauthenticated peer — suppressing AAAA for internal domain (forcing IPv4 captive portal)")
-				} else if ipv6 != "" {
+				if ipv6 != "" {
 					m.Answer = append(m.Answer, &dns.AAAA{
 						Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 60},
 						AAAA: net.ParseIP(ipv6),
 					})
 				}
-				// else NODATA: peer exists but has no IPv6 address
+				// else NODATA: record exists but has no IPv6 address.
 			}
 			resolved = true
 			continue
@@ -459,17 +453,8 @@ func (s *Server) forwardToUpstream(w dns.ResponseWriter, r *dns.Msg) {
 		Msg("all upstream DNS servers failed")
 }
 
-// LookupPeerIP returns the WireGuard IPv4 for the given hostname (FQDN), or an
-// empty string if not found. Exported so the captive portal server can proxy
-// authenticated-peer requests directly to the real backend while the browser's
-// DNS cache is stale (Firefox ignores TTL=1 and caches for up to 60 s).
-func (s *Server) LookupPeerIP(name string) string {
-	ipv4, _ := s.lookupPeerAddresses(name)
-	return ipv4
-}
-
-// lookupPeerIP returns the IPv4 address for the given hostname (kept for
-// internal callers that only need IPv4).
+// lookupPeerIP returns the IPv4 address for the given hostname, or an empty
+// string if not found.
 func (s *Server) lookupPeerIP(name string) string {
 	ipv4, _ := s.lookupPeerAddresses(name)
 	return ipv4

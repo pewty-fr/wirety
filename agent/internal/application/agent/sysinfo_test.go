@@ -8,11 +8,11 @@ import (
 func TestCollectSystemInfo(t *testing.T) {
 	sysInfo, err := CollectSystemInfo("wg0")
 	if err != nil {
-		t.Errorf("Expected no error, got: %v", err)
+		t.Fatalf("Expected no error, got: %v", err)
 	}
-
 	if sysInfo == nil {
 		t.Fatal("Expected SystemInfo to be non-nil")
+		return
 	}
 
 	// Hostname should not be empty (fallback to "unknown" if needed)
@@ -39,11 +39,11 @@ func TestCollectSystemInfo(t *testing.T) {
 func TestCollectSystemInfoWithNonExistentInterface(t *testing.T) {
 	sysInfo, err := CollectSystemInfo("nonexistent-interface")
 	if err != nil {
-		t.Errorf("Expected no error even with non-existent interface, got: %v", err)
+		t.Fatalf("Expected no error even with non-existent interface, got: %v", err)
 	}
-
 	if sysInfo == nil {
 		t.Fatal("Expected SystemInfo to be non-nil")
+		return
 	}
 
 	// Should still collect basic system info

@@ -186,6 +186,12 @@ func (w *Writer) syncconf() error {
 		return fmt.Errorf("wg syncconf failed: %v stderr=%s", err, syncErr.String())
 	}
 
+	// syncconf leaves the interface addresses alone; reconcile them with the
+	// config so an address added since the interface was created is assigned.
+	if err := w.syncAddresses(); err != nil {
+		log.Error().Err(err).Str("interface", w.Interface).Msg("failed to sync interface addresses")
+	}
+
 	// After syncconf, manually manage routes since syncconf doesn't handle them
 	if err := w.updatePeerRoutes(oldRoutes); err != nil {
 		log.Error().Err(err).Msg("failed to update peer routes after syncconf")
