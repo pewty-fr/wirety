@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -70,6 +71,8 @@ type stack struct {
 
 	// ipv6 is set when the docker network is dual-stack (withIPv6).
 	ipv6 bool
+	// dexTokenExpiry overrides Dex's ID/access token lifetime (withDexTokenExpiry).
+	dexTokenExpiry string
 }
 
 // stackOption customises setupStack.
@@ -79,6 +82,12 @@ type stackOption func(*stack)
 // containers get IPv6 addresses and IPv6 can be routed through the jump peer.
 func withIPv6() stackOption {
 	return func(s *stack) { s.ipv6 = true }
+}
+
+// withDexTokenExpiry shortens Dex's ID/access token lifetime (e.g. "10s") so a
+// test can go through several OIDC token refreshes quickly.
+func withDexTokenExpiry(d string) stackOption {
+	return func(s *stack) { s.dexTokenExpiry = d }
 }
 
 // e2eIPv6Subnet is the docker network's IPv6 subnet in dual-stack stacks.
@@ -145,7 +154,13 @@ func setupStack(ctx context.Context, t *testing.T, opts ...stackOption) *stack {
 	// --- dex ----------------------------------------------------------------
 	// Reuse the repo's Dex image (ENTRYPOINT ["dex","serve","/app/config.yaml"])
 	// but mount the e2e config (issuer http://dex:5556/dex) over the baked one.
-	dexCfg := filepath.Join(root, "test", "e2e", "images", "dex-config.yaml")
+	dexCfg, err := os.ReadFile(filepath.Join(root, "test", "e2e", "images", "dex-config.yaml"))
+	if err != nil {
+		t.Fatalf("read dex config: %v", err)
+	}
+	if st.dexTokenExpiry != "" {
+		dexCfg = append(dexCfg, []byte("\nexpiry:\n  idTokens: \""+st.dexTokenExpiry+"\"\n")...)
+	}
 	dex, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			FromDockerfile: testcontainers.FromDockerfile{
@@ -157,7 +172,7 @@ func setupStack(ctx context.Context, t *testing.T, opts ...stackOption) *stack {
 			NetworkAliases: map[string][]string{nw.Name: {"dex"}},
 			ExposedPorts:   []string{"5556/tcp"},
 			Files: []testcontainers.ContainerFile{{
-				HostFilePath:      dexCfg,
+				Reader:            bytes.NewReader(dexCfg),
 				ContainerFilePath: "/app/config.yaml",
 				FileMode:          0o444,
 			}},

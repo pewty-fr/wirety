@@ -112,7 +112,7 @@ func (s *stack) wiretySession(ctx context.Context, username, password string) (s
 		"client_id":     {dexClientID},
 		"redirect_uri":  {dexRedirectURI},
 		"response_type": {"code"},
-		"scope":         {"openid profile email"},
+		"scope":         {"openid profile email offline_access"}, // as the frontend requests
 		"state":         {"e2e-state"},
 		"nonce":         {"e2e-nonce"},
 	}

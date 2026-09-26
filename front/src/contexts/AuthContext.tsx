@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
+import { takeReturnPath } from '../auth/reauth';
 
 export interface User {
   id: string;
@@ -90,6 +91,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (pendingCaptivePortal) {
             sessionStorage.removeItem('captive_portal_return');
             window.location.href = pendingCaptivePortal;
+            return;
+          }
+
+          // Back to the page the user was on when the session expired.
+          const returnTo = takeReturnPath();
+          if (returnTo) {
+            window.location.replace(returnTo);
             return;
           }
         } else {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { claimAutoReauth } from '../../auth/reauth';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faShield, faEye, faEyeSlash, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
 
@@ -18,9 +19,18 @@ export default function LoginPage() {
   // Check if we're in the middle of OAuth callback
   const hasAuthCode = new URLSearchParams(window.location.search).has('code');
 
+  // When the session expired and SSO is the only way in, sign the user back in
+  // automatically: with the identity provider's session still alive the round
+  // trip needs no interaction, so the dashboard keeps running (and keeps
+  // showing captive-portal alerts) instead of stopping here.
+  const ssoOnly = !!authConfig?.enabled && !authConfig.simple_auth;
+  const [autoReauth, setAutoReauth] = useState(false);
   useEffect(() => {
-    // If already authenticated via session in localStorage, AuthContext handles redirect
-  }, [authConfig]);
+    if (sessionExpired && ssoOnly && !isLoading && !hasAuthCode && !oauthError && claimAutoReauth()) {
+      setAutoReauth(true);
+      login();
+    }
+  }, [sessionExpired, ssoOnly, isLoading, hasAuthCode, oauthError, login]);
 
   const handleSimpleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,12 +75,12 @@ export default function LoginPage() {
   }
 
   // Show loading state during OAuth callback processing
-  if (isLoading || hasAuthCode) {
+  if (isLoading || hasAuthCode || autoReauth) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700 flex items-center justify-center">
         <div className="text-center">
           <div className="text-white mb-2">
-            {hasAuthCode ? 'Completing sign in...' : 'Loading...'}
+            {hasAuthCode ? 'Completing sign in...' : autoReauth ? 'Session expired — signing you back in...' : 'Loading...'}
           </div>
           <div className="text-sm text-gray-200 dark:text-gray-400">
             Please wait

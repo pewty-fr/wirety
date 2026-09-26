@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { AxiosInstance } from 'axios';
+import { rememberReturnPath } from '../auth/reauth';
 import type { Network, Peer, IPAMAllocation, User, PaginatedResponse, PeerConnectivityStatus, ACL, Group, Policy, PolicyRule, Route, DNSMapping, PeerReachability, APIToken } from '../types';
 
 class ApiClient {
@@ -39,6 +40,7 @@ class ApiClient {
 
           // Don't retry a request that is already a retry (avoids infinite loops)
           if (error.config?._retry) {
+            rememberReturnPath();
             window.location.href = '/?session_expired=1';
             return Promise.reject(error);
           }
@@ -63,6 +65,7 @@ class ApiClient {
             // Network error — fall through to redirect
           }
 
+          rememberReturnPath();
           window.location.href = '/?session_expired=1';
         }
         return Promise.reject(error);
