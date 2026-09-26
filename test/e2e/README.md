@@ -84,7 +84,12 @@ deployed behind an ingress (`-server https://<ip> -server-host â€¦ -portal-url â
 Before auth the peer reaches the Wirety host through the agent's SNI proxy but
 not the other app on the same IP:443; after auth it reaches both.
 
-Three tests need no WireGuard and run anywhere Docker runs:
+`TestSessionSurvivesTokenRefresh` keeps a dashboard session busy with bursts of
+concurrent API calls (like the frontend's polling) across six OIDC token
+lifetimes (Dex with 10 s tokens and rotating refresh tokens): every call must
+succeed, the server refreshing the tokens transparently. It needs no WireGuard.
+
+Three more tests need no WireGuard and run anywhere Docker runs:
 
 - `TestStackSmoke` checks the plumbing: images, DB, OIDC, REST, and that a custom
   `domain_suffix` is persisted.
@@ -115,6 +120,7 @@ test/e2e/
   scenario_ipv6_test.go    the dual-stack scenario (TestE2EIPv6)
   scenario_sni_test.go     shared-ingress vhost isolation (TestE2ESNIProxy)
   captive_flow_test.go     server-side captive-portal flow, no WireGuard
+  session_refresh_test.go  OIDC token refresh under concurrent load
   smoke_test.go     non-WireGuard spine check (TestStackSmoke)
   images/
     peer.Dockerfile        plain WireGuard client (wg-quick + probes)
