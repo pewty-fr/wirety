@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -70,6 +71,10 @@ type stack struct {
 
 	// ipv6 is set when the docker network is dual-stack (withIPv6).
 	ipv6 bool
+	// dexTokenExpiry overrides Dex's ID/access token lifetime (withDexTokenExpiry).
+	dexTokenExpiry string
+	// serverEnv adds to / overrides the server's environment (withServerEnv).
+	serverEnv map[string]string
 }
 
 // stackOption customises setupStack.
@@ -79,6 +84,22 @@ type stackOption func(*stack)
 // containers get IPv6 addresses and IPv6 can be routed through the jump peer.
 func withIPv6() stackOption {
 	return func(s *stack) { s.ipv6 = true }
+}
+
+// withDexTokenExpiry shortens Dex's ID/access token lifetime (e.g. "10s") so a
+// test can go through several OIDC token refreshes quickly.
+func withDexTokenExpiry(d string) stackOption {
+	return func(s *stack) { s.dexTokenExpiry = d }
+}
+
+// withServerEnv sets an environment variable of the server container.
+func withServerEnv(key, value string) stackOption {
+	return func(s *stack) {
+		if s.serverEnv == nil {
+			s.serverEnv = map[string]string{}
+		}
+		s.serverEnv[key] = value
+	}
 }
 
 // e2eIPv6Subnet is the docker network's IPv6 subnet in dual-stack stacks.
@@ -145,7 +166,13 @@ func setupStack(ctx context.Context, t *testing.T, opts ...stackOption) *stack {
 	// --- dex ----------------------------------------------------------------
 	// Reuse the repo's Dex image (ENTRYPOINT ["dex","serve","/app/config.yaml"])
 	// but mount the e2e config (issuer http://dex:5556/dex) over the baked one.
-	dexCfg := filepath.Join(root, "test", "e2e", "images", "dex-config.yaml")
+	dexCfg, err := os.ReadFile(filepath.Join(root, "test", "e2e", "images", "dex-config.yaml"))
+	if err != nil {
+		t.Fatalf("read dex config: %v", err)
+	}
+	if st.dexTokenExpiry != "" {
+		dexCfg = append(dexCfg, []byte("\nexpiry:\n  idTokens: \""+st.dexTokenExpiry+"\"\n")...)
+	}
 	dex, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			FromDockerfile: testcontainers.FromDockerfile{
@@ -157,7 +184,7 @@ func setupStack(ctx context.Context, t *testing.T, opts ...stackOption) *stack {
 			NetworkAliases: map[string][]string{nw.Name: {"dex"}},
 			ExposedPorts:   []string{"5556/tcp"},
 			Files: []testcontainers.ContainerFile{{
-				HostFilePath:      dexCfg,
+				Reader:            bytes.NewReader(dexCfg),
 				ContainerFilePath: "/app/config.yaml",
 				FileMode:          0o444,
 			}},
@@ -173,6 +200,25 @@ func setupStack(ctx context.Context, t *testing.T, opts ...stackOption) *stack {
 
 	// --- server -------------------------------------------------------------
 	pgDSN := fmt.Sprintf("postgres://%s:%s@postgres:5432/%s?sslmode=disable", pgUser, pgPass, pgDB)
+	serverEnv := map[string]string{
+		"HTTP_PORT":          "8080",
+		"DB_ENABLED":         "true",
+		"DB_DSN":             pgDSN,
+		"AUTH_ENABLED":       "true",
+		"AUTH_ISSUER_URL":    dexIssuer,
+		"AUTH_CLIENT_ID":     dexClientID,
+		"AUTH_CLIENT_SECRET": dexClientSecret,
+		// The server is reached by the agent at http://server:8080 (in-network).
+		"SERVER_URL": "http://server:8080",
+		// Captive portal page — not actually loaded in tests, but must be a valid URL.
+		"CAPTIVE_PORTAL_URL": "http://server:8080/captive-portal",
+		// Plain HTTP in tests, so the session cookie must not require Secure.
+		"COOKIE_SECURE": "false",
+		"LOG_LEVEL":     "info",
+	}
+	for k, v := range st.serverEnv {
+		serverEnv[k] = v
+	}
 	server, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			FromDockerfile: testcontainers.FromDockerfile{
@@ -183,22 +229,7 @@ func setupStack(ctx context.Context, t *testing.T, opts ...stackOption) *stack {
 			Networks:       []string{nw.Name},
 			NetworkAliases: map[string][]string{nw.Name: {"server"}},
 			ExposedPorts:   []string{"8080/tcp"},
-			Env: map[string]string{
-				"HTTP_PORT":          "8080",
-				"DB_ENABLED":         "true",
-				"DB_DSN":             pgDSN,
-				"AUTH_ENABLED":       "true",
-				"AUTH_ISSUER_URL":    dexIssuer,
-				"AUTH_CLIENT_ID":     dexClientID,
-				"AUTH_CLIENT_SECRET": dexClientSecret,
-				// The server is reached by the agent at http://server:8080 (in-network).
-				"SERVER_URL": "http://server:8080",
-				// Captive portal page — not actually loaded in tests, but must be a valid URL.
-				"CAPTIVE_PORTAL_URL": "http://server:8080/captive-portal",
-				// Plain HTTP in tests, so the session cookie must not require Secure.
-				"COOKIE_SECURE": "false",
-				"LOG_LEVEL":     "info",
-			},
+			Env:            serverEnv,
 			WaitingFor: wait.ForHTTP("/api/v1/health").WithPort("8080/tcp").
 				WithStartupTimeout(90 * time.Second),
 		},

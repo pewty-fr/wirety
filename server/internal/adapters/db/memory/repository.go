@@ -21,6 +21,7 @@ type Repository struct {
 	endpointDenylist map[string][]*network.EndpointDenylistEntry   // "networkID:jumpPeerID" -> entries
 	quarantine       map[string]*network.CaptivePortalQuarantine   // "networkID:peerID" -> quarantine state
 	peerRoutes       map[string]map[string][]string                // networkID -> peerID -> AllowedIPs
+	captiveEvents    []*network.CaptivePortalEvent                 // captive-portal access history, oldest first
 }
 
 // NewRepository creates a new in-memory repository
@@ -452,6 +453,50 @@ func (r *Repository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) e
 	return nil
 }
 
+// DeleteExpiredCaptivePortalWhitelist is a no-op: the in-memory repo has no TTL tracking.
+func (r *Repository) DeleteExpiredCaptivePortalWhitelist(ctx context.Context) ([]network.ExpiredWhitelistEntry, error) {
+	return nil, nil
+}
+
+// Captive portal access history
+
+func (r *Repository) AddCaptivePortalEvent(ctx context.Context, e *network.CaptivePortalEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now()
+	}
+	cp := *e
+	r.captiveEvents = append(r.captiveEvents, &cp)
+	return nil
+}
+
+func (r *Repository) ListCaptivePortalEvents(ctx context.Context, networkID, peerID string, limit int) ([]*network.CaptivePortalEvent, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []*network.CaptivePortalEvent
+	for i := len(r.captiveEvents) - 1; i >= 0 && len(out) < limit; i-- {
+		if e := r.captiveEvents[i]; e.NetworkID == networkID && e.PeerID == peerID {
+			cp := *e
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *Repository) DeleteCaptivePortalEventsBefore(ctx context.Context, before time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := r.captiveEvents[:0]
+	for _, e := range r.captiveEvents {
+		if !e.CreatedAt.Before(before) {
+			kept = append(kept, e)
+		}
+	}
+	r.captiveEvents = kept
+	return nil
+}
+
 // Captive portal token operations
 
 func (r *Repository) CreateCaptivePortalToken(ctx context.Context, token *network.CaptivePortalToken) error {
@@ -749,3 +794,4 @@ func (r *Repository) ListPeerLocalRoutes(ctx context.Context, networkID string) 
 	return out, nil
 }
 
+var _ network.CaptivePortalEventRepository = (*Repository)(nil)

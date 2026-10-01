@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import type { CaptivePortalEvent } from '../../types';
+import { describeCaptivePortalEvent } from '../../utils/captivePortalEvents';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faWifi,
@@ -18,6 +20,21 @@ interface TokenPreview {
   network_name: string;
   peer_endpoint: string;
   endpoint_ip: string;
+  // Why the device's previous captive-portal access ended.
+  last_sign_out?: CaptivePortalEvent;
+}
+
+/** Tells the user why they have to sign in again. */
+function PreviousSignOut({ event }: { event?: CaptivePortalEvent }) {
+  if (!event) return null;
+  const { label, explanation } = describeCaptivePortalEvent(event);
+  return (
+    <div className="mb-5 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
+      <span className="font-semibold text-gray-900 dark:text-white">Why sign in again? </span>
+      {label} on {new Date(event.created_at).toLocaleString()}. {explanation}
+      {event.detail && <> ({event.detail})</>}
+    </div>
+  );
 }
 
 /**
@@ -245,6 +262,7 @@ export default function CaptivePortalPage() {
               </div>
 
               {preview ? (
+                <>
                 <dl className="bg-gray-50 dark:bg-gray-900 rounded-lg p-5 mb-5 text-sm space-y-3">
                   <div className="flex justify-between gap-4">
                     <dt className="text-gray-500 dark:text-gray-400">Device</dt>
@@ -271,6 +289,8 @@ export default function CaptivePortalPage() {
                     </dd>
                   </div>
                 </dl>
+                <PreviousSignOut event={preview.last_sign_out} />
+                </>
               ) : (
                 <p className="text-xs text-gray-500 dark:text-gray-400 italic mb-5">
                   Token preview unavailable — could not display the requesting endpoint IP.
@@ -421,6 +441,8 @@ export default function CaptivePortalPage() {
                 </dd>
               </div>
             </dl>
+
+            <PreviousSignOut event={preview.last_sign_out} />
 
             <div className="flex gap-3">
               <button

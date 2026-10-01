@@ -67,6 +67,16 @@ export function usePeer(networkId: string, peerId: string, poll: boolean = true)
   });
 }
 
+// Peer captive-portal access history (sign-ins and why access ended)
+export function usePeerCaptivePortalEvents(networkId: string, peerId: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['peerCaptivePortalEvents', networkId, peerId] as const,
+    queryFn: () => api.getPeerCaptivePortalEvents(networkId, peerId),
+    enabled: enabled && !!networkId && !!peerId,
+    refetchInterval: enabled ? 30000 : false,
+  });
+}
+
 // Peer Connectivity Query — last_seen + has_active_agent
 export function usePeerSession(networkId: string, peerId: string, enabled: boolean = true) {
   return useQuery({

@@ -174,6 +174,27 @@ func (c *apiClient) me(ctx context.Context) (user, error) {
 	return out, err
 }
 
+// captivePortalEvent is an entry of a peer's captive-portal access history.
+type captivePortalEvent struct {
+	Event     string    `json:"event"`
+	Detail    string    `json:"detail"`
+	PeerIP    string    `json:"peer_ip"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// captivePortalEvents returns a peer's captive-portal access history, newest first.
+func (c *apiClient) captivePortalEvents(ctx context.Context, networkID, peerID string) ([]captivePortalEvent, error) {
+	var out []captivePortalEvent
+	err := c.do(ctx, http.MethodGet, "/networks/"+networkID+"/peers/"+peerID+"/captive-portal-events", nil, &out)
+	return out, err
+}
+
+// revokePeerAuth resets a peer's captive-portal authentication, like the
+// dashboard's "Revoke" action.
+func (c *apiClient) revokePeerAuth(ctx context.Context, networkID, peerID string) error {
+	return c.do(ctx, http.MethodPost, "/networks/"+networkID+"/peers/"+peerID+"/revoke-auth", nil, nil)
+}
+
 // createPeerReq mirrors domain.PeerCreateRequest for the fields the harness uses.
 type createPeerReq struct {
 	Name       string `json:"name"`

@@ -84,7 +84,51 @@ deployed behind an ingress (`-server https://<ip> -server-host … -portal-url �
 Before auth the peer reaches the Wirety host through the agent's SNI proxy but
 not the other app on the same IP:443; after auth it reaches both.
 
-Three tests need no WireGuard and run anywhere Docker runs:
+`TestAttackScenarios` plays an attacker against a live deployment (victim device
+signed in, a second device that never signs in, an attacker holding a copy of the
+victim's WireGuard config):
+
+| Subtest | Attack | Expected defense |
+|---------|--------|------------------|
+| `unauthenticated_device_blocked` | Reach the private service without signing in (HTTP, ICMP, HTTPS) | HTTP redirected to the portal, the rest dropped / reset |
+| `spoofed_vpn_source_dropped` | Forge the signed-in device's VPN IP as source | Dropped by WireGuard cryptokey routing on the jump |
+| `regular_agent_token_cannot_mint_portal_tokens` | Use a regular device's enrollment token to mint a portal token | `403`: only jump peers issue tokens |
+| `stolen_config_owner_offline` | Use the stolen config while the owner is offline | Session bound to the signing-in public IP: portal only |
+| `phishing_link_shows_attacker_ip` | Send the victim a portal link triggered from the stolen config | The portal page shows the attacker's public IP |
+| `stolen_config_concurrent_use_denylisted` | Use the stolen config while the owner is online | Oscillation detected, attacker's source dropped at the jump, owner keeps access |
+| `ssh_on_private_host_unauthenticated` | Reach SSH (port 22) on the private host without signing in | Dropped |
+| `ssh_on_jump_host_unauthenticated` | Reach SSH on the jump host itself (its WireGuard IP) without signing in | Dropped by `WIRETY_INPUT` |
+| `ssh_on_jump_host_authenticated` | Reach SSH on the jump host from a signed-in device (the jump runs with `-jump-host-ports 22/tcp`) | Allowed: opened to signed-in peers |
+| `jump_host_port_not_opened` | Reach another service of the jump host (port 9100) from a signed-in device | Dropped: policies govern what is routed through the jump, not the jump itself |
+| `jump_services_reachable_unauthenticated` | — (non-regression) | Before signing in, DNS and ping to the jump still work |
+| `ssh_on_jump_host_from_private_network` | — (no lock-out) | SSH to the jump from its private network (bastion path) is not filtered |
+
+`TestE2ESNIProxy` also tries **domain fronting** (allowed SNI, another vhost's
+`Host`); the test ingress is hardened to refuse a Host/SNI mismatch, as
+production ingresses must be.
+
+`TestCaptivePortalSessionLifecycle` follows captive-portal sessions with a short
+`CAPTIVE_PORTAL_SESSION_TTL`. Signed in, the peer (flagged `use_agent`) reaches
+a private host over HTTP and SSH and the jump host over SSH (opened with
+`-jump-host-ports 22/tcp`), keeps SSH sessions open to both, and stays signed in
+across jump heartbeats.
+
+| Subtest | Proves |
+|---------|--------|
+| `access_survives_heartbeats` | The access and the open SSH session last across jump heartbeats. |
+| `expired_session_cuts_http_and_ssh` | When the session duration is reached, HTTP goes back to the portal, new SSH connections are dropped, and the SSH sessions opened while signed in (private host and jump) stop carrying data. |
+| `revoked_session_cuts_http_and_ssh` | After signing in again, a **Revoke Auth** from the dashboard cuts HTTP and SSH the same way. |
+
+The portal page then tells why the previous session ended, and the access
+history records sign-in → expired → sign-in → revoked, each sign-in bound to
+the device's public IP.
+
+`TestSessionSurvivesTokenRefresh` keeps a dashboard session busy with bursts of
+concurrent API calls (like the frontend's polling) across six OIDC token
+lifetimes (Dex with 10 s tokens and rotating refresh tokens): every call must
+succeed, the server refreshing the tokens transparently. It needs no WireGuard.
+
+Three more tests need no WireGuard and run anywhere Docker runs:
 
 - `TestStackSmoke` checks the plumbing: images, DB, OIDC, REST, and that a custom
   `domain_suffix` is persisted.
@@ -115,6 +159,10 @@ test/e2e/
   scenario_ipv6_test.go    the dual-stack scenario (TestE2EIPv6)
   scenario_sni_test.go     shared-ingress vhost isolation (TestE2ESNIProxy)
   captive_flow_test.go     server-side captive-portal flow, no WireGuard
+  attack_test.go           attack scenarios against a live deployment
+  ssh.go                   fake SSH server, banner probe and long-lived session
+  captive_session_test.go  captive-portal session duration, expiry and access history
+  session_refresh_test.go  OIDC token refresh under concurrent load
   smoke_test.go     non-WireGuard spine check (TestStackSmoke)
   images/
     peer.Dockerfile        plain WireGuard client (wg-quick + probes)

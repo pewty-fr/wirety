@@ -5,6 +5,7 @@ import type { PeerReachability } from '../types';
 import Modal from './Modal';
 import JumpPeerModal from './JumpPeerModal';
 import RegularPeerModal from './RegularPeerModal';
+import CaptivePortalHistory from './CaptivePortalHistory';
 import { usePeer, useNetwork } from '../hooks/useQueries';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api/client';
@@ -461,6 +462,9 @@ export default function PeerDetailModal({ isOpen, onClose, peer, onUpdate, users
                     );
                   })()}
                 </div>
+              )}
+              {!displayPeer.is_jump && displayPeer.network_id && (
+                <CaptivePortalHistory networkId={displayPeer.network_id} peerId={displayPeer.id} enabled={isOpen} />
               )}
             </div>
           </div>

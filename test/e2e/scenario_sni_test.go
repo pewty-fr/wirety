@@ -119,6 +119,13 @@ func TestE2ESNIProxy(t *testing.T) {
 	} else if !hasRule(out, "-d "+ingressIP+"/32", "--dport 443", "REDIRECT", "--to-ports 3129") {
 		t.Fatalf("no SNI proxy redirect in WIRETY_SNI:\n%s", out)
 	}
+	// Domain fronting: an allowed server name in the TLS handshake, the other
+	// application's name in the (encrypted) Host header. The SNI proxy cannot
+	// see the Host header: the ingress must refuse a Host that differs from
+	// the TLS server name (see the hardening in startIngress).
+	if _, body, err := httpsFronted(ctx, peer, sniVPNHost, sniDocsHost, ingressIP); err == nil && strings.Contains(body, "docs") {
+		t.Fatalf("domain fronting (SNI %s, Host %s) reached the other application before authentication", sniVPNHost, sniDocsHost)
+	}
 
 	// --- authenticate through the captive portal -----------------------------
 	var startURL string
@@ -172,6 +179,22 @@ func httpsProbe(ctx context.Context, t *testing.T, c testcontainers.Container, h
 	return strings.TrimSpace(out)
 }
 
+// httpsFronted GETs https://sni/ from inside c (resolving sni to ip) with a
+// different Host header, and returns the status code and body.
+func httpsFronted(ctx context.Context, c testcontainers.Container, sni, host, ip string) (string, string, error) {
+	_, out, err := execInContainer(ctx, c, "curl", "-sk", "--max-time", "5", "-w", "\n%{http_code}",
+		"--resolve", sni+":443:"+ip, "-H", "Host: "+host, "https://"+sni+"/")
+	if err != nil {
+		return "", "", err
+	}
+	out = strings.TrimSpace(out)
+	i := strings.LastIndexByte(out, '\n')
+	if i < 0 {
+		return out, "", nil
+	}
+	return out[i+1:], out[:i], nil
+}
+
 // startIngress runs a TLS reverse proxy standing in for a shared ingress:
 // sniVPNHost proxies to the Wirety server (websocket included), sniDocsHost
 // is another application. Returns its IP.
@@ -198,6 +221,11 @@ http {
   server {
     listen 443 ssl;
     server_name ` + sniDocsHost + `;
+    # Domain-fronting hardening (required with the SNI proxy): refuse a
+    # request whose Host differs from the TLS server name. Without it, an
+    # unauthenticated peer reaches this vhost with SNI vpn.e2e.test and
+    # "Host: docs.e2e.test" — verified by this test.
+    if ($ssl_server_name != $host) { return 421; }
     location / { return 200 "docs\n"; }
   }
 }

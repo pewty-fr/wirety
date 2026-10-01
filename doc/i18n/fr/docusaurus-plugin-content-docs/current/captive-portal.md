@@ -224,28 +224,56 @@ Les sessions expirées sont purgées automatiquement de la base de données (`re
 Le cookie de navigateur est persistant (TTL de 30 jours). Lorsque l'utilisateur ouvre à nouveau la page du portail captif après une reconnexion, il est déjà considéré comme authentifié et le flux du portail se déroule automatiquement sans nouvelle connexion.
 
 ### Liste blanche des peers (iptables)
-La liste blanche du portail captif est persistée dans la base de données avec un **TTL de 24 heures**. Lorsque l'agent redémarre ou se reconnecte :
+La liste blanche du portail captif est persistée dans la base de données avec une durée de session configurable (**`CAPTIVE_PORTAL_SESSION_TTL`**, 24 heures par défaut — voir [Durée de session et causes de déconnexion](#durée-de-session-et-causes-de-déconnexion)). Lorsque l'agent redémarre ou se reconnecte :
 
 1. Le serveur pousse une mise à jour de politique via WebSocket incluant la liste blanche actuelle (non expirée).
 2. L'agent re-synchronise iptables et re-ajoute les règles `ACCEPT`.
 
-Les peers déjà authentifiés n'ont pas besoin de se réauthentifier après un redémarrage de l'agent, tant que leur IP VPN n'a pas changé et que le TTL de 24 heures n'a pas expiré.
+Les peers déjà authentifiés n'ont pas besoin de se réauthentifier après un redémarrage de l'agent, tant que leur IP VPN n'a pas changé et que la durée de session n'est pas écoulée.
 
 :::caution
 Si un peer reçoit une nouvelle IP VPN (ex. après une longue absence et que l'IPAM recycle l'adresse), l'ancienne entrée de liste blanche ne correspond plus et le peer doit se réauthentifier.
 :::
+
+## Durée de session et causes de déconnexion
+
+Une authentification au portail captif est valable **`CAPTIVE_PORTAL_SESSION_TTL`** (variable d'environnement du serveur, durée Go comme `8h` ou `30m` ; défaut `24h`). La durée court depuis l'authentification et n'est pas prolongée par l'activité ; une nouvelle authentification démarre une nouvelle session.
+
+Un peer doit repasser par le portail plus tôt quand :
+
+| Cause | Événement | Délai |
+|-------|-----------|-------|
+| La durée de session est atteinte | `expired` | Accès retiré en ~30 s (heartbeat suivant du jump) |
+| Le tunnel est déconnecté — aucun handshake WireGuard depuis plus de 185 s (appareil en veille, réseau perdu, VPN coupé) | `tunnel_inactive` | Heartbeat suivant du jump (≤ 30 s) |
+| L'IP publique a changé (autre Wi-Fi, données mobiles…) — un simple changement de port NAT ne compte pas | `endpoint_changed` | Immédiat (le jump compare l'endpoint courant à celui de l'authentification) |
+| Un admin ou le propriétaire a cliqué sur **Revoke Auth** | `revoked` | Immédiat |
+
+La déconnexion coupe **toutes** les connexions de l'appareil, y compris celles ouvertes pendant qu'il était authentifié (une session SSH, un téléchargement, une WebSocket) : le jump vérifie l'authentification pour chaque paquet envoyé par l'appareil, pas seulement pour le premier paquet d'une connexion. Les réponses aux connexions que l'appareil n'a pas ouvertes (un autre peer qui le joint) ne sont pas concernées.
+
+### Historique d'accès
+
+Chaque authentification (`authenticated`) et chaque fin d'accès, avec sa cause et ses détails (âge du dernier handshake, ancienne → nouvelle IP publique…), sont enregistrées et conservées **30 jours** :
+
+- **Tableau de bord** — la fenêtre **Peer Detail** affiche la **dernière déconnexion** (*Last sign-out*) et l'**historique du portail** (*Portal history*). Visible par les admins et par le propriétaire du peer.
+- **Page du portail captif** — quand un utilisateur se reconnecte, la page lui indique pourquoi sa session précédente s'est terminée.
+- **API** — `GET /networks/{networkId}/peers/{peerId}/captive-portal-events?limit=20` (du plus récent au plus ancien).
+
+Quand des utilisateurs sont déconnectés plusieurs fois par jour, l'historique indique la cause dominante : `tunnel_inactive` (ordinateurs portables mis en veille), `endpoint_changed` (utilisateurs qui changent de réseau, ou connexion dont l'IP publique change souvent) ou `expired` (envisager un `CAPTIVE_PORTAL_SESSION_TTL` plus long).
 
 ## Sécurité
 
 ### Configuration WireGuard volée
 Si la configuration WireGuard d'un utilisateur (clé privée) est volée, l'attaquant se connecte avec la même IP VPN et hériterait normalement de l'entrée de liste blanche. Deux défenses limitent les dommages :
 
-**TTL de liste blanche (24 heures) :** Les entrées de liste blanche expirent après 24 heures. L'accès de l'attaquant se termine quand l'entrée expire, même si le vol n'est pas détecté.
+**Durée de session (`CAPTIVE_PORTAL_SESSION_TTL`, 24 heures par défaut) :** Les entrées de liste blanche expirent au bout de cette durée. L'accès de l'attaquant se termine quand l'entrée expire, même si le vol n'est pas détecté.
 
-**Liaison stricte à l'endpoint :** Chaque entrée de liste blanche est liée à l'endpoint public complet du peer (`ip:port`) au moment de l'authentification. L'agent du jump peer compare l'endpoint live retourné par `wg show endpoints` à l'endpoint stocké à chaque requête du portail captif et à chaque resync iptables (toutes les 300 ms). Toute différence — IP différente, port NAT renégocié, ou même une nouvelle session WireGuard du même utilisateur légitime — supprime la règle `ACCEPT` iptables et force une nouvelle authentification via le portail captif. Une configuration volée utilisée depuis un autre réseau échoue donc à la vérification immédiatement, sans attendre l'expiration TTL.
+**Liaison stricte à l'endpoint :** Chaque entrée de liste blanche est liée à l'endpoint public complet du peer (`ip:port`) au moment de l'authentification. L'agent du jump peer compare l'endpoint live retourné par `wg show endpoints` à l'endpoint stocké à chaque requête du portail captif et à chaque resync iptables (toutes les 300 ms). Une IP publique différente supprime la règle `ACCEPT` iptables et force une nouvelle authentification via le portail captif (un simple changement de port NAT est toléré). Une configuration volée utilisée depuis un autre réseau échoue donc à la vérification immédiatement, sans attendre l'expiration TTL.
 
 ### Configuration WireGuard partagée (intentionnelle)
 Si un utilisateur partage sa configuration WireGuard avec une autre personne, cette personne se connectera avec la même IP VPN mais ne pourra pas passer le portail captif : l'authentification vérifie que la session Wirety appartient au propriétaire du peer. Tenter de s'authentifier en tant qu'utilisateur différent — même un administrateur — entraîne une erreur de propriété.
+
+### Services de l'hôte jump lui-même
+Les règles ci-dessus régissent ce qui est routé à travers le jump. Ce que les peers atteignent sur l'hôte jump lui-même via le tunnel (son `sshd`, ses exporters…) est filtré par les chaînes `WIRETY_INPUT` : tout peer a accès au DNS, au portail captif et au proxy SNI ; les peers authentifiés ont aussi accès aux ports listés dans `JUMP_HOST_PORTS` de l'agent (par exemple `22/tcp`) ; tout le reste est rejeté. Les autres interfaces de l'hôte (réseau privé, bastion) ne sont pas filtrées. Voir [Services de l'hôte jump](agent#services-de-lhôte-jump-jump_host_ports).
 
 ## Gestion de la liste blanche
 
@@ -253,11 +281,11 @@ La liste blanche est par jump peer et stockée dans la table `captive_portal_whi
 
 | Opération | Quand |
 |-----------|-------|
-| `AddCaptivePortalWhitelist` | Le peer complète l'authentification du portail captif (upsert avec TTL 24h) |
+| `AddCaptivePortalWhitelist` | Le peer complète l'authentification du portail captif (upsert, expire après `CAPTIVE_PORTAL_SESSION_TTL`) |
 | `GetCaptivePortalWhitelist` | L'agent demande une synchronisation de politique — filtre les entrées expirées |
 | `RemoveCaptivePortalWhitelistByPeerIP` | Incident de sécurité détecté (quarantaine) |
 | `ClearCaptivePortalWhitelist` | Désenregistrement du jump peer |
-| `CleanupExpiredCaptivePortalWhitelist` | Tâche de fond toutes les heures |
+| `CleanupExpiredCaptivePortalWhitelist` | Tâche de fond toutes les 2 minutes (enregistre aussi les événements `expired` et purge l'historique de plus de 30 jours) |
 
 ## Dépannage
 
@@ -266,7 +294,8 @@ La liste blanche est par jump peer et stockée dans la table `captive_portal_whi
 | La page du portail captif dit "not available" | `AUTH_ENABLED=false` — activer OIDC pour utiliser le portail captif. |
 | "access denied: this peer belongs to another user" | Connecté avec le mauvais utilisateur Wirety. Cliquer sur "Se connecter avec un autre compte" et se connecter en tant que propriétaire du peer. |
 | "access denied: this peer has no owner" | Le peer a été créé par un admin sans assigner de propriétaire. Assigner un propriétaire dans le tableau de bord Wirety. |
-| Le peer authentifié perd l'accès après 24 heures | Normal — le TTL de la liste blanche a expiré. Le peer doit se réauthentifier. |
+| Le peer authentifié perd l'accès après 24 heures | Normal — la durée de session (`CAPTIVE_PORTAL_SESSION_TTL`, 24 h par défaut) est atteinte. Le peer doit se réauthentifier. |
+| Des utilisateurs doivent se reconnecter plusieurs fois par jour | Consulter l'**historique du portail** dans le détail du peer : il enregistre la cause de chaque déconnexion (voir [Durée de session et causes de déconnexion](#durée-de-session-et-causes-de-déconnexion)). |
 | Le peer authentifié perd l'accès après un redémarrage de l'agent | La liste blanche n'a pas été restaurée — vérifier la connectivité WebSocket entre l'agent et le serveur. |
 | Le popup du portail captif OS n'apparaît pas (tunnel partagé) | La configuration WireGuard du peer ne définit peut-être pas `DNS = <ip-wg-jump-peer>`. Sans cela, les domaines de sonde et les requêtes de domaine interne contournent le DNS du tunnel. Vérifier la configuration WireGuard du peer. |
 | Le popup du portail captif OS n'apparaît pas (tunnel complet) | CNA/NCSI se déclenche automatiquement pour les peers en tunnel complet. Si cela ne se déclenche pas, essayer de déconnecter et reconnecter WireGuard. |
@@ -290,7 +319,8 @@ Le proxy **ne déchiffre jamais rien** : TLS reste de bout en bout entre le peer
 nat WIRETY_SNI:   -s <IPPeerAuthentifié> -j RETURN
                   -d <serverIP> -p tcp --dport 443 -j REDIRECT --to-ports 3129
 filter WIRETY_JUMP:
-  Règle 0:  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  Règle 0:  ! -i <wg> -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT               (vers les peers)
+            -i <wg> -m conntrack --ctstate ESTABLISHED,RELATED --ctdir REPLY -j ACCEPT (un peer qui répond à une connexion qu'il n'a pas ouverte)
   Règle 1:  -d <serverIP> -p tcp --dport 443 -j ACCEPT   (peers authentifiés — les non authentifiés ont été redirigés ci-dessus)
   Règle 2:  -s <IPPeerAuthentifié> -j WIRETY_POLICY
   Règle 3:  -j DROP                                       (tous les autres)
@@ -301,6 +331,20 @@ Avant authentification, le peer peut donc se connecter sur `https://wirety.examp
 ### Limitations
 
 **Serveur en HTTP simple ou sans nom d'hôte :** le SNI n'existe qu'en TLS. Avec un `SERVER_URL` en `http://`, ou si aucun nom d'hôte n'est connu (`SERVER_URL` en IP brute sans `SERVER_HOST` ni hostname dans `CAPTIVE_PORTAL_URL`), le proxy est désactivé et tous les vhosts de l'IP:port du serveur sont joignables avant authentification. Dans ce dernier cas, l'agent journalise un avertissement au démarrage.
+
+**Domain fronting — l'ingress doit refuser un Host différent du SNI :** le proxy ne voit que le nom de serveur TLS ; l'en-tête HTTP `Host` voyage chiffré. Un peer peut ouvrir la session TLS avec `SNI: wirety.example.com` et envoyer `Host: docs.example.com` : un ingress qui route selon le `Host` sert alors l'autre application. Configurez l'ingress pour refuser une requête dont le `Host` diffère du nom de serveur TLS (`421 Misdirected Request`). Avec nginx, dans chaque autre hôte virtuel de cette IP:port :
+
+```nginx
+if ($ssl_server_name != $host) { return 421; }
+```
+
+Vérifiez-le depuis un peer non authentifié — la commande ne doit **pas** renvoyer l'autre application :
+
+```bash
+curl -k --resolve wirety.example.com:443:<ip-ingress> -H "Host: docs.example.com" https://wirety.example.com/
+```
+
+Si l'ingress ne peut pas l'imposer, exposez Wirety sur sa propre IP.
 
 **Encrypted Client Hello (ECH) :** un client utilisant ECH masque le vrai SNI ; le proxy ne voit alors que le nom public et refuse la connexion, sauf si ce nom est autorisé. Les hôtes internes ne publient pas de configuration ECH, les navigateurs leur envoient donc un SNI en clair.
 

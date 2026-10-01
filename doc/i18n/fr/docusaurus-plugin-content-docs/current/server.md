@@ -14,6 +14,7 @@ Le serveur Wirety fournit des API REST et WebSocket, orchestre les peers, les in
 | `HTTP_PORT` | Port HTTP du serveur | `8080` |
 | `CORS_ORIGIN` | Origine(s) CORS autorisée(s) — séparées par des virgules pour plusieurs origines (ex. `https://app.example.com,https://admin.example.com`). `ALLOWED_ORIGIN` est un alias hérité. | `*` |
 | `AUDIT_LOG` | Activer la journalisation d'audit JSON structurée sur stdout | `false` |
+| `CAPTIVE_PORTAL_SESSION_TTL` | Durée de validité d'une authentification au portail captif (durée Go, ex. `8h`, `30m`) — voir [Portail captif](captive-portal#durée-de-session-et-causes-de-déconnexion) | `24h` |
 
 ### Authentification
 | Variable | Description | Défaut |

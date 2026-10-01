@@ -135,6 +135,13 @@ func main() {
 
 	// Initialize services
 	networkService := appnetwork.NewService(networkRepo, ipamRepo, userRepo, groupRepo, routeRepo, dnsRepo, policyRepo)
+	if r, ok := networkRepo.(interface{ SetCaptivePortalSessionTTL(time.Duration) }); ok {
+		r.SetCaptivePortalSessionTTL(cfg.CaptivePortalSessionTTL)
+		log.Info().Dur("captive_portal_session_ttl", cfg.CaptivePortalSessionTTL).Msg("captive portal session duration")
+	}
+	if events, ok := networkRepo.(domainnetwork.CaptivePortalEventRepository); ok {
+		networkService.SetCaptivePortalEventRepository(events)
+	}
 	ipamService := ipam.NewService(ipamRepo)
 
 	var authService *appauth.Service
@@ -247,10 +254,12 @@ func main() {
 				if err := userRepo.CleanupExpiredSessions(); err != nil {
 					log.Warn().Err(err).Msg("Session cleanup failed")
 				}
-				if err := networkRepo.CleanupExpiredCaptivePortalWhitelist(context.Background()); err != nil {
+			case <-fast.C:
+				// Every 2 min so an expired captive-portal session is recorded
+				// promptly in the peer's access history.
+				if err := networkService.CleanupExpiredCaptivePortalWhitelist(context.Background()); err != nil {
 					log.Warn().Err(err).Msg("Captive portal whitelist cleanup failed")
 				}
-			case <-fast.C:
 				if err := networkService.CleanupExpiredCaptivePortalTokens(context.Background()); err != nil {
 					log.Warn().Err(err).Msg("Captive portal token cleanup failed")
 				}
