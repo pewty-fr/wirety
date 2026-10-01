@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.3](https://github.com/pewty-fr/wirety/compare/wirety-server/v3.1.2...wirety-server/v3.1.3) (2026-10-01)
+
+
+### Bug Fixes
+
+* new sso try ([#388](https://github.com/pewty-fr/wirety/issues/388)) ([334b95e](https://github.com/pewty-fr/wirety/commit/334b95e493323995eda679191ec1f0c083d0e567))
+
 ## [3.1.2](https://github.com/pewty-fr/wirety/compare/wirety-server/v3.1.1...wirety-server/v3.1.2) (2026-09-25)
 
 
