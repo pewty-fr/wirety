@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.5](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.1.4...wirety-front/v3.1.5) (2026-10-01)
+
+
+### Bug Fixes
+
+* front react deps not aligned ([85f857d](https://github.com/pewty-fr/wirety/commit/85f857d27991069fcf07d122095cd8d43526aa28))
+
 ## [3.1.4](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.1.3...wirety-front/v3.1.4) (2026-10-01)
 
 
