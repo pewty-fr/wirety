@@ -214,7 +214,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '>=1.26.0'
-      - uses: ko-build/setup-ko@v0.7
+      - uses: ko-build/setup-ko@v0.10
       - name: Build and Push Server
         id: build_server
         run: |
