@@ -147,6 +147,10 @@ jobs:
       - name: Run lint
         run: npm run lint
 
+      # Also checks that react and react-dom have the same version (prebuild).
+      - name: Build
+        run: npm run build
+
   test-doc:
     name: Test Documentation
     runs-on: ubuntu-latest

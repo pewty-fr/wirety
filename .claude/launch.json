@@ -13,15 +13,35 @@
     {
       "name": "Frontend (Vite)",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "cwd": "front",
       "port": 5173,
       "autoPort": true
     },
     {
+      "name": "Frontend (production build)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "preview",
+        "--",
+        "--port",
+        "4173",
+        "--strictPort"
+      ],
+      "cwd": "front",
+      "port": 4173
+    },
+    {
       "name": "Server (Go)",
       "runtimeExecutable": "go",
-      "runtimeArgs": ["run", "./cmd/main.go"],
+      "runtimeArgs": [
+        "run",
+        "./cmd/main.go"
+      ],
       "cwd": "server",
       "port": 8080,
       "env": {
@@ -29,12 +49,17 @@
         "DB_DSN": "postgres://wirety:wirety@localhost:5432/wirety?sslmode=disable",
         "KO_DATA_PATH": "cmd/kodata"
       },
-      "dependsOn": ["Postgres (Docker)"]
+      "dependsOn": [
+        "Postgres (Docker)"
+      ]
     },
     {
       "name": "Docs (Docusaurus)",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "start"],
+      "runtimeArgs": [
+        "run",
+        "start"
+      ],
       "cwd": "doc",
       "port": 3000
     }

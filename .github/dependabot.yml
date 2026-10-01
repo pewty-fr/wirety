@@ -42,6 +42,15 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
+    groups:
+      # react and react-dom must have the exact same version (React refuses
+      # to render otherwise): upgrade them, with their types, in one PR.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
     ignore:
       # Ignore major version updates for React (requires manual testing)
       - dependency-name: "react"
