@@ -53,6 +53,10 @@ Options:
   -audit-log
         Emit audit events to stdout, in the -log-format format
         (env: AUDIT_LOG, default: false)
+  -jump-host-ports string
+        Jump peer: ports of this host that signed-in peers can reach through
+        the tunnel, e.g. 22/tcp,9100 (env: JUMP_HOST_PORTS, default: none)
+        See "Jump Host Services" below
 ```
 
 ## Usage Example
@@ -138,6 +142,42 @@ wirety-agent -server https://10.0.0.7 -server-host wirety.internal -token <TOKEN
 ```
 
 With a plain-HTTP server, or when no host name is known at all, there is nothing to filter on: every virtual host on the server's IP:port is reachable before authentication (the agent logs a warning). See [Reverse Proxy and Virtual Host Isolation](captive-portal#reverse-proxy-and-virtual-host-isolation).
+
+## Jump Host Services (`JUMP_HOST_PORTS`)
+
+On a jump peer, the agent filters what peers reach **on the jump host itself** through the tunnel — its WireGuard IP, or any of its addresses reached through the tunnel. Policies do not cover this: they govern what is routed *through* the jump. The `WIRETY_INPUT` / `WIRETY6_INPUT` chains, hooked in `INPUT` for the WireGuard interface only, allow:
+
+| Who | What they reach on the jump host |
+|-----|----------------------------------|
+| Every peer | DNS (53), captive portal (80), HTTPS 443 (answered with a reset so browsers fail fast), SNI proxy (`HTTPS_PROXY_PORT`), the Wirety server when it runs on the jump host, ping |
+| Signed-in peers | The above, plus the ports listed in `JUMP_HOST_PORTS` |
+
+Everything else arriving through the tunnel for the jump host — `sshd`, exporters, databases — is dropped.
+
+```bash
+# SSH on the jump for signed-in peers
+wirety-agent -server https://wirety.example.com -token <TOKEN> -jump-host-ports 22/tcp
+
+# Several entries: port[/proto] or from-to[/proto], tcp by default
+JUMP_HOST_PORTS=22,9100/tcp,60000-61000/udp
+```
+
+An invalid value stops the agent at startup. As for routed traffic, every packet is checked against the sign-in: when the peer signs out (session expired, revoked, network changed), its SSH session to the jump is cut. `sshd` still authenticates the user: restrict who may log in there (`AllowGroups`, keys).
+
+:::caution Upgrading
+Before this filter existed, every service of the jump host was reachable through the tunnel. If you administer the jump over the VPN, set `JUMP_HOST_PORTS=22/tcp` when upgrading the agent. Anything that reaches the jump host through the tunnel without a captive-portal sign-in (for example a monitoring server enrolled as a peer and scraping the jump's WireGuard IP) must use the private network instead.
+:::
+
+### Avoiding a lock-out
+
+- **Only the WireGuard interface is filtered.** The agent never changes the `INPUT` policy nor touches the other interfaces: SSH to the jump from the private network (VPC, through a bastion), its public interface or the cloud console keeps working whatever happens on the tunnel side. Keep such a path open in your security groups: it is the break-glass access.
+- **Over the tunnel, SSH needs a captive-portal sign-in.** While the Wirety server or the IdP is unavailable, nobody can sign in: use the private network path.
+- **Lifting the filter by hand** (from the bastion or the console), until the agent's next firewall sync — stop the agent first to keep it lifted:
+
+  ```bash
+  iptables -D INPUT -i wg0 -j WIRETY_INPUT
+  ip6tables -D INPUT -i wg0 -j WIRETY6_INPUT
+  ```
 
 ## NAT Interface Detection
 

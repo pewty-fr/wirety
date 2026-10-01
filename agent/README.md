@@ -84,6 +84,7 @@ The agent can be configured using environment variables:
 | `NAT_INTERFACE` | NAT interface (auto-detected if empty) | Auto-detect |
 | `HTTP_PROXY_PORT` | HTTP proxy port | `3128` |
 | `HTTPS_PROXY_PORT` | Port of the SNI proxy through which unauthenticated peers reach an HTTPS server (only its host names are relayed) | `3129` |
+| `JUMP_HOST_PORTS` | Jump peer: ports of this host that signed-in peers can reach through the tunnel, e.g. `22/tcp,9100` — everything else arriving on the WireGuard interface for this host is dropped, except DNS, captive portal and SNI proxy | None |
 | `LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
 
 ## Building

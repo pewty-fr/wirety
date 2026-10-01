@@ -18,6 +18,8 @@ import (
 type NetworkRepository struct {
 	db   *sql.DB
 	acls map[string]*network.ACL
+	// captivePortalTTL overrides DefaultCaptivePortalSessionTTL when set.
+	captivePortalTTL time.Duration
 }
 
 // NewNetworkRepository constructs a new repository
@@ -470,15 +472,29 @@ func (r *NetworkRepository) ListSessions(ctx context.Context, networkID string) 
 	return out, rows.Err()
 }
 
-// CaptivePortalWhitelistTTL is how long a whitelist entry remains valid after authentication.
-// After this duration the peer must re-authenticate via the captive portal.
-const CaptivePortalWhitelistTTL = 24 * time.Hour
+// DefaultCaptivePortalSessionTTL is how long a whitelist entry remains valid
+// after authentication when CAPTIVE_PORTAL_SESSION_TTL is not set. After this
+// duration the peer must re-authenticate via the captive portal.
+const DefaultCaptivePortalSessionTTL = 24 * time.Hour
+
+// SetCaptivePortalSessionTTL sets how long a captive-portal authentication
+// stays valid (CAPTIVE_PORTAL_SESSION_TTL).
+func (r *NetworkRepository) SetCaptivePortalSessionTTL(ttl time.Duration) {
+	r.captivePortalTTL = ttl
+}
+
+func (r *NetworkRepository) captivePortalSessionTTL() time.Duration {
+	if r.captivePortalTTL > 0 {
+		return r.captivePortalTTL
+	}
+	return DefaultCaptivePortalSessionTTL
+}
 
 // Captive portal whitelist operations
 
 func (r *NetworkRepository) AddCaptivePortalWhitelist(ctx context.Context, networkID, jumpPeerID, peerIP, peerEndpoint string) error {
 	now := time.Now()
-	expiresAt := now.Add(CaptivePortalWhitelistTTL)
+	expiresAt := now.Add(r.captivePortalSessionTTL())
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO captive_portal_whitelist (network_id, jump_peer_id, peer_ip, peer_endpoint, created_at, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -544,10 +560,75 @@ func (r *NetworkRepository) ClearCaptivePortalWhitelist(ctx context.Context, net
 }
 
 func (r *NetworkRepository) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.DeleteExpiredCaptivePortalWhitelist(ctx)
+	return err
+}
+
+// DeleteExpiredCaptivePortalWhitelist removes the expired whitelist entries
+// and returns them (a peer whitelisted on several jump peers appears once).
+func (r *NetworkRepository) DeleteExpiredCaptivePortalWhitelist(ctx context.Context) ([]network.ExpiredWhitelistEntry, error) {
+	rows, err := r.db.QueryContext(ctx, `
 		DELETE FROM captive_portal_whitelist
 		WHERE expires_at IS NOT NULL AND expires_at < NOW()
+		RETURNING network_id, peer_ip, expires_at
 	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	seen := make(map[string]bool)
+	var out []network.ExpiredWhitelistEntry
+	for rows.Next() {
+		var e network.ExpiredWhitelistEntry
+		if err := rows.Scan(&e.NetworkID, &e.PeerIP, &e.ExpiresAt); err != nil {
+			return nil, err
+		}
+		if key := e.NetworkID + "|" + e.PeerIP; !seen[key] {
+			seen[key] = true
+			out = append(out, e)
+		}
+	}
+	return out, rows.Err()
+}
+
+// Captive portal access history
+
+func (r *NetworkRepository) AddCaptivePortalEvent(ctx context.Context, e *network.CaptivePortalEvent) error {
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now()
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO captive_portal_events (network_id, peer_id, peer_ip, event, detail, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, e.NetworkID, e.PeerID, e.PeerIP, e.Event, nullableString(e.Detail), e.CreatedAt)
+	return err
+}
+
+func (r *NetworkRepository) ListCaptivePortalEvents(ctx context.Context, networkID, peerID string, limit int) ([]*network.CaptivePortalEvent, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT network_id, peer_id, peer_ip, event, COALESCE(detail, ''), created_at
+		FROM captive_portal_events
+		WHERE network_id = $1 AND peer_id = $2
+		ORDER BY created_at DESC, id DESC
+		LIMIT $3
+	`, networkID, peerID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*network.CaptivePortalEvent
+	for rows.Next() {
+		e := &network.CaptivePortalEvent{}
+		if err := rows.Scan(&e.NetworkID, &e.PeerID, &e.PeerIP, &e.Event, &e.Detail, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (r *NetworkRepository) DeleteCaptivePortalEventsBefore(ctx context.Context, before time.Time) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM captive_portal_events WHERE created_at < $1`, before)
 	return err
 }
 
@@ -896,3 +977,4 @@ func (r *NetworkRepository) ListPeerLocalRoutes(ctx context.Context, networkID s
 	return out, rows.Err()
 }
 
+var _ network.CaptivePortalEventRepository = (*NetworkRepository)(nil)

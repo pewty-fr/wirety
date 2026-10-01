@@ -220,6 +220,37 @@ func (s *stack) captivePortalStart(ctx context.Context, startURL string) (token,
 	return token, cpState, nil
 }
 
+// captivePortalPreview is what the captive-portal page shows before the user
+// confirms (GET /captive-portal/preview).
+type captivePortalPreview struct {
+	PeerName    string              `json:"peer_name"`
+	EndpointIP  string              `json:"endpoint_ip"`
+	LastSignOut *captivePortalEvent `json:"last_sign_out"`
+}
+
+func (s *stack) captivePortalPreview(ctx context.Context, token, sessionHash string) (*captivePortalPreview, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"http://server:8080/api/v1/captive-portal/preview?token="+url.QueryEscape(token), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Cookie", "wirety_session="+sessionHash)
+	resp, err := s.inNetworkClient("").Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("captive-portal preview: status %d: %s", resp.StatusCode, body)
+	}
+	var p captivePortalPreview
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, fmt.Errorf("captive-portal preview: %w (%s)", err, body)
+	}
+	return &p, nil
+}
+
 // captivePortalAuthenticate POSTs /authenticate. Cookies are set by hand
 // because the server marks wirety_cp_state Secure and the harness is plain HTTP
 // (a cookie jar would refuse to send it back). An empty cpState or sessionHash

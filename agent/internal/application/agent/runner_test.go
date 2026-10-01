@@ -606,3 +606,39 @@ func TestIsAuthenticatedDualStack(t *testing.T) {
 		}
 	}
 }
+
+// Two devices using the same WireGuard config make the endpoint seen by the
+// jump oscillate: the foreign one must be reported as a takeover even when the
+// legitimate device's source port changed since it signed in (NAT rebind,
+// sleep/resume, WireGuard restart) — the authenticated side is recognised by
+// its public IP, like isAuthenticated does.
+func TestTakeoverDetectedAfterLegitPortChange(t *testing.T) {
+	runner := NewRunner(nil, nil, nil, nil, "ws://localhost:8080", "wg0", "", "")
+	runner.updateWhitelist([]string{"10.0.0.2@198.51.100.7:51000"}) // signed in from :51000
+
+	for _, ep := range []string{
+		"198.51.100.7:62000", // legitimate device, new source port
+		"203.0.113.9:40000",  // attacker
+		"198.51.100.7:62000",
+		"203.0.113.9:40000",
+	} {
+		runner.queueTakeoverIfRogue("10.0.0.2", ep)
+	}
+
+	if len(runner.pendingTakeovers) != 1 || runner.pendingTakeovers[0].ObservedAt != "203.0.113.9:40000" {
+		t.Fatalf("want one takeover report for 203.0.113.9:40000, got %+v", runner.pendingTakeovers)
+	}
+}
+
+// A legitimate device that only changed port is not a takeover.
+func TestPortChangeAloneIsNotATakeover(t *testing.T) {
+	runner := NewRunner(nil, nil, nil, nil, "ws://localhost:8080", "wg0", "", "")
+	runner.updateWhitelist([]string{"10.0.0.2@198.51.100.7:51000"})
+
+	for _, ep := range []string{"198.51.100.7:62000", "198.51.100.7:51000", "198.51.100.7:63000"} {
+		runner.queueTakeoverIfRogue("10.0.0.2", ep)
+	}
+	if len(runner.pendingTakeovers) != 0 {
+		t.Fatalf("port changes reported as takeover: %+v", runner.pendingTakeovers)
+	}
+}

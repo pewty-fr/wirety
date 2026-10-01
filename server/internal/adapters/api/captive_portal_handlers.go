@@ -2,6 +2,9 @@ package api
 
 import (
 	"net/http"
+	"strconv"
+
+	"wirety/internal/adapters/api/middleware"
 
 	"github.com/gin-gonic/gin"
 )
@@ -198,4 +201,47 @@ func (h *Handler) AuthenticateCaptivePortal(c *gin.Context) {
 		"network_id":  cpt.NetworkID,
 		"whitelisted": true,
 	})
+}
+
+// ListPeerCaptivePortalEvents godoc
+//
+//	@Summary		Captive-portal access history of a peer
+//	@Description	Sign-ins through the captive portal and every end of access with its cause (expired, tunnel_inactive, endpoint_changed, revoked), newest first. Kept 30 days.
+//	@Tags			peers
+//	@Produce		json
+//	@Param			networkId	path	string	true	"Network ID"
+//	@Param			peerId		path	string	true	"Peer ID"
+//	@Param			limit		query	int		false	"Maximum number of events (default 20, max 100)"
+//	@Success		200	{array}	domain.CaptivePortalEvent
+//	@Failure		403	{object}	map[string]string
+//	@Failure		404	{object}	map[string]string
+//	@Router			/networks/{networkId}/peers/{peerId}/captive-portal-events [get]
+//	@Security		BearerAuth
+func (h *Handler) ListPeerCaptivePortalEvents(c *gin.Context) {
+	networkID := c.Param("networkId")
+	peerID := c.Param("peerId")
+	user := middleware.GetUserFromContext(c)
+
+	peer, err := h.service.GetPeer(c.Request.Context(), networkID, peerID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "peer not found"})
+		return
+	}
+	// Same object-level authz as the peer's connectivity status: admins, or
+	// the owner for their own peers.
+	if user != nil && !user.IsAdministrator() && peer.OwnerID != user.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you can only view your own peers"})
+		return
+	}
+
+	limit := 20
+	if v, err := strconv.Atoi(c.Query("limit")); err == nil && v > 0 {
+		limit = min(v, 100)
+	}
+	events, err := h.service.ListCaptivePortalEvents(c.Request.Context(), networkID, peerID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, events)
 }

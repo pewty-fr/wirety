@@ -47,6 +47,8 @@ type Service struct {
 	policyService       PolicyService
 	wsNotifier          WebSocketNotifier
 	wsConnectionChecker WebSocketConnectionChecker
+	// events stores the captive-portal access history (optional).
+	events network.CaptivePortalEventRepository
 
 	// wgLastSeen tracks the last time a jump peer reported seeing each peer
 	// via an active WireGuard handshake.  Key: "networkID:peerID".
@@ -1042,6 +1044,15 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 				return now.Sub(time.Unix(ts, 0)) <= wgHandshakeStaleness
 			}
 
+			// Last WireGuard handshake per peer IP, to explain a disconnection.
+			lastHandshake := make(map[string]time.Time)
+			for _, p := range peers {
+				if ts, ok := heartbeat.PeerHandshakes[p.PublicKey]; ok && ts > 0 {
+					lastHandshake[vpnIP(p.Address)] = time.Unix(ts, 0)
+				}
+			}
+			liveEndpoints := make(map[string]string) // peer IP -> current public endpoint
+
 			for _, p := range peers {
 				endpoint, seen := heartbeat.PeerEndpoints[p.PublicKey]
 				if !seen {
@@ -1052,13 +1063,15 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 				if !peerIsLive(p) {
 					continue
 				}
+				// A live tunnel keeps the peer's captive-portal access, whether or
+				// not the peer runs the agent.
+				activePeerIPs[vpnIP(p.Address)] = true
+				liveEndpoints[vpnIP(p.Address)] = endpoint
+
 				// Agent peers send their own heartbeat directly; updating their session
 				// here would overwrite hostname/uptime with empty values.  The wgLastSeen
 				// map above already captures their WireGuard connectivity.
 				if p.ID == peerID || p.UseAgent {
-					if !p.UseAgent {
-						activePeerIPs[p.Address] = true
-					}
 					continue
 				}
 				existingP, _ := s.repo.GetSession(ctx, networkID, p.ID)
@@ -1078,9 +1091,9 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 					ps.SessionID = uuid.NewString()
 				}
 				_ = s.repo.CreateOrUpdateSession(ctx, networkID, ps)
-				activePeerIPs[p.Address] = true
 			}
-			if err := s.CleanupWhitelistForDisconnectedPeers(ctx, networkID, peerID, activePeerIPs); err != nil {
+			s.recordEndpointChanges(ctx, networkID, peerID, peers, liveEndpoints)
+			if err := s.CleanupWhitelistForDisconnectedPeers(ctx, networkID, peerID, activePeerIPs, lastHandshake); err != nil {
 				log.Error().Err(err).Msg("failed to cleanup whitelist for disconnected peers")
 			}
 		}
@@ -1275,6 +1288,8 @@ type CaptivePortalTokenPreview struct {
 	NetworkName  string `json:"network_name"`
 	PeerEndpoint string `json:"peer_endpoint"` // public IP:port that requested the sign-in
 	EndpointIP   string `json:"endpoint_ip"`   // IP-only convenience extraction for display
+	// LastSignOut is why the peer's previous captive-portal access ended.
+	LastSignOut *network.CaptivePortalEvent `json:"last_sign_out,omitempty"`
 }
 
 // PreviewCaptivePortalToken returns peer + endpoint details for the captive
@@ -1339,6 +1354,7 @@ func (s *Service) PreviewCaptivePortalToken(ctx context.Context, captiveToken, s
 		NetworkName:  netObj.Name,
 		PeerEndpoint: cpt.PeerEndpoint,
 		EndpointIP:   endpointIP,
+		LastSignOut:  s.lastSignOutForPreview(ctx, cpt.NetworkID, matchedPeer.ID),
 	}, nil
 }
 
@@ -1468,9 +1484,19 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	// whitelist is keyed by the IPv4 address whenever the peer has one: the
 	// agent checks authentication by IPv4 and derives the IPv6 entry from it.
 	whitelistIP := peerWhitelistIP(matchedPeer, cpt.PeerIP)
+	// Record a just-expired session first: re-authenticating would otherwise
+	// renew its whitelist row before the cleanup loop records the expiry.
+	if err := s.CleanupExpiredCaptivePortalWhitelist(ctx); err != nil {
+		log.Warn().Err(err).Msg("captive portal: expired whitelist cleanup failed")
+	}
 	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, whitelistIP, cpt.PeerEndpoint); err != nil {
 		return nil, fmt.Errorf("failed to whitelist peer: %w", err)
 	}
+	s.recordCaptivePortalEvent(ctx, &network.CaptivePortalEvent{
+		NetworkID: cpt.NetworkID, PeerID: matchedPeer.ID, PeerIP: whitelistIP,
+		Event:  network.CaptivePortalEventAuthenticated,
+		Detail: signInDetail(cpt.PeerEndpoint),
+	})
 
 	// Mark the token as consumed so the strike-tracking cleanup loop knows that
 	// this token led to a successful auth (and therefore is NOT a strike).
@@ -1879,6 +1905,10 @@ func (s *Service) RevokePeerAuthentication(ctx context.Context, networkID, peerI
 	if err := s.repo.RemoveCaptivePortalWhitelistByPeerIP(ctx, networkID, wgIP); err != nil {
 		return fmt.Errorf("remove whitelist: %w", err)
 	}
+	s.recordCaptivePortalEvent(ctx, &network.CaptivePortalEvent{
+		NetworkID: networkID, PeerID: peerID, PeerIP: wgIP,
+		Event: network.CaptivePortalEventRevoked, Detail: "revoked from the dashboard",
+	})
 
 	// 2. Pending tokens — invalidate so they can't expire-into-strikes.  We
 	// list ALL active tokens for ALL jump peers in this network and mark any
@@ -1922,7 +1952,7 @@ func (s *Service) RevokePeerAuthentication(ctx context.Context, networkID, peerI
 }
 
 // CleanupWhitelistForDisconnectedPeers removes peers from whitelist when their connection is down
-func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, networkID string, jumpPeerID string, activePeerIPs map[string]bool) error {
+func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, networkID string, jumpPeerID string, activePeerIPs map[string]bool, lastHandshake map[string]time.Time) error {
 	// Get current whitelist
 	whitelist, err := s.repo.GetCaptivePortalWhitelist(ctx, networkID, jumpPeerID)
 	if err != nil {
@@ -1931,21 +1961,36 @@ func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, netw
 
 	// Remove peers that are no longer active.
 	// Whitelist entries may be "wgIP@endpointIP" — extract the wgIP part.
+	var peers []*network.Peer
 	for _, entry := range whitelist {
-		wgIP := entry
-		if idx := strings.IndexByte(entry, '@'); idx != -1 {
-			wgIP = entry[:idx]
+		wgIP, _, _ := strings.Cut(entry, "@")
+		if activePeerIPs[wgIP] {
+			continue
 		}
-		if !activePeerIPs[wgIP] {
-			log.Info().
-				Str("network_id", networkID).
-				Str("jump_peer_id", jumpPeerID).
-				Str("peer_ip", wgIP).
-				Msg("removing disconnected peer from whitelist")
+		log.Info().
+			Str("network_id", networkID).
+			Str("jump_peer_id", jumpPeerID).
+			Str("peer_ip", wgIP).
+			Msg("removing disconnected peer from whitelist")
 
-			if err := s.repo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeerID, wgIP); err != nil {
-				log.Error().Err(err).Str("peer_ip", wgIP).Msg("failed to remove peer from whitelist")
+		if err := s.repo.RemoveCaptivePortalWhitelist(ctx, networkID, jumpPeerID, wgIP); err != nil {
+			log.Error().Err(err).Str("peer_ip", wgIP).Msg("failed to remove peer from whitelist")
+			continue
+		}
+		if peers == nil {
+			if peers, err = s.repo.ListPeers(ctx, networkID); err != nil {
+				continue
 			}
+		}
+		if p := findPeerByVPNIP(peers, wgIP); p != nil {
+			detail := "no WireGuard handshake"
+			if t, ok := lastHandshake[wgIP]; ok {
+				detail = fmt.Sprintf("last WireGuard handshake %s ago", time.Since(t).Round(time.Second))
+			}
+			s.recordCaptivePortalEvent(ctx, &network.CaptivePortalEvent{
+				NetworkID: networkID, PeerID: p.ID, PeerIP: wgIP,
+				Event: network.CaptivePortalEventTunnelInactive, Detail: detail,
+			})
 		}
 	}
 

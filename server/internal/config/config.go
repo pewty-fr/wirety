@@ -6,6 +6,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Config holds the application configuration
@@ -15,6 +18,10 @@ type Config struct {
 	AuditLog    bool       `json:"audit_log"`    // AUDIT_LOG env var — emit JSON audit events to stdout
 	LogLevel    string     `json:"log_level"`    // LOG_LEVEL env var — trace|debug|info|warn|error|fatal (default: info)
 	LogFormat   string     `json:"log_format"`   // LOG_FORMAT env var — text|json (default: text)
+	// CaptivePortalSessionTTL is how long a captive-portal authentication stays
+	// valid before the peer must sign in again (CAPTIVE_PORTAL_SESSION_TTL,
+	// a Go duration such as "8h" or "30m"; default 24h).
+	CaptivePortalSessionTTL time.Duration `json:"captive_portal_session_ttl"`
 	Auth        AuthConfig `json:"auth"`
 	Database    DBConfig   `json:"database"`
 }
@@ -103,6 +110,7 @@ func LoadConfig() *Config {
 		AuditLog:    getEnv("AUDIT_LOG", "false") == "true",
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		LogFormat:   getEnv("LOG_FORMAT", "text"),
+		CaptivePortalSessionTTL: getEnvAsDuration("CAPTIVE_PORTAL_SESSION_TTL", 24*time.Hour),
 		Auth: AuthConfig{
 			Enabled:                  getEnv("AUTH_ENABLED", "false") == "true",
 			IssuerURL:                getEnv("AUTH_ISSUER_URL", ""),
@@ -161,6 +169,21 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// getEnvAsDuration parses a Go duration ("8h", "30m"). An invalid or
+// non-positive value falls back to the default, with a warning.
+func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultValue
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Warn().Str(key, raw).Dur("default", defaultValue).Msg("invalid duration, using the default")
+		return defaultValue
+	}
+	return d
 }
 
 func getEnvAsInt(key string, defaultValue int) int {

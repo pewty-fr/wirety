@@ -589,6 +589,7 @@ The `--skip-tls-verify` flag disables TLS certificate validation for the connect
 | LOG_LEVEL | Log verbosity: `trace`\|`debug`\|`info`\|`warn`\|`error`\|`fatal` | `info` | No |
 | LOG_FORMAT | Log output format: `text`\|`json` | `text` | No |
 | AUDIT_LOG | Emit JSON audit events to stdout | `false` | No |
+| CAPTIVE_PORTAL_SESSION_TTL | How long a captive-portal sign-in stays valid (Go duration, e.g. `8h`, `30m`) | `24h` | No |
 
 ### Agent Environment Variables
 

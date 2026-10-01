@@ -137,6 +137,9 @@ type Runner struct {
 	// every HTTP request.
 	wgIPToEndpoint   map[string]string
 	wgIPToEndpointMu sync.RWMutex
+	// endpointRefreshMu serializes updateWGIPEndpointMap: concurrent refreshes
+	// would each see (and report) the same endpoint change.
+	endpointRefreshMu sync.Mutex
 	// endpointChangedAt records the last time each peer's WireGuard endpoint
 	// changed (keyed by WireGuard private IP).  Used by filterWhitelistByEndpoint
 	// to enforce the endpointStabilityWindow: a peer is not re-added to the
@@ -352,6 +355,8 @@ func (r *Runner) getCurrentEndpointForWgIP(wgIP string) string {
 // the same WireGuard private key from getting intermittent access by oscillating
 // the jump-peer's recorded endpoint between their two public IP:port pairs.
 func (r *Runner) updateWGIPEndpointMap() {
+	r.endpointRefreshMu.Lock()
+	defer r.endpointRefreshMu.Unlock()
 	iface := r.getInterface()
 	allowedIPs := GetWireGuardAllowedIPs(iface) // pubkey → []CIDR
 	endpoints := getWireGuardEndpoints(iface)    // pubkey → "ip:port"
@@ -407,6 +412,20 @@ func (r *Runner) updateWGIPEndpointMap() {
 	r.wgIPToEndpointMu.Lock()
 	r.wgIPToEndpoint = newMap
 	r.wgIPToEndpointMu.Unlock()
+}
+
+// endpointForToken returns the peer's current public endpoint for a new
+// captive-portal token. The lookup table is refreshed every 300 ms, and the
+// first request of a peer often arrives right after its first handshake (the
+// OS captive probe fires as soon as the tunnel is up): on a miss, refresh it
+// from WireGuard. A token without an endpoint would give a session bound to no
+// public IP — usable with a stolen config from anywhere.
+func (r *Runner) endpointForToken(wgIP string) string {
+	if ep := r.getCurrentEndpointForWgIP(wgIP); ep != "" {
+		return ep
+	}
+	r.updateWGIPEndpointMap()
+	return r.getCurrentEndpointForWgIP(wgIP)
 }
 
 // updateIPv4ToIPv6Map rebuilds the IPv4 WireGuard IP → IPv6 WireGuard IP lookup
@@ -1071,7 +1090,13 @@ func (r *Runner) queueTakeoverIfRogue(wgIP, newEP string) {
 		state.firstFlipAt = time.Time{}
 	}
 
-	if newEP == storedEP {
+	// The authenticated side is recognised by its public IP, like
+	// isAuthenticated does: the legitimate device's source port changes on
+	// every NAT rebind, sleep/resume or WireGuard restart.  Comparing full
+	// ip:port made every reading "foreign" once the port had changed — the
+	// legitimate device's own port changes were then reported as a takeover
+	// (locking it out), while a real second device was never detected.
+	if extractEndpointIP(newEP) == extractEndpointIP(storedEP) {
 		// Endpoint flipped back to the authenticated value.  This in itself
 		// is normal (legitimate user's keepalive arrived); we just record
 		// "the last reading was at stored" so the next foreign reading
@@ -1619,7 +1644,7 @@ func (r *Runner) startCaptivePortalServer() {
 		// later checks that a peer trying to reach the network is still
 		// connecting from the same source IP+port — any change (NAT rebind,
 		// tunnel restart, different network) forces re-authentication.
-		srv.SetEndpointLookup(r.getCurrentEndpointForWgIP)
+		srv.SetEndpointLookup(r.endpointForToken)
 	}
 
 	// Captive portal listens on HTTP (:80) only. We intentionally do NOT serve

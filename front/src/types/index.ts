@@ -216,3 +216,19 @@ export interface APIToken {
   expires_at?: string;
   last_used_at?: string;
 }
+
+// One entry of a peer's captive-portal access history: a sign-in, or the end
+// of an access with its cause.
+export type CaptivePortalEventType =
+  | 'authenticated'
+  | 'expired'
+  | 'tunnel_inactive'
+  | 'endpoint_changed'
+  | 'revoked';
+
+export interface CaptivePortalEvent {
+  event: CaptivePortalEventType;
+  detail?: string;
+  peer_ip: string;
+  created_at: string;
+}

@@ -22,8 +22,9 @@ type Adapter struct {
 	natInterfaces []string // explicit override; nil means auto-detect
 	httpPort      int
 	httpsPort     int
-	serverURL     string // Wirety server URL — peers must always be able to reach it
-	sniProxy      bool   // unauthenticated peers reach the server through the SNI proxy on httpsPort
+	serverURL     string     // Wirety server URL — peers must always be able to reach it
+	sniProxy      bool       // unauthenticated peers reach the server through the SNI proxy on httpsPort
+	hostPorts     []HostPort // ports of this host signed-in peers may reach through the tunnel
 }
 
 // NewAdapter creates a new firewall adapter.
@@ -65,7 +66,6 @@ func (a *Adapter) syncSNIRedirect(run, runIfNotExists func(...string) error, cha
 		_ = run("-t", "nat", "-A", chain, "-d", ip, "-p", "tcp", "--dport", ep.port, "-j", "REDIRECT", "--to-port", proxyPort)
 	}
 	_ = runIfNotExists("-t", "nat", "-I", "PREROUTING", "1", "-i", a.iface, "-p", "tcp", "-j", chain)
-	_ = runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", proxyPort, "-j", "ACCEPT")
 }
 
 // SetProxyPorts sets the HTTP and HTTPS proxy ports
@@ -550,7 +550,8 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 	// ── Two-chain design ────────────────────────────────────────────────────
 	//
 	// WIRETY_JUMP (authentication gate, in FORWARD):
-	//   0. ESTABLISHED/RELATED   → ACCEPT  (conntrack: ongoing sessions pass through)
+	//   0. ESTABLISHED/RELATED   → ACCEPT  towards the peers, and from a peer
+	//                                      answering a connection it did not open
 	//   1. Wirety server IPs     → ACCEPT  (only Wirety port+hostname; captive portal reachable)
 	//   2. Whitelisted peer IP   → jump to WIRETY_POLICY
 	//   3. Everything else       → DROP    (unauthenticated peers blocked on ALL ports)
@@ -571,16 +572,14 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 	chain := "WIRETY_JUMP"
 	policyChain := "WIRETY_POLICY"
 
+	holdEstablished(a.runIfNotExists)
 	_ = a.run("-N", chain)
 	_ = a.run("-F", chain)
 	_ = a.run("-N", policyChain)
 	_ = a.run("-F", policyChain)
 
-	// Rule 0: allow packets belonging to already-established connections.
-	// Required because string matching (SNI / Host header) only works on the first
-	// packet of a TCP handshake; subsequent packets carry no hostname and would
-	// otherwise be dropped.  Conntrack is available on all modern Linux kernels.
-	_ = a.run("-A", chain, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
+	// Rule 0: established connections.
+	a.acceptEstablished(a.run, chain)
 
 	// Rule 1: allow peers to reach the Wirety server so they can complete captive
 	// portal authentication, by destination IP (resolved from the server URL at
@@ -717,7 +716,7 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 	// directly) is redirected to this host's port 80 — the captive portal HTTP
 	// server.  The nat table's PREROUTING hook runs before the filter table, so
 	// the redirected packet is then treated as destined for INPUT (local delivery)
-	// and accepted by the INPUT rule for port 80.
+	// and accepted by WIRETY_INPUT (port 80).
 	//
 	// Authenticated peers (whitelisted) are excluded explicitly so their HTTP
 	// traffic continues to be forwarded normally after auth.
@@ -741,22 +740,15 @@ func (a *Adapter) Sync(req ports.SyncRequest) error {
 
 	// Attach chain to FORWARD (insert at top, only if not already attached)
 	_ = a.runIfNotExists("-I", "FORWARD", "1", "-j", chain)
+	releaseEstablished(a.run)
 
-	// Allow peers to reach the services running on the jump peer itself.
-	// Traffic from a peer to the jump peer's own WG IP goes through the INPUT
-	// chain — not FORWARD — so WIRETY_JUMP never sees it. On servers with a
-	// restrictive INPUT policy (UFW default-deny, firewalld, etc.) these packets
-	// are silently dropped before reaching the HTTP or DNS server.
-	//
-	//   Port 80  — captive portal HTTP server (redirect / probe-success)
-	//   Port 53  — DNS server (probe domain interception + peer name resolution)
-	//
-	// These rules are inserted idempotently and must come before any DROP rule
-	// that the host firewall may have added to the INPUT chain.
-	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
-	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "ACCEPT")
-	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "udp", "--dport", "53", "-j", "ACCEPT")
-	_ = a.runIfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "53", "-j", "ACCEPT")
+	// Traffic from a peer to the jump host itself (its WG IP, or any of its
+	// addresses reached through the tunnel) goes through INPUT — not FORWARD —
+	// so WIRETY_JUMP never sees it: WIRETY_INPUT filters it (DNS, captive
+	// portal and SNI proxy for everyone, the operator's host ports for signed-in
+	// peers, nothing else). Inserted first in INPUT, before any DROP rule the
+	// host firewall (UFW, firewalld…) may have added.
+	a.syncInput(a.run, a.runIfNotExists, "WIRETY_INPUT", "icmp", whitelistIPv4, endpoint, endpoint.ips)
 
 	// MASQUERADE on every egress interface so that forwarded traffic is NATed
 	// regardless of which interface the routing table selects for a given destination.
@@ -862,19 +854,54 @@ func (a *Adapter) syncWireGuardDenylist(entries []ports.DenylistEntry, wgListenP
 	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-p", "udp", "--dport", wgPortStr, "-j", wgDenyChain)
 }
 
+// acceptEstablished adds the gate's rule 0 to chain: packets of established
+// connections pass when they go towards the peers (replies from the network),
+// or come from a peer answering a connection it did not open (another peer or
+// host reached it: --ctdir REPLY).
+//
+// Packets of a connection a peer opened are NOT accepted here: they go through
+// the sign-in check like its first packet did, so a sign-out (session expired,
+// revoked, endpoint changed, quarantine) also cuts the connections opened while
+// signed in — an SSH session would otherwise outlive the sign-out for as long
+// as it stays open. Policy rules are stateless (-s peer -d target), so a
+// signed-in peer's packets keep matching them.
+func (a *Adapter) acceptEstablished(run func(...string) error, chain string) {
+	_ = run("-A", chain, "!", "-i", a.iface, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
+	_ = run("-A", chain, "-i", a.iface, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "--ctdir", "REPLY", "-j", "ACCEPT")
+}
+
+// resyncHold accepts established connections while Sync rebuilds the gate and
+// policy chains: they are flushed then refilled one rule at a time, and in
+// between a signed-in peer's packets find no verdict (a host with a DROP
+// FORWARD policy would drop them). Tagged so it never matches an operator's
+// own rule.
+var resyncHold = []string{"FORWARD", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED",
+	"-m", "comment", "--comment", "wirety-resync", "-j", "ACCEPT"}
+
+func holdEstablished(runIfNotExists func(...string) error) {
+	_ = runIfNotExists(append([]string{"-I", resyncHold[0], "1"}, resyncHold[1:]...)...)
+}
+
+// releaseEstablished removes the hold once the chains are complete: from then
+// on, connections of peers that are no longer signed in are cut.
+func releaseEstablished(run func(...string) error) {
+	_ = run(append([]string{"-D"}, resyncHold...)...)
+}
+
 // syncIPv6 applies ip6tables rules mirroring the iptables WIRETY_JUMP / WIRETY_POLICY
 // two-chain design for IPv6 traffic on the WireGuard interface.
 func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint serverEndpoint, req ports.SyncRequest) {
 	chain6 := "WIRETY6_JUMP"
 	policy6 := "WIRETY6_POLICY"
 
+	holdEstablished(a.runIPv6IfNotExists)
 	_ = a.runIPv6("-N", chain6)
 	_ = a.runIPv6("-F", chain6)
 	_ = a.runIPv6("-N", policy6)
 	_ = a.runIPv6("-F", policy6)
 
-	// Rule 0: ESTABLISHED/RELATED → ACCEPT
-	_ = a.runIPv6("-A", chain6, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
+	// Rule 0: established connections (see acceptEstablished).
+	a.acceptEstablished(a.runIPv6, chain6)
 
 	// Rule 1: Allow peers to reach the Wirety server via its IPv6 addresses.
 	for _, ip := range endpoint.ipsv6 {
@@ -940,6 +967,7 @@ func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint s
 
 	// Attach the IPv6 chain to FORWARD (idempotent).
 	_ = a.runIPv6IfNotExists("-I", "FORWARD", "1", "-j", chain6)
+	releaseEstablished(a.runIPv6)
 
 	// IPv6 HTTP DNAT redirect (mirrors IPv4 — see Sync() for rationale).
 	// ip6tables nat PREROUTING redirects port-80 from the WireGuard interface to
@@ -956,11 +984,8 @@ func (a *Adapter) syncIPv6(p *dom.JumpPolicy, whitelistIPv6 []string, endpoint s
 	// Unauthenticated peers reach the Wirety server through the SNI proxy.
 	a.syncSNIRedirect(a.runIPv6, a.runIPv6IfNotExists, "WIRETY6_SNI", endpoint, endpoint.ipsv6, whitelistIPv6)
 
-	// Allow jump-peer services on the WireGuard interface INPUT chain (IPv6).
-	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
-	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "443", "-j", "ACCEPT")
-	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "udp", "--dport", "53", "-j", "ACCEPT")
-	_ = a.runIPv6IfNotExists("-I", "INPUT", "1", "-i", a.iface, "-p", "tcp", "--dport", "53", "-j", "ACCEPT")
+	// What peers reach on the jump host itself (IPv6 — see syncInput).
+	a.syncInput(a.runIPv6, a.runIPv6IfNotExists, "WIRETY6_INPUT", "icmpv6", whitelistIPv6, endpoint, endpoint.ipsv6)
 
 	// IPv6 MASQUERADE on egress interfaces with global IPv6 addresses.
 	natIfacesIPv6 := a.detectNATInterfacesIPv6()

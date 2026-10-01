@@ -47,6 +47,7 @@ func main() {
 	portalURL := envOr("CAPTIVE_PORTAL_URL", "")
 	serverHost := envOr("SERVER_HOST", "")                  // optional Host header override for reverse-proxy setups
 	skipTLSVerify := envOr("SKIP_TLS_VERIFY", "") == "true" // skip TLS certificate verification
+	jumpHostPortsStr := envOr("JUMP_HOST_PORTS", "")        // ports of this host signed-in peers reach through the tunnel
 
 	flag.StringVar(&logLevel, "log-level", logLevel, "Log verbosity: trace|debug|info|warn|error|fatal (env: LOG_LEVEL)")
 	flag.StringVar(&logFormat, "log-format", logFormat, "Log output format: text|json (env: LOG_FORMAT)")
@@ -59,11 +60,17 @@ func main() {
 	flag.StringVar(&portalURL, "portal-url", portalURL, "Captive portal page URL (default: <server>/captive-portal)")
 	flag.StringVar(&serverHost, "server-host", serverHost, "Override HTTP Host header for all requests to the server (useful when accessing via IP behind a reverse proxy)")
 	flag.BoolVar(&skipTLSVerify, "skip-tls-verify", skipTLSVerify, "Skip TLS certificate verification (insecure — use only with self-signed certificates in trusted environments)")
+	flag.StringVar(&jumpHostPortsStr, "jump-host-ports", jumpHostPortsStr, "Jump peer: ports of this host that signed-in peers can reach through the tunnel, e.g. 22/tcp,9100 (everything else on the WireGuard interface is dropped, except DNS, captive portal and SNI proxy; other interfaces are not filtered)")
 	flag.Parse()
 
 	// Apply log settings now that flags are resolved.
 	configureLogger(logLevel, logFormat)
 	audit.Init(auditEnabled, logFormat)
+
+	jumpHostPorts, err := firewall.ParseHostPorts(jumpHostPortsStr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("invalid JUMP_HOST_PORTS / -jump-host-ports")
+	}
 
 	// Default portal URL: captive portal page served by the same Wirety server
 	if portalURL == "" {
@@ -167,6 +174,10 @@ func main() {
 	fwAdapter := firewall.NewAdapter(iface, natIfaces)
 	fwAdapter.SetProxyPorts(httpPortInt, httpsPortInt)
 	fwAdapter.SetServerURL(server) // Allow peers to reach Wirety server before authentication
+	fwAdapter.SetHostPorts(jumpHostPorts)
+	if len(jumpHostPorts) > 0 {
+		log.Info().Stringers("ports", hostPortStringers(jumpHostPorts)).Msg("jump host ports open to signed-in peers through the tunnel")
+	}
 
 	// Unauthenticated peers reach an HTTPS Wirety server through the SNI proxy,
 	// which only lets its own host names through — not every other virtual host
@@ -230,6 +241,14 @@ func main() {
 
 	runner.Start(stop)
 	log.Info().Msg("agent stopped")
+}
+
+func hostPortStringers(ports []firewall.HostPort) []fmt.Stringer {
+	out := make([]fmt.Stringer, len(ports))
+	for i, p := range ports {
+		out[i] = p
+	}
+	return out
 }
 
 // serveWithRetry runs serve, restarting it with capped backoff whenever it

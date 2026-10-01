@@ -224,12 +224,12 @@ Expired sessions are purged from the database automatically (`refresh_token_expi
 The browser cookie is persistent (30-day TTL). When the user opens the captive portal page again after a reconnect, they are already considered authenticated and the portal flow proceeds automatically without a new login.
 
 ### Peer whitelist (iptables)
-The captive portal whitelist is persisted in the database with a **24-hour TTL**. When the agent restarts or reconnects:
+The captive portal whitelist is persisted in the database with a configurable session duration (**`CAPTIVE_PORTAL_SESSION_TTL`**, 24 hours by default — see [Session duration and sign-out causes](#session-duration-and-sign-out-causes)). When the agent restarts or reconnects:
 
 1. The server pushes a policy update via WebSocket including the current (non-expired) whitelist.
 2. The agent re-syncs iptables and re-adds `ACCEPT` rules.
 
-Already-authenticated peers do not need to re-authenticate after an agent restart, as long as their VPN IP has not changed and the 24-hour TTL has not elapsed.
+Already-authenticated peers do not need to re-authenticate after an agent restart, as long as their VPN IP has not changed and the session duration has not elapsed.
 
 :::caution
 If a peer is reassigned a new VPN IP (e.g. after a long absence and IPAM recycles the address), the old whitelist entry no longer matches and the peer must re-authenticate.
@@ -248,6 +248,10 @@ The `WIRETY_JUMP` chain on the jump peer enforces a strict three-tier model for 
 
 This replaces the previous design where unauthenticated peers had unrestricted external HTTPS access (intended for the OIDC redirect, but also a usable internet bypass). The grant is now per-peer and time-bounded.
 
+### Services on the jump host itself
+
+The tiers above govern what is routed through the jump. What peers reach on the jump host itself through the tunnel (its `sshd`, exporters…) is filtered by the `WIRETY_INPUT` chains: every peer gets DNS, the captive portal and the SNI proxy; signed-in peers also get the ports listed in the agent's `JUMP_HOST_PORTS` (for example `22/tcp`); everything else is dropped. The host's other interfaces (private network, bastion) are not filtered. See [Jump Host Services](agent#jump-host-services-jump_host_ports).
+
 ### Endpoint stability window
 
 When a whitelisted peer's WireGuard endpoint changes (different `ip:port` from `wg show endpoints`), the peer is held out of the iptables whitelist for **10 seconds** of stability before being re-admitted. This prevents the oscillation that occurs when two devices share the same WireGuard private key — each keepalive overrides the recorded endpoint, and without the stability window the legitimate peer would gain and lose access every ~25 s.
@@ -262,7 +266,7 @@ The three layers fire in order, escalating only when there's clear evidence the 
 
 **Layer 2 — Endpoint stability window (10 s).** When any endpoint change is observed, the peer is held out of the iptables whitelist for 10 s of stability before being re-admitted. *Symmetric* — doesn't decide who's "rogue", just refuses to commit during turbulence. Catches both NAT rebinds (they flip once and stabilise) and oscillations (they keep flipping, so the timer never expires and nobody gets access).
 
-**Layer 3 — Physical-interface denylist — only on confirmed oscillation.** This is the heavy hammer: an iptables `-p udp --dport <wg-port> -s <rogue-ip> --sport <rogue-port> -j DROP` rule on the egress interface, BEFORE WireGuard decapsulates. The rogue source can no longer complete WireGuard handshakes at all. **It only fires when the agent observes the endpoint flip stored→foreign at least twice within 60 seconds** — the unambiguous signature of two devices simultaneously sending handshakes. A single endpoint change (NAT rebind, roam, etc.) never trips this layer; layers 1+2 handle it gracefully.
+**Layer 3 — Physical-interface denylist — only on confirmed oscillation.** This is the heavy hammer: an iptables `-p udp --dport <wg-port> -s <rogue-ip> --sport <rogue-port> -j DROP` rule on the egress interface, BEFORE WireGuard decapsulates. The rogue source can no longer complete WireGuard handshakes at all. **It only fires when the agent observes the endpoint flip stored→foreign at least twice within 60 seconds** — the unambiguous signature of two devices simultaneously sending handshakes. "Stored" and "foreign" are told apart by **public IP**: the legitimate device may come back with another source port (NAT rebind, sleep/resume, WireGuard restart) and is still recognised; a port change alone is never a takeover. A single endpoint change (NAT rebind, roam, etc.) never trips this layer; layers 1+2 handle it gracefully.
 
 #### Why "oscillation" is the only safe trigger for the denylist
 
@@ -310,11 +314,37 @@ The peer record itself is untouched — only the authenticated session state is 
 
 The corresponding API endpoint is `POST /networks/{networkId}/peers/{peerId}/revoke-auth` — see [API Reference](api-reference).
 
+## Session Duration and Sign-Out Causes
+
+A captive-portal sign-in is valid for **`CAPTIVE_PORTAL_SESSION_TTL`** (server environment variable, a Go duration such as `8h` or `30m`; default `24h`). The duration counts from the sign-in and is not extended by activity; signing in again starts a new session.
+
+A peer has to go back through the captive portal earlier when:
+
+| Cause | Event | When |
+|-------|-------|------|
+| The session duration is reached | `expired` | Access removed within ~30 s (next jump heartbeat) |
+| The tunnel is disconnected — no WireGuard handshake for more than 185 s (device asleep, network lost, VPN turned off) | `tunnel_inactive` | Next jump heartbeat (≤ 30 s) |
+| The public IP changed (other Wi-Fi, mobile data…) — a NAT port change alone does not count | `endpoint_changed` | Immediately (the jump compares the live endpoint to the one that signed in) |
+| An admin or the owner clicked **Revoke Auth** | `revoked` | Immediately |
+
+The sign-out cuts **every** connection of the device, including the ones opened while it was signed in (an SSH session, a download, a WebSocket): the jump checks each packet a device sends against its sign-in, not only the first packet of a connection. Replies to connections the device did not open (another peer reaching it) are not affected.
+
+### Access history
+
+Every sign-in (`authenticated`) and every end of access, with its cause and details (last handshake age, old → new public IP…), is recorded and kept **30 days**:
+
+- **Dashboard** — the **Peer Detail** modal shows the **Last sign-out** and the **Portal history**. Visible to admins and to the peer's owner.
+- **Captive portal page** — when a user signs in again, the page tells them why the previous session ended.
+- **API** — `GET /networks/{networkId}/peers/{peerId}/captive-portal-events?limit=20` (newest first).
+
+When users are signed out several times a day, the history tells which cause dominates: `tunnel_inactive` (laptops going to sleep), `endpoint_changed` (users moving between networks, or a connection whose public IP changes frequently), or `expired` (consider a longer `CAPTIVE_PORTAL_SESSION_TTL`).
+
 ## Database Tables
 
 | Table | Purpose | TTL |
 |-------|---------|-----|
-| `captive_portal_whitelist` | Authenticated peers (full access tier). Each row binds a peer's WireGuard IP to the public endpoint observed at SSO time. | 24 h |
+| `captive_portal_whitelist` | Authenticated peers (full access tier). Each row binds a peer's WireGuard IP to the public endpoint observed at SSO time. | `CAPTIVE_PORTAL_SESSION_TTL` (24 h) |
+| `captive_portal_events` | Access history: sign-ins and ends of access with their cause. | 30 days |
 | `captive_portal_tokens` | In-flight auth tokens (pending tier).  `consumed_at IS NULL` after expiry counts as 1 strike. | 10 min |
 | `captive_portal_endpoint_denylist` | Rogue WireGuard sources to drop at the jump peer's physical interface. Populated from agent-reported takeovers. Cleared automatically when the targeted peer next re-authenticates from any source. | 24 h |
 | `captive_portal_quarantine` | Per-peer auth-failure strike count and quarantine end time. | 1 h after 3rd strike; cleared on successful auth |
@@ -324,7 +354,7 @@ Background cleanup tasks (server):
 
 | Operation | Cadence |
 |-----------|---------|
-| `CleanupExpiredCaptivePortalWhitelist` | Hourly |
+| `CleanupExpiredCaptivePortalWhitelist` (also records `expired` events and prunes the access history) | Every 2 minutes |
 | `CleanupExpiredCaptivePortalTokens` (also records strikes for unconsumed tokens) | Every 2 minutes |
 | `CleanupExpiredEndpointDenylist` | Every 2 minutes |
 | `CleanupExpiredSessions` | Hourly |
@@ -337,7 +367,8 @@ Background cleanup tasks (server):
 | "access denied: this peer belongs to another user" | Logged in as the wrong Wirety user. Click "Sign in with a different account" and log in as the peer's owner. |
 | "access denied: this peer has no owner" | The peer was created by an admin without assigning an owner. Assign an owner in the Wirety dashboard. |
 | Peer can't reach the captive portal at all (browser shows "site unreachable") | Either the peer is **quarantined** (3 abandoned auth attempts in the last hour) or the peer's traffic isn't going through the jump peer at all. Check `captive_portal_quarantine` for the peer ID; clear the row to release. |
-| Authenticated peer loses access after 24 hours | Expected — the whitelist TTL expired. The peer must re-authenticate. |
+| Authenticated peer loses access after 24 hours | Expected — the session duration (`CAPTIVE_PORTAL_SESSION_TTL`, 24 h by default) was reached. The peer must re-authenticate. |
+| Users have to sign in again several times a day | Check the **Portal history** in the peer's detail: it records the cause of each sign-out (see [Session duration and sign-out causes](#session-duration-and-sign-out-causes)). |
 | Authenticated peer loses access after a sudden endpoint change | Expected — the WireGuard endpoint stability window holds peers out of the iptables whitelist for 10 s after any endpoint change to prevent oscillation between two devices using the same key. Wait 10 s; the legitimate peer regains access automatically. |
 | Authenticated peer loses access permanently after the legitimate user moves networks | The new public source might have been denylisted as a "rogue takeover". Use the dashboard's **Revoke Auth** button to clear the whitelist entry; the next captive-portal auth from the new endpoint will succeed and clear the denylist as a side effect. |
 | Authenticated peer loses access after agent restart | Whitelist was not restored — check WebSocket connectivity between agent and server. |
@@ -363,7 +394,8 @@ The proxy **never decrypts** anything: TLS stays end to end between the peer and
 nat WIRETY_SNI:   -s <authenticatedPeerIP> -j RETURN
                   -d <serverIP> -p tcp --dport 443 -j REDIRECT --to-ports 3129
 filter WIRETY_JUMP:
-  Rule 0:  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  Rule 0:  ! -i <wg> -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT               (towards the peers)
+           -i <wg> -m conntrack --ctstate ESTABLISHED,RELATED --ctdir REPLY -j ACCEPT (a peer answering a connection it did not open)
   Rule 1:  -d <serverIP> -p tcp --dport 443 -j ACCEPT   (authenticated peers — unauthenticated ones were redirected above)
   Rule 2:  -s <authenticatedPeerIP> -j WIRETY_POLICY
   Rule 3:  -j DROP                                       (everyone else)
@@ -374,6 +406,20 @@ Before authentication the peer can therefore sign in on `https://wirety.example.
 ### Limitations
 
 **Plain-HTTP server or no host name:** SNI only exists for TLS. With an `http://` `SERVER_URL`, or when no host name is known (bare-IP `SERVER_URL` without `SERVER_HOST` or a hostname in `CAPTIVE_PORTAL_URL`), the proxy is disabled and every vhost on the server's IP:port is reachable before authentication. The agent logs a warning at startup in the latter case.
+
+**Domain fronting — the ingress must reject a Host/SNI mismatch:** the proxy only sees the TLS server name; the HTTP `Host` header travels encrypted. A peer can open TLS with `SNI: wirety.example.com` and send `Host: docs.example.com`: an ingress that routes on the `Host` header then serves the other application. Configure the ingress to refuse a request whose `Host` differs from the TLS server name (`421 Misdirected Request`). With nginx, in every other virtual host on that IP:port:
+
+```nginx
+if ($ssl_server_name != $host) { return 421; }
+```
+
+Check it from an unauthenticated peer — it must **not** return the other application:
+
+```bash
+curl -k --resolve wirety.example.com:443:<ingress-ip> -H "Host: docs.example.com" https://wirety.example.com/
+```
+
+If the ingress cannot enforce it, expose Wirety on its own IP.
 
 **Encrypted Client Hello (ECH):** a client using ECH hides the real SNI; the proxy then sees the public name only and refuses the connection unless that name is allowed. Internal hosts do not publish ECH configurations, so browsers send a plain SNI to them.
 
