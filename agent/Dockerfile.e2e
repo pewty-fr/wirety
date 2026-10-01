@@ -2,7 +2,7 @@
 # as ROOT and adds diagnostic tools — a jump/agent container in the e2e harness
 # needs root + NET_ADMIN to create the WireGuard interface and program iptables,
 # and the tests exec `iptables`/`wg`/`ip` inside it to assert state.
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /build
 RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum ./
