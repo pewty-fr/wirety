@@ -1,5 +1,5 @@
 # Dex server Dockerfile (development/testing)
-FROM ghcr.io/dexidp/dex:v2.45.1
+FROM ghcr.io/dexidp/dex:v2.46.0
 
 USER root
 RUN apk add --no-cache ca-certificates
