@@ -138,9 +138,11 @@ services:
   frontend:
     image: ghcr.io/pewty-fr/wirety/front:latest
     ports:
-      - "80:80"
+      - "80:8080"
     environment:
-      VITE_API_URL: "http://localhost:8080"
+      # The front proxies /api to the server: the browser sees a single origin.
+      API_PROXY_ENABLED: "true"
+      API_PROXY_URL: "http://server:8080"
     depends_on:
       - server
     restart: unless-stopped
@@ -591,6 +593,20 @@ The `--skip-tls-verify` flag disables TLS certificate validation for the connect
 | AUDIT_LOG | Emit JSON audit events to stdout | `false` | No |
 | CAPTIVE_PORTAL_SESSION_TTL | How long a captive-portal sign-in stays valid (Go duration, e.g. `8h`, `30m`) | `24h` | No |
 | CAPTIVE_PORTAL_IDLE_TIMEOUT | How long a captive-portal session survives without any WireGuard handshake (laptop asleep, e.g. `1h`); it resumes only from the public IP that signed in | `3m` | No |
+
+### Frontend Environment Variables
+
+The front image serves the web app on port `8080`. The app calls the API on its own origin, under `/api`: with the Helm chart, the ingress (or HTTPRoute) routes `/api` to the server and these variables stay unset. Where the front is the only public entry point — Docker Compose, or a serverless platform with a private server container — the front's nginx proxies `/api` to the server itself, WebSockets (agents) included.
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| API_PROXY_ENABLED | `true` to proxy `/api` to the server | `false` | No |
+| API_PROXY_URL | The server, `scheme://host[:port]` without a path (e.g. `http://server:8080`, `https://wirety-server-xxx.functions.fnc.fr-par.scw.cloud`). An HTTPS server's certificate is verified | — | If the proxy is enabled |
+| API_PROXY_AUTH_TOKEN | Sent as the `X-Auth-Token` header of every proxied request, e.g. the token of a private Scaleway Serverless Container. The browser never sees it, and an `X-Auth-Token` sent by the browser is never forwarded | — | No |
+
+A wrong setting stops the container with an explanation in its logs.
+
+**Scaleway Serverless Containers:** deploy the server as a **private** container and the front as a public one with `API_PROXY_ENABLED=true`, `API_PROXY_URL=<the server container's endpoint>` and `API_PROXY_AUTH_TOKEN=<a token of the server container>`. Only the front is reachable from the internet; agents and browsers use its URL (`SERVER_URL` of the agents). The platform closes requests after the container's timeout (60 min at most): agents reconnect their WebSocket on their own.
 
 ### Agent Environment Variables
 
