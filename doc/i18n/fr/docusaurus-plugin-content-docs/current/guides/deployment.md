@@ -138,9 +138,11 @@ services:
   frontend:
     image: ghcr.io/pewty-fr/wirety/front:latest
     ports:
-      - "80:80"
+      - "80:8080"
     environment:
-      VITE_API_URL: "http://localhost:8080"
+      # Le front relaie /api vers le serveur : le navigateur ne voit qu'une origine.
+      API_PROXY_ENABLED: "true"
+      API_PROXY_URL: "http://server:8080"
     depends_on:
       - server
     restart: unless-stopped
@@ -591,6 +593,20 @@ Le flag `--skip-tls-verify` désactive la validation du certificat TLS pour la c
 | AUDIT_LOG | Émettre des événements d'audit JSON sur stdout | `false` | Non |
 | CAPTIVE_PORTAL_SESSION_TTL | Durée de validité d'une authentification au portail captif (durée Go, ex. `8h`, `30m`) | `24h` | Non |
 | CAPTIVE_PORTAL_IDLE_TIMEOUT | Durée pendant laquelle une session du portail captif survit sans aucun handshake WireGuard (portable en veille, ex. `1h`) ; elle ne reprend que depuis l'IP publique qui s'est authentifiée | `3m` | Non |
+
+### Variables d'environnement du frontend
+
+L'image du front sert l'application web sur le port `8080`. L'application appelle l'API sur sa propre origine, sous `/api` : avec le chart Helm, l'ingress (ou la HTTPRoute) route `/api` vers le serveur et ces variables restent vides. Quand le front est le seul point d'entrée public — Docker Compose, ou une plateforme serverless avec un conteneur serveur privé — le nginx du front relaie lui-même `/api` vers le serveur, WebSockets (agents) compris.
+
+| Variable | Description | Défaut | Obligatoire |
+|----------|-------------|--------|-------------|
+| API_PROXY_ENABLED | `true` pour relayer `/api` vers le serveur | `false` | Non |
+| API_PROXY_URL | Le serveur, `schéma://hôte[:port]` sans chemin (ex. `http://server:8080`, `https://wirety-server-xxx.functions.fnc.fr-par.scw.cloud`). Le certificat d'un serveur HTTPS est vérifié | — | Si le proxy est activé |
+| API_PROXY_AUTH_TOKEN | Envoyé dans l'en-tête `X-Auth-Token` de chaque requête relayée, par exemple le token d'un Serverless Container Scaleway privé. Le navigateur ne le voit jamais, et un `X-Auth-Token` envoyé par le navigateur n'est jamais transmis | — | Non |
+
+Un mauvais réglage arrête le conteneur, avec l'explication dans ses logs.
+
+**Scaleway Serverless Containers :** déployez le serveur en conteneur **privé** et le front en conteneur public avec `API_PROXY_ENABLED=true`, `API_PROXY_URL=<l'endpoint du conteneur serveur>` et `API_PROXY_AUTH_TOKEN=<un token du conteneur serveur>`. Seul le front est joignable depuis internet ; agents et navigateurs utilisent son URL (`SERVER_URL` des agents). La plateforme coupe les requêtes au bout du timeout du conteneur (60 min au plus) : les agents reconnectent leur WebSocket d'eux-mêmes.
 
 ### Variables d'environnement de l'agent
 
