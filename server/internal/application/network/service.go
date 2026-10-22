@@ -49,6 +49,9 @@ type Service struct {
 	wsConnectionChecker WebSocketConnectionChecker
 	// events stores the captive-portal access history (optional).
 	events network.CaptivePortalEventRepository
+	// idleTimeout is how long a captive-portal session survives without a
+	// WireGuard handshake (see SetCaptivePortalIdleTimeout).
+	idleTimeout time.Duration
 
 	// wgLastSeen tracks the last time a jump peer reported seeing each peer
 	// via an active WireGuard handshake.  Key: "networkID:peerID".
@@ -78,13 +81,14 @@ func (s *Service) ResolveAgentToken(ctx context.Context, token string) (string, 
 // NewService creates a new network service
 func NewService(networkRepo network.Repository, ipamRepo ipam.Repository, authRepo auth.Repository, groupRepo network.GroupRepository, routeRepo network.RouteRepository, dnsRepo network.DNSRepository, policyRepo network.PolicyRepository) *Service {
 	return &Service{
-		repo:       NewCombinedRepository(networkRepo, ipamRepo),
-		authRepo:   authRepo,
-		groupRepo:  groupRepo,
-		routeRepo:  routeRepo,
-		dnsRepo:    dnsRepo,
-		policyRepo: policyRepo,
-		wgLastSeen: make(map[string]time.Time),
+		repo:        NewCombinedRepository(networkRepo, ipamRepo),
+		authRepo:    authRepo,
+		groupRepo:   groupRepo,
+		routeRepo:   routeRepo,
+		dnsRepo:     dnsRepo,
+		policyRepo:  policyRepo,
+		wgLastSeen:  make(map[string]time.Time),
+		idleTimeout: DefaultCaptivePortalIdleTimeout,
 	}
 }
 
@@ -117,13 +121,19 @@ func (s *Service) CreateNetwork(ctx context.Context, req *network.NetworkCreateR
 		return nil, fmt.Errorf("at least one of cidr (IPv4) or cidr_v6 (IPv6) must be provided")
 	}
 	if req.CIDR != "" {
-		if err := validateNetworkCIDR(req.CIDR); err != nil {
-			return nil, fmt.Errorf("invalid cidr: %w", err)
+		if err := validateNetworkRange("cidr", req.CIDR, false); err != nil {
+			return nil, err
+		}
+		if err := s.checkRangeFree(ctx, req.CIDR, ""); err != nil {
+			return nil, err
 		}
 	}
 	if req.CIDRv6 != "" {
-		if err := validateNetworkCIDR(req.CIDRv6); err != nil {
-			return nil, fmt.Errorf("invalid cidr_v6: %w", err)
+		if err := validateNetworkRange("cidr_v6", req.CIDRv6, true); err != nil {
+			return nil, err
+		}
+		if err := s.checkRangeFree(ctx, req.CIDRv6, ""); err != nil {
+			return nil, err
 		}
 	}
 
@@ -140,23 +150,38 @@ func (s *Service) CreateNetwork(ctx context.Context, req *network.NetworkCreateR
 		DNS:             req.DNS,
 	}
 
-	if err := s.repo.CreateNetwork(ctx, net); err != nil {
-		return nil, fmt.Errorf("failed to create network: %w", err)
-	}
-
-	// Ensure IPAM root prefix(es) exist for future IP allocations.
+	// Reserve the ranges in IPAM before storing the network, so that a range
+	// IPAM refuses leaves no network behind.
 	if net.CIDR != "" {
 		if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDR); err != nil {
-			return nil, fmt.Errorf("failed to ensure IPv4 root prefix: %w", err)
+			return nil, fmt.Errorf("failed to reserve %s in IPAM: %w", net.CIDR, err)
 		}
 	}
 	if net.CIDRv6 != "" {
 		if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDRv6); err != nil {
-			return nil, fmt.Errorf("failed to ensure IPv6 root prefix: %w", err)
+			s.freeRanges(ctx, net.CIDR)
+			return nil, fmt.Errorf("failed to reserve %s in IPAM: %w", net.CIDRv6, err)
 		}
 	}
 
+	if err := s.repo.CreateNetwork(ctx, net); err != nil {
+		s.freeRanges(ctx, net.CIDR, net.CIDRv6)
+		return nil, fmt.Errorf("failed to create network: %w", err)
+	}
+
 	return net, nil
+}
+
+// freeRanges deletes IPAM prefixes (with their addresses), logging failures.
+func (s *Service) freeRanges(ctx context.Context, cidrs ...string) {
+	for _, cidr := range cidrs {
+		if cidr == "" {
+			continue
+		}
+		if err := s.repo.DeletePrefix(ctx, cidr); err != nil {
+			log.Warn().Err(err).Str("cidr", cidr).Msg("failed to free range in IPAM")
+		}
+	}
 }
 
 // GetNetwork retrieves a network by ID
@@ -185,36 +210,66 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 		}
 	}
 
-	net, err := s.repo.GetNetwork(ctx, networkID)
+	stored, err := s.repo.GetNetwork(ctx, networkID)
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
 	}
+	// Work on a copy: the memory repository hands out the stored network, which
+	// must stay unchanged when the update is refused.
+	updated := *stored
+	net := &updated
 
-	oldCIDR := net.CIDR
-	oldCIDRv6 := net.CIDRv6
-	cidrChanged := false
-	cidrV6Changed := false
+	// Empty means "leave unchanged" for both ranges, so an update can never
+	// wipe one.
+	cidrChanged := req.CIDR != "" && req.CIDR != stored.CIDR
+	cidrV6Changed := req.CIDRv6 != "" && req.CIDRv6 != stored.CIDRv6
+	if cidrChanged {
+		if err := validateNetworkRange("cidr", req.CIDR, false); err != nil {
+			return nil, err
+		}
+		if err := s.checkRangeFree(ctx, req.CIDR, networkID); err != nil {
+			return nil, err
+		}
+	}
+	if cidrV6Changed {
+		if err := validateNetworkRange("cidr_v6", req.CIDRv6, true); err != nil {
+			return nil, err
+		}
+		if err := s.checkRangeFree(ctx, req.CIDRv6, networkID); err != nil {
+			return nil, err
+		}
+	}
+
+	var peers []*network.Peer
+	if cidrChanged || cidrV6Changed {
+		peers, err = s.repo.ListPeers(ctx, networkID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list peers: %w", err)
+		}
+	}
+	if cidrChanged {
+		// Peers without the agent would keep a config with their old address.
+		for _, peer := range peers {
+			if !peer.IsJump && !peer.UseAgent {
+				return nil, fmt.Errorf("cannot change CIDR: network contains static regular peer '%s' which would require manual reconfiguration", peer.Name)
+			}
+		}
+		if err := checkRoom("cidr", req.CIDR, len(peers)); err != nil {
+			return nil, err
+		}
+	}
+	if cidrV6Changed {
+		if err := checkRoom("cidr_v6", req.CIDRv6, len(peers)); err != nil {
+			return nil, err
+		}
+	}
+
 	dnsChanged := false
-
 	if req.Name != "" {
 		net.Name = req.Name
 	}
 	if req.DomainSuffix != "" {
 		net.DomainSuffix = req.DomainSuffix
-	}
-	if req.CIDR != "" && req.CIDR != oldCIDR {
-		net.CIDR = req.CIDR
-		cidrChanged = true
-	}
-	// Adding (or switching) the IPv6 CIDR on an existing network. Empty means
-	// "leave unchanged", mirroring the IPv4 semantics above — so this can never
-	// accidentally wipe an existing v6 CIDR.
-	if req.CIDRv6 != "" && req.CIDRv6 != oldCIDRv6 {
-		if err := validateNetworkCIDR(req.CIDRv6); err != nil {
-			return nil, fmt.Errorf("invalid cidr_v6: %w", err)
-		}
-		net.CIDRv6 = req.CIDRv6
-		cidrV6Changed = true
 	}
 	if req.DNS != nil {
 		if len(req.DNS) != len(net.DNS) {
@@ -239,80 +294,21 @@ func (s *Service) UpdateNetwork(ctx context.Context, networkID string, req *netw
 
 	net.UpdatedAt = time.Now()
 
-	// If CIDR changed, reallocate all peer IPs
+	// Move the peers to the new range(s). Adding IPv6 to an IPv4 network gives
+	// every peer an IPv6 address; unlike an IPv4 change it is not refused for
+	// static peers: it is additive and never breaks their IPv4 connectivity —
+	// their operators just redistribute the config to use IPv6.
 	if cidrChanged {
-		// Get all peers to check for static peers
-		peers, err := s.repo.ListPeers(ctx, networkID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list peers: %w", err)
+		if err := s.moveRange(ctx, networkID, peers, stored.CIDR, req.CIDR, false); err != nil {
+			return nil, err
 		}
-
-		// Check if any regular peers are using static config (not using agent)
-		for _, peer := range peers {
-			if !peer.IsJump && !peer.UseAgent {
-				return nil, fmt.Errorf("cannot change CIDR: network contains static regular peer '%s' which would require manual reconfiguration", peer.Name)
-			}
-		}
-
-		// Ensure new root prefix exists
-		if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDR); err != nil {
-			return nil, fmt.Errorf("failed to ensure new root prefix: %w", err)
-		}
-
-		// Release old IPs and allocate new ones
-		for _, peer := range peers {
-			// Release old IP from old CIDR
-			if err := s.repo.ReleaseIP(ctx, oldCIDR, peer.Address); err != nil {
-				// Log but don't fail - old CIDR may not exist in IPAM
-				log.Warn().Err(err).Str("ip", peer.Address).Str("cidr", oldCIDR).Msg("failed to release old IP during CIDR migration")
-			}
-
-			// Allocate new IP from new CIDR
-			newAddress, err := s.repo.AcquireIP(ctx, net.CIDR)
-			if err != nil {
-				return nil, fmt.Errorf("failed to allocate new IP for peer %s: %w", peer.ID, err)
-			}
-
-			peer.Address = newAddress
-			peer.UpdatedAt = time.Now()
-
-			if err := s.repo.UpdatePeer(ctx, networkID, peer); err != nil {
-				return nil, fmt.Errorf("failed to update peer %s with new IP: %w", peer.ID, err)
-			}
-		}
+		net.CIDR = req.CIDR
 	}
-
-	// If the IPv6 CIDR was added or changed, register the IPAM prefix and give
-	// every existing peer an IPv6 address so the network becomes fully
-	// dual-stack. (New peers already pick up an IPv6 via AddPeer.) Unlike an
-	// IPv4 CIDR change we do NOT block on static (non-agent) peers: adding IPv6
-	// is additive and never breaks their existing IPv4 connectivity — their
-	// operators just need to redistribute the regenerated config to use v6.
 	if cidrV6Changed {
-		if _, err := s.repo.EnsureRootPrefix(ctx, net.CIDRv6); err != nil {
-			return nil, fmt.Errorf("failed to ensure IPv6 root prefix: %w", err)
+		if err := s.moveRange(ctx, networkID, peers, stored.CIDRv6, req.CIDRv6, true); err != nil {
+			return nil, err
 		}
-		peers, err := s.repo.ListPeers(ctx, networkID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list peers: %w", err)
-		}
-		for _, peer := range peers {
-			// When switching from a previous IPv6 CIDR, release the old address first.
-			if oldCIDRv6 != "" && peer.AddressV6 != "" {
-				if err := s.repo.ReleaseIP(ctx, oldCIDRv6, peer.AddressV6); err != nil {
-					log.Warn().Err(err).Str("ip", peer.AddressV6).Str("cidr", oldCIDRv6).Msg("failed to release old IPv6 during CIDRv6 change")
-				}
-			}
-			newV6, err := s.repo.AcquireIP(ctx, net.CIDRv6)
-			if err != nil {
-				return nil, fmt.Errorf("failed to allocate IPv6 for peer %s: %w", peer.ID, err)
-			}
-			peer.AddressV6 = newV6
-			peer.UpdatedAt = time.Now()
-			if err := s.repo.UpdatePeer(ctx, networkID, peer); err != nil {
-				return nil, fmt.Errorf("failed to update peer %s with IPv6: %w", peer.ID, err)
-			}
-		}
+		net.CIDRv6 = req.CIDRv6
 	}
 
 	if err := s.repo.UpdateNetwork(ctx, net); err != nil {
@@ -334,6 +330,10 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 	if err := validation.ValidateDNSName(req.Name); err != nil {
 		return nil, fmt.Errorf("invalid peer name: %w", err)
 	}
+	// Before any address is taken from IPAM.
+	if err := validateAllowedIPs(req.AdditionalAllowedIPs); err != nil {
+		return nil, err
+	}
 
 	// Ownership: jump peers and agent-managed peers are typically ownerless
 	// infrastructure. Regular user-device peers may optionally have an owner.
@@ -350,28 +350,35 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 	// Allocate IP address(es) for the peer using IPAM repository (hexagonal compliant).
 	// At least one of CIDR / CIDRv6 is set (validated at network creation).
 	var address, addressV6 string
+	// release gives the addresses back when the peer is not created.
+	release := func() {
+		if address != "" {
+			_ = s.repo.ReleaseIP(ctx, net.CIDR, address)
+		}
+		if addressV6 != "" {
+			_ = s.repo.ReleaseIP(ctx, net.CIDRv6, addressV6)
+		}
+	}
 	if net.CIDR != "" {
 		var err error
 		address, err = s.repo.AcquireIP(ctx, net.CIDR)
 		if err != nil {
-			return nil, fmt.Errorf("failed to acquire IPv4 address from IPAM: %w", err)
+			return nil, acquireError(net, net.CIDR, "IPv4", err)
 		}
 	}
 	if net.CIDRv6 != "" {
 		var err error
 		addressV6, err = s.repo.AcquireIP(ctx, net.CIDRv6)
 		if err != nil {
-			// Release the already-acquired IPv4 address to avoid leaking it.
-			if address != "" {
-				_ = s.repo.ReleaseIP(ctx, net.CIDR, address)
-			}
-			return nil, fmt.Errorf("failed to acquire IPv6 address from IPAM: %w", err)
+			release()
+			return nil, acquireError(net, net.CIDRv6, "IPv6", err)
 		}
 	}
 
 	// Generate WireGuard keys for the peer
 	privateKey, publicKey, err := wireguard.GenerateKeyPair()
 	if err != nil {
+		release()
 		return nil, fmt.Errorf("failed to generate key pair: %w", err)
 	}
 
@@ -403,6 +410,7 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 	// Generate enrollment token
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
+		release()
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
 	peer.Token = base64.RawURLEncoding.EncodeToString(raw)
@@ -418,6 +426,7 @@ func (s *Service) AddPeer(ctx context.Context, networkID string, req *network.Pe
 	}
 
 	if err := s.repo.CreatePeer(ctx, networkID, peer); err != nil {
+		release()
 		return nil, fmt.Errorf("failed to create peer: %w", err)
 	}
 
@@ -491,6 +500,9 @@ func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req 
 			return nil, fmt.Errorf("invalid peer name: %w", err)
 		}
 	}
+	if err := validateAllowedIPs(req.AdditionalAllowedIPs); err != nil {
+		return nil, err
+	}
 
 	peer, err := s.repo.GetPeer(ctx, networkID, peerID)
 	if err != nil {
@@ -503,8 +515,8 @@ func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req 
 	if req.Name != "" {
 		peer.Name = req.Name
 	}
-	if req.Endpoint != "" {
-		peer.Endpoint = req.Endpoint
+	if req.Endpoint != nil {
+		peer.Endpoint = *req.Endpoint
 	}
 	if req.AdditionalAllowedIPs != nil {
 		peer.AdditionalAllowedIPs = req.AdditionalAllowedIPs
@@ -514,8 +526,8 @@ func (s *Service) UpdatePeer(ctx context.Context, networkID, peerID string, req 
 		peer.AdditionalAllowedIPs = []string{}
 	}
 	// Allow owner change (admin only, checked in handler)
-	if req.OwnerID != "" {
-		peer.OwnerID = req.OwnerID
+	if req.OwnerID != nil {
+		peer.OwnerID = *req.OwnerID
 	}
 	peer.UpdatedAt = time.Now()
 	// Preserve token (do not allow overwrite via update)
@@ -881,25 +893,8 @@ func (s *Service) DeleteNetwork(ctx context.Context, networkID string) error {
 		return fmt.Errorf("failed to delete network: %w", err)
 	}
 
-	// Release CIDR(s) from IPAM to allow reuse.
-	if net.CIDR != "" {
-		if err := s.repo.DeletePrefix(ctx, net.CIDR); err != nil {
-			log.Warn().Err(err).Str("network_id", networkID).Str("cidr", net.CIDR).
-				Msg("Failed to release IPv4 CIDR from IPAM after network deletion")
-		} else {
-			log.Info().Str("network_id", networkID).Str("cidr", net.CIDR).
-				Msg("Successfully released IPv4 CIDR from IPAM after network deletion")
-		}
-	}
-	if net.CIDRv6 != "" {
-		if err := s.repo.DeletePrefix(ctx, net.CIDRv6); err != nil {
-			log.Warn().Err(err).Str("network_id", networkID).Str("cidr_v6", net.CIDRv6).
-				Msg("Failed to release IPv6 CIDR from IPAM after network deletion")
-		} else {
-			log.Info().Str("network_id", networkID).Str("cidr_v6", net.CIDRv6).
-				Msg("Successfully released IPv6 CIDR from IPAM after network deletion")
-		}
-	}
+	// Free the range(s) in IPAM, with the peers' addresses, for reuse.
+	s.freeRanges(ctx, net.CIDR, net.CIDRv6)
 
 	return nil
 }
@@ -1569,6 +1564,10 @@ func (s *Service) GetCaptivePortalWhitelist(ctx context.Context, networkID, jump
 // WireGuard handshakes and stealing the peer slot back.
 func (s *Service) processEndpointTakeovers(ctx context.Context, networkID, jumpPeerID string, takeovers []network.EndpointTakeoverReport) error {
 	for _, t := range takeovers {
+		if t.EndSession {
+			s.endSessionForConcurrentUse(ctx, networkID, jumpPeerID, t)
+			continue
+		}
 		blockedIP, blockedPort := splitEndpoint(t.ObservedAt)
 		if blockedIP == "" {
 			continue
@@ -1967,6 +1966,14 @@ func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, netw
 		if activePeerIPs[wgIP] {
 			continue
 		}
+		// A peer briefly without handshakes (laptop asleep) keeps its session
+		// up to the idle timeout. It resumes only from the public IP that
+		// signed in: the jump checks the endpoint of every peer. Without a
+		// known handshake (jump interface recreated) the session ends.
+		lastSeen, known := lastHandshake[wgIP]
+		if known && time.Since(lastSeen) <= s.idleTimeout {
+			continue
+		}
 		log.Info().
 			Str("network_id", networkID).
 			Str("jump_peer_id", jumpPeerID).
@@ -1984,8 +1991,8 @@ func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, netw
 		}
 		if p := findPeerByVPNIP(peers, wgIP); p != nil {
 			detail := "no WireGuard handshake"
-			if t, ok := lastHandshake[wgIP]; ok {
-				detail = fmt.Sprintf("last WireGuard handshake %s ago", time.Since(t).Round(time.Second))
+			if known {
+				detail = fmt.Sprintf("last WireGuard handshake %s ago (idle limit %s)", time.Since(lastSeen).Round(time.Second), s.idleTimeout)
 			}
 			s.recordCaptivePortalEvent(ctx, &network.CaptivePortalEvent{
 				NetworkID: networkID, PeerID: p.ID, PeerIP: wgIP,
@@ -2002,11 +2009,6 @@ func (s *Service) CleanupWhitelistForDisconnectedPeers(ctx context.Context, netw
 	return nil
 }
 
-// validateNetworkCIDR verifies that cidr is syntactically valid AND that the IP
-// address is the actual network address for the given prefix (host bits are zero).
-// For example, "10.255.238.0/22" is rejected because the network address is
-// "10.255.236.0/22" — accepting host addresses silently causes IPAM prefix
-// mismatches and confusing peer IP allocations.
 // findPeerByVPNIP returns the peer whose WireGuard IPv4 or IPv6 address is ip
 // (addresses are stored with a prefix length, ip is bare), or nil.
 func findPeerByVPNIP(peers []*network.Peer, ip string) *network.Peer {
@@ -2039,15 +2041,13 @@ func peerWhitelistIP(p *network.Peer, interceptedIP string) string {
 	return p.Address
 }
 
-func validateNetworkCIDR(cidr string) error {
-	ip, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return fmt.Errorf("%q is not a valid CIDR: %w", cidr, err)
-	}
-	// net.ParseCIDR returns the masked (network) address in ipnet.IP.
-	// If the supplied IP differs from the masked address, host bits were set.
-	if !ip.Equal(ipnet.IP) {
-		return fmt.Errorf("%q has host bits set — did you mean %s?", cidr, ipnet.String())
+// validateAllowedIPs checks a peer's additional allowed IPs: addresses or
+// network CIDRs.
+func validateAllowedIPs(entries []string) error {
+	for _, e := range entries {
+		if err := network.ValidateAllowedIP(e); err != nil {
+			return fmt.Errorf("additional_allowed_ips: %w", err)
+		}
 	}
 	return nil
 }

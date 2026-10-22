@@ -29,6 +29,7 @@ type PaginatedNetworks struct {
 //	@Param			network	body		domain.NetworkCreateRequest	true	"Network creation request"
 //	@Success		201		{object}	domain.Network
 //	@Failure		400		{object}	map[string]string
+//	@Failure		409		{object}	map[string]string	"range overlapping another network"
 //	@Failure		500		{object}	map[string]string
 //	@Router			/networks [post]
 //
@@ -42,11 +43,7 @@ func (h *Handler) CreateNetwork(c *gin.Context) {
 
 	net, err := h.service.CreateNetwork(c.Request.Context(), &req)
 	if err != nil {
-		if isValidationError(err) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -171,6 +168,7 @@ func (h *Handler) ListNetworks(c *gin.Context) {
 //	@Success		200			{object}	domain.Network
 //	@Failure		400			{object}	map[string]string
 //	@Failure		404			{object}	map[string]string
+//	@Failure		409			{object}	map[string]string	"range overlapping another network"
 //	@Router			/networks/{networkId} [put]
 //
 // @Security     BearerAuth
@@ -185,11 +183,7 @@ func (h *Handler) UpdateNetwork(c *gin.Context) {
 
 	net, err := h.service.UpdateNetwork(c.Request.Context(), networkID, &req)
 	if err != nil {
-		if isValidationError(err) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		} else {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		}
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 

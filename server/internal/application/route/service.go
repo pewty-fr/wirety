@@ -102,23 +102,26 @@ func (s *Service) UpdateRoute(ctx context.Context, networkID, routeID string, re
 	}
 
 	// Get existing route
-	route, err := s.routeRepo.GetRoute(ctx, networkID, routeID)
+	stored, err := s.routeRepo.GetRoute(ctx, networkID, routeID)
 	if err != nil {
 		return nil, fmt.Errorf("route not found: %w", err)
 	}
+	// Changes go to a copy: a rejected update must leave the stored route as is.
+	updated := *stored
+	route := &updated
 
 	// Update fields
 	if req.Name != "" {
 		route.Name = req.Name
 	}
-	if req.Description != "" {
-		route.Description = req.Description
+	if req.Description != nil {
+		route.Description = *req.Description
 	}
-	if req.DestinationCIDR != "" {
-		route.DestinationCIDR = req.DestinationCIDR
+	if req.DestinationCIDR != nil {
+		route.DestinationCIDR = *req.DestinationCIDR
 	}
-	if req.DestinationCIDRv6 != "" {
-		route.DestinationCIDRv6 = req.DestinationCIDRv6
+	if req.DestinationCIDRv6 != nil {
+		route.DestinationCIDRv6 = *req.DestinationCIDRv6
 	}
 	// Post-merge invariant: at least one family must remain set.  Without
 	// this check a user could clear-then-update down to "no destination" if

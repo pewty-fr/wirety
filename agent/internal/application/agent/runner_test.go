@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	net_http "net/http"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -616,14 +617,12 @@ func TestTakeoverDetectedAfterLegitPortChange(t *testing.T) {
 	runner := NewRunner(nil, nil, nil, nil, "ws://localhost:8080", "wg0", "", "")
 	runner.updateWhitelist([]string{"10.0.0.2@198.51.100.7:51000"}) // signed in from :51000
 
-	for _, ep := range []string{
+	observeEndpoints(runner, "10.0.0.2", "198.51.100.7:51000",
 		"198.51.100.7:62000", // legitimate device, new source port
 		"203.0.113.9:40000",  // attacker
 		"198.51.100.7:62000",
 		"203.0.113.9:40000",
-	} {
-		runner.queueTakeoverIfRogue("10.0.0.2", ep)
-	}
+	)
 
 	if len(runner.pendingTakeovers) != 1 || runner.pendingTakeovers[0].ObservedAt != "203.0.113.9:40000" {
 		t.Fatalf("want one takeover report for 203.0.113.9:40000, got %+v", runner.pendingTakeovers)
@@ -635,10 +634,90 @@ func TestPortChangeAloneIsNotATakeover(t *testing.T) {
 	runner := NewRunner(nil, nil, nil, nil, "ws://localhost:8080", "wg0", "", "")
 	runner.updateWhitelist([]string{"10.0.0.2@198.51.100.7:51000"})
 
-	for _, ep := range []string{"198.51.100.7:62000", "198.51.100.7:51000", "198.51.100.7:63000"} {
-		runner.queueTakeoverIfRogue("10.0.0.2", ep)
-	}
+	// A NAT rebind, a back-and-forth (Wi-Fi ↔ Ethernet), a sleep/resume.
+	observeEndpoints(runner, "10.0.0.2", "198.51.100.7:51000",
+		"198.51.100.7:62000", "198.51.100.7:51000", "198.51.100.7:63000")
 	if len(runner.pendingTakeovers) != 0 {
 		t.Fatalf("port changes reported as takeover: %+v", runner.pendingTakeovers)
+	}
+}
+
+// observeEndpoints feeds the successive live endpoints of a peer to the
+// takeover detection, starting from the endpoint it signed in from.
+func observeEndpoints(runner *Runner, wgIP, from string, eps ...string) {
+	for _, ep := range eps {
+		runner.queueTakeoverIfRogue(wgIP, from, ep)
+		from = ep
+	}
+}
+
+// A copy of the config used behind the same public IP (same office NAT, same
+// home box) while the device that signed in is online: the endpoint alternates
+// between their ports, and the device that did not sign in is reported.
+func TestSameNetworkCloneIsReported(t *testing.T) {
+	runner := NewRunner(nil, nil, nil, nil, "ws://localhost:8080", "wg0", "", "")
+	runner.updateWhitelist([]string{"10.0.0.2@198.51.100.7:51000"})
+
+	observeEndpoints(runner, "10.0.0.2", "198.51.100.7:51000",
+		"198.51.100.7:52000", // clone
+		"198.51.100.7:51000",
+		"198.51.100.7:52000",
+	)
+	want := endpointTakeoverReport{WgIP: "10.0.0.2", AuthenticatedAt: "198.51.100.7:51000", ObservedAt: "198.51.100.7:52000"}
+	if len(runner.pendingTakeovers) != 1 || !reflect.DeepEqual(runner.pendingTakeovers[0], want) {
+		t.Fatalf("want %+v, got %+v", want, runner.pendingTakeovers)
+	}
+}
+
+// The same, ending on the port that signed in: the other one is still the clone.
+func TestSameNetworkCloneIsReportedWhicheverPortComesLast(t *testing.T) {
+	runner := NewRunner(nil, nil, nil, nil, "ws://localhost:8080", "wg0", "", "")
+	runner.updateWhitelist([]string{"10.0.0.2@198.51.100.7:51000"})
+
+	observeEndpoints(runner, "10.0.0.2", "198.51.100.7:52000", // the clone was live
+		"198.51.100.7:51000", "198.51.100.7:52000", "198.51.100.7:51000")
+	if len(runner.pendingTakeovers) != 1 || runner.pendingTakeovers[0].ObservedAt != "198.51.100.7:52000" {
+		t.Fatalf("want a report for the clone 198.51.100.7:52000, got %+v", runner.pendingTakeovers)
+	}
+}
+
+// When the device that signed in has changed port since (sleep, NAT rebind),
+// neither alternating port is the one that signed in: the clone cannot be told
+// apart, so the session is ended instead of denylisting anyone.
+func TestSameNetworkCloneAfterPortChangeEndsTheSession(t *testing.T) {
+	runner := NewRunner(nil, nil, nil, nil, "ws://localhost:8080", "wg0", "", "")
+	runner.updateWhitelist([]string{"10.0.0.2@198.51.100.7:51000"})
+
+	observeEndpoints(runner, "10.0.0.2", "198.51.100.7:51000",
+		"198.51.100.7:62000", // device that signed in, after a sleep
+		"198.51.100.7:52000", // clone
+		"198.51.100.7:62000",
+		"198.51.100.7:52000",
+	)
+	want := endpointTakeoverReport{
+		WgIP: "10.0.0.2", AuthenticatedAt: "198.51.100.7:51000",
+		EndSession: true, Endpoints: []string{"198.51.100.7:62000", "198.51.100.7:52000"},
+	}
+	if len(runner.pendingTakeovers) != 1 || !reflect.DeepEqual(runner.pendingTakeovers[0], want) {
+		t.Fatalf("want %+v, got %+v", want, runner.pendingTakeovers)
+	}
+}
+
+// Alternations spread over more than the detection window are port changes,
+// not two devices.
+func TestSlowPortAlternationIsNotAClone(t *testing.T) {
+	runner := NewRunner(nil, nil, nil, nil, "ws://localhost:8080", "wg0", "", "")
+	runner.updateWhitelist([]string{"10.0.0.2@198.51.100.7:51000"})
+
+	observeEndpoints(runner, "10.0.0.2", "198.51.100.7:51000", "198.51.100.7:52000", "198.51.100.7:51000")
+	// Age the first return past the window.
+	state := runner.takeoverFlips["10.0.0.2"]
+	state.firstReturnAt = state.firstReturnAt.Add(-2 * flipDetectionWindow)
+	for ep := range state.sameIPSeen {
+		state.sameIPSeen[ep] = state.sameIPSeen[ep].Add(-2 * flipDetectionWindow)
+	}
+	observeEndpoints(runner, "10.0.0.2", "198.51.100.7:51000", "198.51.100.7:52000")
+	if len(runner.pendingTakeovers) != 0 {
+		t.Fatalf("slow alternation reported: %+v", runner.pendingTakeovers)
 	}
 }

@@ -131,3 +131,62 @@ export function useACLs(networks: Network[]) {
   });
 }
 
+
+// ---- Access control (groups, policies, routes) and users ----------------------
+//
+// Lists are scoped to one network, or to every network when networkId is ''.
+// Mutations invalidate the whole family (e.g. ['groups']) so every view of it
+// refreshes.
+
+export const resourceKeys = {
+  groups: (networkId: string) => ['groups', networkId || 'all'] as const,
+  policies: (networkId: string) => ['policies', networkId || 'all'] as const,
+  routes: (networkId: string) => ['routes', networkId || 'all'] as const,
+  users: ['users'] as const,
+  userDefaults: ['users', 'defaults'] as const,
+  apiTokens: ['apiTokens'] as const,
+};
+
+export function useGroups(networkId: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: resourceKeys.groups(networkId),
+    enabled,
+    queryFn: () => (networkId ? api.getGroups(networkId) : api.getAllGroups()),
+  });
+}
+
+export function usePolicies(networkId: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: resourceKeys.policies(networkId),
+    enabled,
+    queryFn: () => (networkId ? api.getPolicies(networkId) : api.getAllPolicies()),
+  });
+}
+
+export function useRoutes(networkId: string, enabled: boolean = true) {
+  return useQuery({
+    queryKey: resourceKeys.routes(networkId),
+    enabled,
+    queryFn: () => (networkId ? api.getRoutes(networkId) : api.getAllRoutes()),
+  });
+}
+
+export function useUsers(enabled: boolean = true) {
+  return useQuery({
+    queryKey: resourceKeys.users,
+    queryFn: () => api.getUsers(1, 500),
+    enabled,
+  });
+}
+
+export function useDefaultPermissions(enabled: boolean = true) {
+  return useQuery({
+    queryKey: resourceKeys.userDefaults,
+    queryFn: () => api.getDefaultPermissions(),
+    enabled,
+  });
+}
+
+export function useAPITokens() {
+  return useQuery({ queryKey: resourceKeys.apiTokens, queryFn: () => api.listAPITokens() });
+}

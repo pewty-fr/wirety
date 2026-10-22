@@ -15,7 +15,7 @@
 [![Docker Pulls](https://img.shields.io/badge/docker-pulls-blue)](https://ghcr.io/pewty-fr/wirety)
 [![Helm Chart](https://img.shields.io/badge/helm-chart-0F1689)](https://ghcr.io/pewty-fr/wirety/chart)
 
-[🚀 Quick Start](#-quick-start) • [📚 Documentation](#-documentation) • [🎯 Features](#-features) • [🤝 Contributing](#-contributors)
+[🧪 Live Demo](https://demo.wirety.pewty.fr) • [🚀 Quick Start](#-quick-start) • [📚 Documentation](#-documentation) • [🎯 Features](#-features) • [🤝 Contributing](#-contributors)
 
 ---
 
@@ -32,6 +32,16 @@ Wirety is a **next-generation WireGuard orchestration platform** that brings dyn
 - 🔌 **Agent-Based** - Lightweight agents for automatic configuration synchronization
 - 🌐 **IPAM Built-in** - Intelligent IP address management
 - 🔐 **OIDC Integration** - Enterprise-ready authentication
+
+## 🧪 Live Demo
+
+Try Wirety without installing anything: **[demo.wirety.pewty.fr](https://demo.wirety.pewty.fr)**
+
+| User | Password |
+|------|----------|
+| `admin` | `Aihahy0Mai7Oocha5lue6ii0waoj0a` |
+
+> The demo is public and shared by every visitor: what you create there can be changed or deleted by others, and it may be reset at any time. Don't put real data, keys or configurations in it.
 
 ## ✨ Features
 

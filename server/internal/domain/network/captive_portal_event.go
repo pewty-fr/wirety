@@ -20,6 +20,10 @@ const (
 	CaptivePortalEventEndpointChanged = "endpoint_changed"
 	// CaptivePortalEventRevoked: authentication revoked from the dashboard.
 	CaptivePortalEventRevoked = "revoked"
+	// CaptivePortalEventConcurrentUse: two devices used the peer's WireGuard
+	// config at the same time from the public IP that signed in, and the jump
+	// could not tell which one signed in; only the owner can sign in again.
+	CaptivePortalEventConcurrentUse = "concurrent_use"
 )
 
 // CaptivePortalEvent is one entry of a peer's captive-portal access history.

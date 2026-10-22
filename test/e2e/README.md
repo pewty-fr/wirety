@@ -96,6 +96,7 @@ victim's WireGuard config):
 | `stolen_config_owner_offline` | Use the stolen config while the owner is offline | Session bound to the signing-in public IP: portal only |
 | `phishing_link_shows_attacker_ip` | Send the victim a portal link triggered from the stolen config | The portal page shows the attacker's public IP |
 | `stolen_config_concurrent_use_denylisted` | Use the stolen config while the owner is online | Oscillation detected, attacker's source dropped at the jump, owner keeps access |
+| `stolen_config_same_network_clone` | Use the stolen config behind the owner's own public IP (a network namespace NATed through the owner's address) | Port alternation detected: the session ends (neither port signed in), the owner signs in again, then the clone's port is denylisted — never the owner's |
 | `ssh_on_private_host_unauthenticated` | Reach SSH (port 22) on the private host without signing in | Dropped |
 | `ssh_on_jump_host_unauthenticated` | Reach SSH on the jump host itself (its WireGuard IP) without signing in | Dropped by `WIRETY_INPUT` |
 | `ssh_on_jump_host_authenticated` | Reach SSH on the jump host from a signed-in device (the jump runs with `-jump-host-ports 22/tcp`) | Allowed: opened to signed-in peers |
@@ -122,6 +123,12 @@ across jump heartbeats.
 The portal page then tells why the previous session ended, and the access
 history records sign-in → expired → sign-in → revoked, each sign-in bound to
 the device's public IP.
+
+`TestCaptivePortalSessionSurvivesSleep` runs the server with
+`CAPTIVE_PORTAL_IDLE_TIMEOUT=10m`: the signed-in peer's tunnel goes silent for
+4 minutes (a laptop asleep — past the 185 s after which the jump reports the
+tunnel down), the session is kept, and access comes back on waking from the
+same public IP without the portal.
 
 `TestSessionSurvivesTokenRefresh` keeps a dashboard session busy with bursts of
 concurrent API calls (like the frontend's polling) across six OIDC token

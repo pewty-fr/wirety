@@ -29,9 +29,10 @@ type GroupCreateRequest struct {
 
 // GroupUpdateRequest represents the data that can be updated for a group
 type GroupUpdateRequest struct {
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
-	Priority    *int   `json:"priority,omitempty"` // Optional priority (1-999)
+	Name string `json:"name,omitempty"`
+	// Description: nil leaves it unchanged, "" clears it.
+	Description *string `json:"description,omitempty"`
+	Priority    *int    `json:"priority,omitempty"` // Optional priority (1-999)
 }
 
 // Validate validates the group name and priority

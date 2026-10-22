@@ -104,8 +104,8 @@ func (s *Service) UpdateGroup(ctx context.Context, networkID, groupID string, re
 	if req.Name != "" {
 		group.Name = req.Name
 	}
-	if req.Description != "" {
-		group.Description = req.Description
+	if req.Description != nil {
+		group.Description = *req.Description
 	}
 	if req.Priority != nil {
 		group.Priority = *req.Priority

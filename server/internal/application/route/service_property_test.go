@@ -864,7 +864,7 @@ func TestProperty_RouteUpdatePropagation(t *testing.T) {
 
 				// Update route
 				updatedRoute, err := service.UpdateRoute(ctx, networkID, routeID, &network.RouteUpdateRequest{
-					DestinationCIDR: newCIDR,
+					DestinationCIDR: &newCIDR,
 				})
 
 				// Verify update succeeded and CIDR changed

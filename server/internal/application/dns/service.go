@@ -124,10 +124,13 @@ func (s *Service) UpdateDNSMapping(ctx context.Context, networkID, routeID, mapp
 	}
 
 	// Get existing mapping
-	mapping, err := s.dnsRepo.GetDNSMapping(ctx, routeID, mappingID)
+	stored, err := s.dnsRepo.GetDNSMapping(ctx, routeID, mappingID)
 	if err != nil {
 		return nil, fmt.Errorf("DNS mapping not found: %w", err)
 	}
+	// Changes go to a copy: a rejected update must leave the stored record as is.
+	updated := *stored
+	mapping := &updated
 
 	// Get route for validation
 	route, err := s.routeRepo.GetRoute(ctx, networkID, routeID)
@@ -139,23 +142,27 @@ func (s *Service) UpdateDNSMapping(ctx context.Context, networkID, routeID, mapp
 	if req.Name != "" {
 		mapping.Name = req.Name
 	}
-	if req.IPAddress != "" {
-		if route.DestinationCIDR == "" {
-			return nil, fmt.Errorf("ip_address: route has no IPv4 destination CIDR")
+	if req.IPAddress != nil {
+		if ip := *req.IPAddress; ip != "" {
+			if route.DestinationCIDR == "" {
+				return nil, fmt.Errorf("ip_address: route has no IPv4 destination CIDR")
+			}
+			if err := network.ValidateIPInCIDR(ip, route.DestinationCIDR); err != nil {
+				return nil, fmt.Errorf("ip_address validation failed: %w", err)
+			}
 		}
-		if err := network.ValidateIPInCIDR(req.IPAddress, route.DestinationCIDR); err != nil {
-			return nil, fmt.Errorf("ip_address validation failed: %w", err)
-		}
-		mapping.IPAddress = req.IPAddress
+		mapping.IPAddress = *req.IPAddress
 	}
-	if req.IPv6Address != "" {
-		if route.DestinationCIDRv6 == "" {
-			return nil, fmt.Errorf("ip_address_v6: route has no IPv6 destination CIDR")
+	if req.IPv6Address != nil {
+		if ip := *req.IPv6Address; ip != "" {
+			if route.DestinationCIDRv6 == "" {
+				return nil, fmt.Errorf("ip_address_v6: route has no IPv6 destination CIDR")
+			}
+			if err := network.ValidateIPInCIDR(ip, route.DestinationCIDRv6); err != nil {
+				return nil, fmt.Errorf("ip_address_v6 validation failed: %w", err)
+			}
 		}
-		if err := network.ValidateIPInCIDR(req.IPv6Address, route.DestinationCIDRv6); err != nil {
-			return nil, fmt.Errorf("ip_address_v6 validation failed: %w", err)
-		}
-		mapping.IPv6Address = req.IPv6Address
+		mapping.IPv6Address = *req.IPv6Address
 	}
 	// Post-merge invariant: at least one family must remain set.
 	if mapping.IPAddress == "" && mapping.IPv6Address == "" {

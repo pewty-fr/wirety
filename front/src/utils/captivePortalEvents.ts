@@ -17,7 +17,7 @@ const descriptions: Record<CaptivePortalEventType, EventDescription> = {
   },
   tunnel_inactive: {
     label: 'Tunnel disconnected',
-    explanation: 'The VPN tunnel was inactive for more than 3 minutes (device asleep, network lost or VPN turned off).',
+    explanation: 'The VPN tunnel was inactive for too long (device asleep, network lost or VPN turned off).',
   },
   endpoint_changed: {
     label: 'Network changed',
@@ -26,6 +26,11 @@ const descriptions: Record<CaptivePortalEventType, EventDescription> = {
   revoked: {
     label: 'Revoked',
     explanation: 'The authentication was reset from the dashboard.',
+  },
+  concurrent_use: {
+    label: 'Config used twice',
+    explanation:
+      "The device's VPN configuration was used by two devices at the same time on the same network: only the owner can sign in again, and the other device is then blocked.",
   },
 };
 

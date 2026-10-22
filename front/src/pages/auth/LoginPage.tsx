@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { FormEvent } from 'react';
+import { ArrowRightEndOnRectangleIcon } from '@heroicons/react/20/solid';
+import { XCircleIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../contexts/AuthContext';
 import { claimAutoReauth } from '../../auth/reauth';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faShield, faEye, faEyeSlash, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
+import { Alert, Button, Card, PasswordInput, Spinner, TextInput } from '../../components/ui';
+import AuthShell, { StatusIcon } from './AuthShell';
 
 export default function LoginPage() {
   const { login, simpleLogin, authConfig, isLoading, oauthError, clearOauthError } = useAuth();
@@ -10,10 +13,11 @@ export default function LoginPage() {
   // In simple-auth mode admins can also create regular users with email + password.
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ username?: string; password?: string }>({});
   const [loginError, setLoginError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
-  const [showPassword, setShowPassword] = useState(false);
   const sessionExpired = new URLSearchParams(window.location.search).get('session_expired') === '1';
 
   // Check if we're in the middle of OAuth callback
@@ -32,147 +36,127 @@ export default function LoginPage() {
     }
   }, [sessionExpired, ssoOnly, isLoading, hasAuthCode, oauthError, login]);
 
-  const handleSimpleLogin = async (e: React.FormEvent) => {
+  const handleSimpleLogin = async (e: FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+    const errors = {
+      username: username.trim() ? undefined : 'Enter your username or email.',
+      password: password ? undefined : 'Enter your password.',
+    };
+    setFieldErrors(errors);
+    if (errors.username || errors.password) return;
     setLoginError('');
     setIsSubmitting(true);
     const ok = await simpleLogin(username, password);
     if (!ok) {
       setLoginError('Invalid credentials. Please try again.');
       setPassword('');
+      passwordRef.current?.focus();
     }
     setIsSubmitting(false);
   };
 
-  // Show error screen when OAuth callback failed
+  // The OAuth callback failed: say why, then back to the sign-in screen.
   if (hasAuthCode && oauthError) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700 flex items-center justify-center px-4">
-        <div className="max-w-md w-full">
-          <div className="bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl p-8 border-2 border-red-400 dark:border-red-700">
-            <div className="text-center mb-6">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full mb-4">
-                <FontAwesomeIcon icon={faTriangleExclamation} className="text-3xl text-red-500 dark:text-red-400" />
-              </div>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">Sign-in failed</h2>
-              <p className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 text-left break-words">
-                {oauthError}
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                window.history.replaceState({}, document.title, window.location.pathname);
-                clearOauthError();
-              }}
-              className="w-full btn-brand font-medium py-3 px-4 rounded-lg transition-all"
-            >
-              Back to login
-            </button>
+      <AuthShell>
+        <Card className="space-y-5 p-6 text-center sm:p-8">
+          <StatusIcon icon={XCircleIcon} tone="danger" />
+          <div className="space-y-1">
+            <h1 className="text-lg font-semibold text-ink">Sign-in failed</h1>
+            <p className="text-sm text-ink-muted">Your identity provider signed you in, but Wirety could not open a session.</p>
           </div>
-        </div>
-      </div>
+          <Alert tone="danger" className="text-left break-words">
+            {oauthError}
+          </Alert>
+          <Button
+            className="w-full"
+            onClick={() => {
+              window.history.replaceState({}, document.title, window.location.pathname);
+              clearOauthError();
+            }}
+          >
+            Back to sign-in
+          </Button>
+        </Card>
+      </AuthShell>
     );
   }
 
-  // Show loading state during OAuth callback processing
+  // OAuth callback in progress, session check, or automatic re-authentication.
   if (isLoading || hasAuthCode || autoReauth) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-white mb-2">
-            {hasAuthCode ? 'Completing sign in...' : autoReauth ? 'Session expired — signing you back in...' : 'Loading...'}
-          </div>
-          <div className="text-sm text-gray-200 dark:text-gray-400">
-            Please wait
-          </div>
+      <AuthShell>
+        <div role="status" className="flex flex-col items-center gap-3 py-6 text-center">
+          <Spinner className="size-6 text-primary-500" />
+          <p className="text-sm font-medium text-ink">
+            {hasAuthCode ? 'Completing sign-in…' : autoReauth ? 'Session expired — signing you back in…' : 'Loading…'}
+          </p>
+          <p className="text-xs text-ink-muted">Please wait</p>
         </div>
-      </div>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700 flex items-center justify-center px-4">
-      <div className="max-w-md w-full">
-        <div className="bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl p-8 border-2 border-primary-300 dark:border-primary-700">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-primary-500 to-accent-blue rounded-full mb-4 shadow-lg">
-              <FontAwesomeIcon icon={faShield} className="text-4xl text-white" />
-            </div>
-            <h1 className="text-3xl font-bold text-brand-gradient mb-2">Wirety</h1>
-            <p className="text-gray-600 dark:text-gray-400">WireGuard Network Management</p>
-          </div>
+    <AuthShell footer="WireGuard network management">
+      <Card className="p-6 sm:p-8">
+        <div className="mb-6 space-y-1">
+          <h1 className="text-lg font-semibold tracking-tight text-ink">Sign in</h1>
+          <p className="text-sm text-ink-muted">
+            {authConfig?.simple_auth ? 'Use your Wirety account.' : 'Use your organization’s account.'}
+          </p>
+        </div>
 
+        <div className="space-y-4">
           {sessionExpired && (
-            <div className="mb-4 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-lg text-sm text-amber-700 dark:text-amber-400 text-center">
-              Your session has expired. Please sign in again.
-            </div>
+            <Alert tone="warning">Your session has expired. Please sign in again.</Alert>
+          )}
+          {oauthError && (
+            <Alert tone="danger" title="Sign-in failed" className="break-words">
+              {oauthError}
+            </Alert>
           )}
 
           {authConfig?.simple_auth ? (
-            <form onSubmit={handleSimpleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Username or email
-                </label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin or your email"
-                  required
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Password
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter admin password"
-                    required
-                    autoFocus
-                    className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                    tabIndex={-1}
-                  >
-                    <FontAwesomeIcon icon={showPassword ? faEyeSlash : faEye} className="text-sm" />
-                  </button>
-                </div>
-              </div>
-              {loginError && (
-                <p className="text-sm text-red-500 dark:text-red-400">{loginError}</p>
-              )}
-              <button
-                type="submit"
-                disabled={isSubmitting || !password}
-                className="w-full btn-brand font-medium py-3 px-4 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSubmitting ? 'Signing in...' : 'Sign in'}
-              </button>
+            <form onSubmit={handleSimpleLogin} noValidate className="space-y-4">
+              {loginError && <Alert tone="danger">{loginError}</Alert>}
+              <TextInput
+                label="Username or email"
+                required
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="admin or your email"
+                error={fieldErrors.username}
+              />
+              <PasswordInput
+                ref={passwordRef}
+                label="Password"
+                required
+                autoFocus
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                error={fieldErrors.password}
+              />
+              <Button type="submit" className="w-full" loading={isSubmitting}>
+                {isSubmitting ? 'Signing in…' : 'Sign in'}
+              </Button>
             </form>
           ) : (
-            <div className="space-y-4">
-              <button
-                onClick={login}
-                className="w-full btn-brand font-medium py-3 px-4 rounded-lg transition-all"
-              >
+            <div className="space-y-3">
+              <Button className="w-full" icon={<ArrowRightEndOnRectangleIcon className="size-4" />} onClick={login}>
                 Sign in with SSO
-              </button>
-              <p className="text-sm text-center text-gray-600 dark:text-gray-400">
-                You will be redirected to your organization's login page
-              </p>
+              </Button>
+              <p className="text-center text-xs text-ink-muted">You will be redirected to your organization’s login page.</p>
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </Card>
+    </AuthShell>
   );
 }

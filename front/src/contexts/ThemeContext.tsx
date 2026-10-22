@@ -23,15 +23,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const root = window.document.documentElement;
     
     const applyTheme = (newTheme: 'light' | 'dark') => {
-      console.log('Applying theme:', newTheme);
-      console.log('HTML classes before:', root.className);
       // Remove both classes first
       root.classList.remove('light', 'dark');
       // Only add 'dark' class when in dark mode (Tailwind's default is light)
       if (newTheme === 'dark') {
         root.classList.add('dark');
       }
-      console.log('HTML classes after:', root.className);
       setResolvedTheme(newTheme);
     };
 
