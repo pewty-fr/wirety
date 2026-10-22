@@ -264,14 +264,14 @@ func TestDNSMappingRequests(t *testing.T) {
 	// Test update request
 	updateReq := &DNSMappingUpdateRequest{
 		Name:      "updated-server",
-		IPAddress: "10.0.0.51",
+		IPAddress: new("10.0.0.51"),
 	}
 
 	if updateReq.Name != "updated-server" {
 		t.Errorf("Expected Name 'updated-server', got %s", updateReq.Name)
 	}
-	if updateReq.IPAddress != "10.0.0.51" {
-		t.Errorf("Expected IPAddress '10.0.0.51', got %s", updateReq.IPAddress)
+	if updateReq.IPAddress == nil || *updateReq.IPAddress != "10.0.0.51" {
+		t.Errorf("Expected IPAddress '10.0.0.51', got %v", updateReq.IPAddress)
 	}
 
 	// Test partial update request
@@ -282,7 +282,7 @@ func TestDNSMappingRequests(t *testing.T) {
 	if partialReq.Name != "only-name-updated" {
 		t.Errorf("Expected Name 'only-name-updated', got %s", partialReq.Name)
 	}
-	if partialReq.IPAddress != "" {
-		t.Errorf("Expected empty IPAddress, got %s", partialReq.IPAddress)
+	if partialReq.IPAddress != nil {
+		t.Errorf("Expected IPAddress left unchanged (nil), got %q", *partialReq.IPAddress)
 	}
 }

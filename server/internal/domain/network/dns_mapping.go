@@ -34,9 +34,11 @@ type DNSMappingCreateRequest struct {
 // DNSMappingUpdateRequest represents the data that can be updated for a DNS
 // mapping.  Empty strings are interpreted as "leave unchanged".
 type DNSMappingUpdateRequest struct {
-	Name        string `json:"name,omitempty"`
-	IPAddress   string `json:"ip_address,omitempty"`
-	IPv6Address string `json:"ip_address_v6,omitempty"`
+	Name string `json:"name,omitempty"`
+	// The addresses: nil leaves the field unchanged, "" clears it (one
+	// address must remain).
+	IPAddress   *string `json:"ip_address,omitempty"`
+	IPv6Address *string `json:"ip_address_v6,omitempty"`
 }
 
 // GetFQDN returns the fully qualified domain name for this DNS mapping.
@@ -90,13 +92,13 @@ func (r *DNSMappingUpdateRequest) Validate() error {
 			return err
 		}
 	}
-	if r.IPAddress != "" {
-		if err := ValidateIPAddressFamily(r.IPAddress, false); err != nil {
+	if r.IPAddress != nil && *r.IPAddress != "" {
+		if err := ValidateIPAddressFamily(*r.IPAddress, false); err != nil {
 			return fmt.Errorf("ip_address: %w", err)
 		}
 	}
-	if r.IPv6Address != "" {
-		if err := ValidateIPAddressFamily(r.IPv6Address, true); err != nil {
+	if r.IPv6Address != nil && *r.IPv6Address != "" {
+		if err := ValidateIPAddressFamily(*r.IPv6Address, true); err != nil {
 			return fmt.Errorf("ip_address_v6: %w", err)
 		}
 	}

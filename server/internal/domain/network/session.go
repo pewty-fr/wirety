@@ -61,6 +61,13 @@ type EndpointTakeoverReport struct {
 	WgIP            string `json:"wg_ip"`             // targeted peer's WireGuard private IP
 	AuthenticatedAt string `json:"authenticated_at"`  // the IP:port stored at last successful auth
 	ObservedAt      string `json:"observed_at"`       // the rogue IP:port now seen on `wg show endpoints`
+	// EndSession: two devices alternate behind the public IP that signed in
+	// and neither uses the IP:port that signed in, so the rogue one cannot be
+	// told apart. The session ends instead (only the owner can sign in again;
+	// the next alternation then involves the signed-in IP:port and the other
+	// one is denylisted). ObservedAt is empty; Endpoints lists both.
+	EndSession bool     `json:"end_session,omitempty"`
+	Endpoints  []string `json:"endpoints,omitempty"`
 }
 
 // PeerConnectivityStatus describes whether a peer is currently reachable.

@@ -16,6 +16,22 @@ import (
 // is kept.
 const captivePortalEventRetention = 30 * 24 * time.Hour
 
+// DefaultCaptivePortalIdleTimeout is how long, by default, a captive-portal
+// session survives without a WireGuard handshake: about WireGuard's own
+// 180 s rekey interval, so a tunnel that is down ends the session.
+const DefaultCaptivePortalIdleTimeout = 3 * time.Minute
+
+// SetCaptivePortalIdleTimeout sets how long a captive-portal session survives
+// without any WireGuard handshake from the peer — a laptop asleep, lid closed
+// — before the peer must sign in again (CAPTIVE_PORTAL_IDLE_TIMEOUT). A longer
+// timeout lets a device resume without the portal, from the public IP that
+// signed in only.
+func (s *Service) SetCaptivePortalIdleTimeout(d time.Duration) {
+	if d > 0 {
+		s.idleTimeout = d
+	}
+}
+
 // SetCaptivePortalEventRepository enables the captive-portal access history.
 // Without it (e.g. in-memory tests) nothing is recorded.
 func (s *Service) SetCaptivePortalEventRepository(events network.CaptivePortalEventRepository) {
@@ -157,6 +173,34 @@ func (s *Service) CleanupExpiredCaptivePortalWhitelist(ctx context.Context) erro
 		}
 	}
 	return s.events.DeleteCaptivePortalEventsBefore(ctx, time.Now().Add(-captivePortalEventRetention))
+}
+
+// endSessionForConcurrentUse ends a peer's captive-portal session because two
+// devices use its WireGuard config from the public IP that signed in, and the
+// jump cannot tell which one signed in (see EndpointTakeoverReport.EndSession).
+// Only the peer's owner can sign in again.
+func (s *Service) endSessionForConcurrentUse(ctx context.Context, networkID, jumpPeerID string, t network.EndpointTakeoverReport) {
+	if err := s.repo.RemoveCaptivePortalWhitelistByPeerIP(ctx, networkID, t.WgIP); err != nil {
+		log.Warn().Err(err).Str("wg_ip", t.WgIP).Msg("concurrent use: failed to end the captive-portal session")
+		return
+	}
+	log.Warn().
+		Str("network_id", networkID).
+		Str("jump_peer_id", jumpPeerID).
+		Str("wg_ip", t.WgIP).
+		Strs("endpoints", t.Endpoints).
+		Msg("captive portal: WireGuard config used by two devices behind the same public IP — session ended")
+	peers, err := s.repo.ListPeers(ctx, networkID)
+	if err != nil {
+		return
+	}
+	if p := findPeerByVPNIP(peers, t.WgIP); p != nil {
+		s.recordCaptivePortalEvent(ctx, &network.CaptivePortalEvent{
+			NetworkID: networkID, PeerID: p.ID, PeerIP: t.WgIP,
+			Event:  network.CaptivePortalEventConcurrentUse,
+			Detail: "two devices at " + strings.Join(t.Endpoints, " and "),
+		})
+	}
 }
 
 // signInDetail describes where a sign-in came from, when the jump knew the

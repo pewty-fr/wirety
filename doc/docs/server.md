@@ -15,6 +15,7 @@ Wirety Server provides REST + WebSocket APIs, orchestrates peers, incidents, ACL
 | `CORS_ORIGIN` | Allowed CORS origin(s) — comma-separated for multiple origins (e.g. `https://app.example.com,https://admin.example.com`). `ALLOWED_ORIGIN` is a legacy alias. | `*` |
 | `AUDIT_LOG` | Enable structured JSON audit logging to stdout | `false` |
 | `CAPTIVE_PORTAL_SESSION_TTL` | How long a captive-portal sign-in stays valid (Go duration, e.g. `8h`, `30m`) — see [Captive Portal](captive-portal#session-duration-and-sign-out-causes) | `24h` |
+| `CAPTIVE_PORTAL_IDLE_TIMEOUT` | How long a captive-portal session survives without any WireGuard handshake (laptop asleep); it resumes only from the public IP that signed in — see [Captive Portal](captive-portal#laptops-going-to-sleep-captive_portal_idle_timeout) | `3m` |
 
 ### Authentication
 | Variable | Description | Default |

@@ -224,7 +224,8 @@ export type CaptivePortalEventType =
   | 'expired'
   | 'tunnel_inactive'
   | 'endpoint_changed'
-  | 'revoked';
+  | 'revoked'
+  | 'concurrent_use';
 
 export interface CaptivePortalEvent {
   event: CaptivePortalEventType;

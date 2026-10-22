@@ -29,7 +29,9 @@ interface AuthContextType {
   clearOauthError: () => void;
   login: () => void;
   simpleLogin: (username: string, password: string) => Promise<boolean>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  /** Reloads the signed-in user (e.g. after editing one's own account). */
+  refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
 }
 
@@ -225,6 +227,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Unlike fetchCurrentUser, keeps the app on screen while reloading.
+  const refreshUser = async () => {
+    const response = await fetch(`${API_BASE}/users/me`, { credentials: 'same-origin' });
+    if (response.ok) setUser(await response.json());
+  };
+
   const logout = async () => {
     try {
       // Server clears the cookie and invalidates the session
@@ -252,7 +260,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearOauthError = () => setOauthError(null);
 
   return (
-    <AuthContext.Provider value={{ user, authConfig, isLoading, oauthError, clearOauthError, login, simpleLogin, logout, isAuthenticated }}>
+    <AuthContext.Provider value={{ user, authConfig, isLoading, oauthError, clearOauthError, login, simpleLogin, logout, refreshUser, isAuthenticated }}>
       {children}
     </AuthContext.Provider>
   );

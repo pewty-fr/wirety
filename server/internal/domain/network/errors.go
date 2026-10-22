@@ -21,7 +21,7 @@ var (
 	ErrRouteNotFound        = errors.New("route not found")
 	ErrDuplicateRouteName   = errors.New("route name already exists in network")
 	ErrRouteNotAttached     = errors.New("route not attached to group")
-	ErrInvalidCIDR          = errors.New("invalid CIDR format")
+	ErrInvalidCIDR          = errors.New("invalid CIDR") // a CIDR or an address a request cannot use
 	ErrJumpPeerNotFound     = errors.New("jump peer not found")
 	ErrNotJumpPeer          = errors.New("peer is not a jump peer")
 	ErrCannotDeleteLastJump = errors.New("cannot delete route: jump peer is last in network")
@@ -37,6 +37,8 @@ var (
 // Network errors
 var (
 	ErrNetworkNotFound = errors.New("network not found")
+	ErrCIDROverlap     = errors.New("CIDR already in use") // overlaps another network's range
+	ErrNetworkFull     = errors.New("network full")
 )
 
 // Peer errors

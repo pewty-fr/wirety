@@ -3,376 +3,141 @@ package ipam
 import (
 	"context"
 	"errors"
+	"net/netip"
+	"slices"
 	"testing"
 
 	"wirety/internal/domain/network"
 )
 
-// mockIPAMRepository implements ipam.Repository for testing
-type mockIPAMRepository struct {
-	prefixes map[string]*network.IPAMPrefix
-	nextIP   map[string]int // CIDR -> next IP counter
+func suggest(t *testing.T, base string, maxPeers, count int, inUse ...string) (int, []string, error) {
+	t.Helper()
+	return NewService().SuggestCIDRs(context.Background(), base, maxPeers, count, inUse)
 }
 
-func newMockIPAMRepository() *mockIPAMRepository {
-	return &mockIPAMRepository{
-		prefixes: make(map[string]*network.IPAMPrefix),
-		nextIP:   make(map[string]int),
-	}
-}
-
-func (m *mockIPAMRepository) EnsureRootPrefix(ctx context.Context, cidr string) (*network.IPAMPrefix, error) {
-	if prefix, exists := m.prefixes[cidr]; exists {
-		return prefix, nil
-	}
-
-	// Calculate usable hosts for the CIDR
-	usableHosts := calculateUsableHosts(cidr)
-
-	prefix := &network.IPAMPrefix{
-		CIDR:        cidr,
-		ParentCIDR:  "",
-		UsableHosts: usableHosts,
-	}
-
-	m.prefixes[cidr] = prefix
-	return prefix, nil
-}
-
-func (m *mockIPAMRepository) AcquireChildPrefix(ctx context.Context, parentCIDR string, prefixLen uint8) (*network.IPAMPrefix, error) {
-	// Simple mock implementation - just return a child prefix
-	childCIDR := "10.0.1.0/24" // Mock child CIDR
-
-	usableHosts := calculateUsableHosts(childCIDR)
-
-	prefix := &network.IPAMPrefix{
-		CIDR:        childCIDR,
-		ParentCIDR:  parentCIDR,
-		UsableHosts: usableHosts,
-	}
-
-	m.prefixes[childCIDR] = prefix
-	return prefix, nil
-}
-
-func (m *mockIPAMRepository) AcquireSpecificChildPrefix(ctx context.Context, parentCIDR string, cidr string) (*network.IPAMPrefix, error) {
-	if _, exists := m.prefixes[cidr]; exists {
-		return nil, errors.New("prefix already exists")
-	}
-
-	usableHosts := calculateUsableHosts(cidr)
-
-	prefix := &network.IPAMPrefix{
-		CIDR:        cidr,
-		ParentCIDR:  parentCIDR,
-		UsableHosts: usableHosts,
-	}
-
-	m.prefixes[cidr] = prefix
-	return prefix, nil
-}
-
-func (m *mockIPAMRepository) ReleaseChildPrefix(ctx context.Context, cidr string) error {
-	delete(m.prefixes, cidr)
-	return nil
-}
-
-func (m *mockIPAMRepository) DeletePrefix(ctx context.Context, cidr string) error {
-	delete(m.prefixes, cidr)
-	return nil
-}
-
-func (m *mockIPAMRepository) ListChildPrefixes(ctx context.Context, parentCIDR string) ([]*network.IPAMPrefix, error) {
-	var children []*network.IPAMPrefix
-	for _, prefix := range m.prefixes {
-		if prefix.ParentCIDR == parentCIDR {
-			children = append(children, prefix)
+func TestSuggestCIDRs_SizesRangesForPeers(t *testing.T) {
+	for _, tt := range []struct {
+		maxPeers   int
+		wantPrefix int
+	}{
+		{1, 30}, {2, 30}, {3, 29}, {10, 28}, {100, 25}, {254, 24}, {255, 23}, {1000, 22}, {1000000, 12},
+	} {
+		prefixLen, cidrs, err := suggest(t, "10.0.0.0/8", tt.maxPeers, 1)
+		if err != nil {
+			t.Fatalf("maxPeers=%d: %v", tt.maxPeers, err)
+		}
+		if prefixLen != tt.wantPrefix || len(cidrs) != 1 {
+			t.Errorf("maxPeers=%d: got /%d %v, want one /%d", tt.maxPeers, prefixLen, cidrs, tt.wantPrefix)
 		}
 	}
-	return children, nil
 }
 
-func (m *mockIPAMRepository) AcquireIP(ctx context.Context, cidr string) (string, error) {
-	counter := m.nextIP[cidr]
-	m.nextIP[cidr] = counter + 1
-
-	// Simple mock IP allocation
-	return "10.0.0.10", nil
-}
-
-func (m *mockIPAMRepository) ReleaseIP(ctx context.Context, cidr string, ip string) error {
-	return nil
-}
-
-// Helper function to calculate usable hosts from CIDR
-func calculateUsableHosts(cidr string) int {
-	// Simple calculation for /24 networks
-	if cidr == "10.0.0.0/24" || cidr == "10.0.1.0/24" {
-		return 254 // 256 - 2 (network and broadcast)
+func TestSuggestCIDRs_ConsecutiveRangesInBase(t *testing.T) {
+	_, cidrs, err := suggest(t, "10.0.0.0/8", 100, 3)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if cidr == "10.0.0.0/16" {
-		return 65534 // 65536 - 2
-	}
-	if cidr == "10.0.0.0/8" {
-		return 16777214 // 16777216 - 2
-	}
-	return 254 // Default for testing
-}
-
-func TestNewService(t *testing.T) {
-	repo := newMockIPAMRepository()
-	service := NewService(repo)
-
-	if service == nil {
-		t.Error("Expected service to be created, got nil")
-		return
-	}
-
-	if service.repo != repo {
-		t.Error("Expected service to use provided repository")
+	want := []string{"10.0.0.0/25", "10.0.0.128/25", "10.0.1.0/25"}
+	if !slices.Equal(cidrs, want) {
+		t.Errorf("got %v, want %v", cidrs, want)
 	}
 }
 
-func TestService_SuggestCIDRs_ValidInput(t *testing.T) {
-	repo := newMockIPAMRepository()
-	service := NewService(repo)
+func TestSuggestCIDRs_SkipsRangesInUse(t *testing.T) {
+	// A network on the first /24, one inside the third, and one bigger range
+	// covering the fifth to eighth; IPv6 ranges and junk are ignored.
+	_, cidrs, err := suggest(t, "10.0.0.0/8", 200, 3,
+		"10.0.0.0/24", "10.0.2.128/25", "10.0.4.0/22", "fd00::/64", "", "garbage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"10.0.1.0/24", "10.0.3.0/24", "10.0.8.0/24"}
+	if !slices.Equal(cidrs, want) {
+		t.Errorf("got %v, want %v", cidrs, want)
+	}
+}
 
-	tests := []struct {
-		name      string
-		baseCIDR  string
-		maxPeers  int
-		count     int
-		expectErr bool
-	}{
-		{
-			name:      "small network",
-			baseCIDR:  "10.0.0.0/8",
-			maxPeers:  10,
-			count:     1,
-			expectErr: false,
-		},
-		{
-			name:      "medium network",
-			baseCIDR:  "10.0.0.0/8",
-			maxPeers:  100,
-			count:     2,
-			expectErr: false,
-		},
-		{
-			name:      "large network",
-			baseCIDR:  "10.0.0.0/8",
-			maxPeers:  1000,
-			count:     1,
-			expectErr: false,
-		},
-		{
-			name:      "multiple suggestions",
-			baseCIDR:  "10.0.0.0/8",
-			maxPeers:  50,
-			count:     5,
-			expectErr: false,
-		},
+func TestSuggestCIDRs_SkipsBiggerRangeInOneStep(t *testing.T) {
+	// 10.0.0.0/9 in use: the first free /30 is 10.128.0.0, found without
+	// walking the 2^21 /30s of the range in use.
+	_, cidrs, err := suggest(t, "10.0.0.0/8", 2, 1, "10.0.0.0/9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cidrs, []string{"10.128.0.0/30"}) {
+		t.Errorf("got %v", cidrs)
+	}
+}
+
+func TestSuggestCIDRs_FewerOrNoneWhenBaseRunsOut(t *testing.T) {
+	_, cidrs, err := suggest(t, "192.168.0.0/23", 200, 5, "192.168.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cidrs, []string{"192.168.1.0/24"}) {
+		t.Errorf("got %v", cidrs)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			prefixLen, cidrs, err := service.SuggestCIDRs(context.Background(), tt.baseCIDR, tt.maxPeers, tt.count)
+	_, _, err = suggest(t, "192.168.0.0/23", 200, 5, "192.168.0.0/23")
+	if !errors.Is(err, ErrNoFreeRange) {
+		t.Errorf("err = %v, want ErrNoFreeRange", err)
+	}
+}
 
-			if tt.expectErr && err == nil {
-				t.Error("Expected error but got none")
+func TestSuggestCIDRs_SuggestionsNeverOverlap(t *testing.T) {
+	_, cidrs, err := suggest(t, "10.0.0.0/8", 50, 20, "10.0.0.64/26", "10.0.1.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cidrs) != 20 {
+		t.Fatalf("got %d suggestions", len(cidrs))
+	}
+	used := []netip.Prefix{netip.MustParsePrefix("10.0.0.64/26"), netip.MustParsePrefix("10.0.1.0/24")}
+	for i, c := range cidrs {
+		p := netip.MustParsePrefix(c)
+		for _, u := range used {
+			if p.Overlaps(u) {
+				t.Errorf("%s overlaps %s in use", c, u)
 			}
-			if !tt.expectErr && err != nil {
-				t.Errorf("Unexpected error: %v", err)
+		}
+		for _, other := range cidrs[i+1:] {
+			if p.Overlaps(netip.MustParsePrefix(other)) {
+				t.Errorf("%s overlaps %s", c, other)
 			}
-
-			if !tt.expectErr {
-				if len(cidrs) != tt.count {
-					t.Errorf("Expected %d CIDRs, got %d", tt.count, len(cidrs))
-				}
-
-				if prefixLen < 8 || prefixLen > 32 {
-					t.Errorf("Expected prefix length between 8-32, got %d", prefixLen)
-				}
-
-				// Verify all returned CIDRs are valid
-				for i, cidr := range cidrs {
-					if cidr == "" {
-						t.Errorf("CIDR %d is empty", i)
-					}
-				}
-			}
-		})
+		}
 	}
 }
 
-func TestService_SuggestCIDRs_InvalidInput(t *testing.T) {
-	repo := newMockIPAMRepository()
-	service := NewService(repo)
-
-	tests := []struct {
+func TestSuggestCIDRs_RejectsBadInput(t *testing.T) {
+	for _, tt := range []struct {
 		name     string
-		baseCIDR string
+		base     string
 		maxPeers int
-		count    int
+		invalid  bool // a validation error (400), not just an error
 	}{
-		{
-			name:     "zero maxPeers",
-			baseCIDR: "10.0.0.0/8",
-			maxPeers: 0,
-			count:    1,
-		},
-		{
-			name:     "negative maxPeers",
-			baseCIDR: "10.0.0.0/8",
-			maxPeers: -1,
-			count:    1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := service.SuggestCIDRs(context.Background(), tt.baseCIDR, tt.maxPeers, tt.count)
-
-			if err == nil {
-				t.Error("Expected error but got none")
-			}
-		})
+		{"zero peers", "10.0.0.0/8", 0, false},
+		{"negative peers", "10.0.0.0/8", -1, false},
+		{"not a CIDR", "10.0.0.0", 10, true},
+		{"host bits", "10.0.0.1/8", 10, true},
+		{"IPv6 base", "fd00::/48", 10, true},
+		{"base too small", "10.0.0.0/24", 1000, true},
+	} {
+		_, _, err := suggest(t, tt.base, tt.maxPeers, 1)
+		if err == nil {
+			t.Errorf("%s: no error", tt.name)
+			continue
+		}
+		if tt.invalid && !errors.Is(err, network.ErrInvalidCIDR) {
+			t.Errorf("%s: err = %v, want ErrInvalidCIDR", tt.name, err)
+		}
 	}
 }
 
-func TestService_SuggestCIDRs_CountHandling(t *testing.T) {
-	repo := newMockIPAMRepository()
-	service := NewService(repo)
-
-	tests := []struct {
-		name          string
-		count         int
-		expectedCount int
-	}{
-		{
-			name:          "zero count defaults to 1",
-			count:         0,
-			expectedCount: 1,
-		},
-		{
-			name:          "negative count defaults to 1",
-			count:         -1,
-			expectedCount: 1,
-		},
-		{
-			name:          "positive count",
-			count:         3,
-			expectedCount: 3,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, cidrs, err := service.SuggestCIDRs(context.Background(), "10.0.0.0/8", 10, tt.count)
-
-			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-
-			if len(cidrs) != tt.expectedCount {
-				t.Errorf("Expected %d CIDRs, got %d", tt.expectedCount, len(cidrs))
-			}
-		})
-	}
-}
-
-func TestService_SuggestCIDRs_PrefixLengthCalculation(t *testing.T) {
-	repo := newMockIPAMRepository()
-	service := NewService(repo)
-
-	tests := []struct {
-		name             string
-		maxPeers         int
-		expectedMinHosts int
-	}{
-		{
-			name:             "small network - 10 peers",
-			maxPeers:         10,
-			expectedMinHosts: 10,
-		},
-		{
-			name:             "medium network - 100 peers",
-			maxPeers:         100,
-			expectedMinHosts: 100,
-		},
-		{
-			name:             "large network - 1000 peers",
-			maxPeers:         1000,
-			expectedMinHosts: 1000,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			prefixLen, cidrs, err := service.SuggestCIDRs(context.Background(), "10.0.0.0/8", tt.maxPeers, 1)
-
-			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-
-			if len(cidrs) != 1 {
-				t.Errorf("Expected 1 CIDR, got %d", len(cidrs))
-			}
-
-			// Calculate usable hosts for the returned prefix length
-			usableHosts := (1 << (32 - prefixLen)) - 2
-
-			if usableHosts < tt.expectedMinHosts {
-				t.Errorf("Prefix length %d provides %d hosts, but need at least %d",
-					prefixLen, usableHosts, tt.expectedMinHosts)
-			}
-
-			// Ensure prefix length is bounded
-			if prefixLen < 8 {
-				t.Errorf("Prefix length %d is too small (< 8)", prefixLen)
-			}
-			if prefixLen > 32 {
-				t.Errorf("Prefix length %d is too large (> 32)", prefixLen)
-			}
-		})
-	}
-}
-
-func TestService_SuggestCIDRs_RepositoryInteraction(t *testing.T) {
-	repo := newMockIPAMRepository()
-	service := NewService(repo)
-
-	// Test that the service interacts with the repository correctly
-	_, cidrs, err := service.SuggestCIDRs(context.Background(), "10.0.0.0/8", 10, 2)
-
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	if len(cidrs) != 2 {
-		t.Errorf("Expected 2 CIDRs, got %d", len(cidrs))
-	}
-
-	// Verify that prefixes were created and then deleted in the repository
-	// (This is based on the current implementation that ensures and then deletes prefixes)
-	if len(repo.prefixes) != 0 {
-		t.Errorf("Expected repository to be clean after operation, but has %d prefixes", len(repo.prefixes))
-	}
-}
-
-// Test edge case where maxPeers is extremely large
-func TestService_SuggestCIDRs_ExtremelyLargePeers(t *testing.T) {
-	repo := newMockIPAMRepository()
-	service := NewService(repo)
-
-	// Test with a very large number of peers that would require a very small prefix
-	_, cidrs, err := service.SuggestCIDRs(context.Background(), "10.0.0.0/8", 1000000, 1)
-
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	if len(cidrs) != 1 {
-		t.Errorf("Expected 1 CIDR, got %d", len(cidrs))
+func TestSuggestCIDRs_CountDefaultsToOne(t *testing.T) {
+	for _, count := range []int{0, -1} {
+		_, cidrs, err := suggest(t, "10.0.0.0/8", 10, count)
+		if err != nil || len(cidrs) != 1 {
+			t.Errorf("count=%d: got %v, %v", count, cidrs, err)
+		}
 	}
 }

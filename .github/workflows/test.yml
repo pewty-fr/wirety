@@ -147,6 +147,10 @@ jobs:
       - name: Run lint
         run: npm run lint
 
+      # Integration tests: pages and forms against an in-memory API (MSW).
+      - name: Run tests
+        run: npm test
+
       # Also checks that react and react-dom have the same version (prebuild).
       - name: Build
         run: npm run build

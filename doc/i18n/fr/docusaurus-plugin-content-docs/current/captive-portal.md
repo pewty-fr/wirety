@@ -183,6 +183,7 @@ Supprimer l'interception élimine les **impasses HSTS** et laisse fonctionner le
 
 - **Détection du portail captif par l'OS** — les sondes de l'OS (HTTP en clair) sont interceptées par DNS vers le jump peer et traitées sur `:80`, faisant apparaître la bannière native « Se connecter au réseau ». Le TCP reset sur `:443` incite en plus iOS/Android à lancer leur détection.
 - **Le pop-up de connexion du tableau de bord** — l'application web Wirety interroge l'état de chaque appareil et, quand l'un a besoin de se connecter, propose un lien à la demande vers le portail (en HTTP).
+- **Mes appareils** (*My devices*) — la page de l'application web qui liste les appareils de l'utilisateur par réseau, avec l'état de chacun, la raison de sa dernière déconnexion et un lien **Sign in** vers le portail de chaque réseau. C'est l'accès quand le pop-up n'apparaît pas ou a été fermé ; l'entrée du menu indique combien d'appareils attendent leur propriétaire.
 
 Une fois le peer authentifié, le DNS résout l'application vers sa **vraie IP** et le HTTPS fonctionne sans altération — le portail n'est jamais dans le chemin TLS.
 
@@ -244,21 +245,33 @@ Un peer doit repasser par le portail plus tôt quand :
 | Cause | Événement | Délai |
 |-------|-----------|-------|
 | La durée de session est atteinte | `expired` | Accès retiré en ~30 s (heartbeat suivant du jump) |
-| Le tunnel est déconnecté — aucun handshake WireGuard depuis plus de 185 s (appareil en veille, réseau perdu, VPN coupé) | `tunnel_inactive` | Heartbeat suivant du jump (≤ 30 s) |
+| Le tunnel est déconnecté — aucun handshake WireGuard depuis plus de **`CAPTIVE_PORTAL_IDLE_TIMEOUT`** (3 min par défaut) : appareil en veille, réseau perdu, VPN coupé | `tunnel_inactive` | Heartbeat suivant du jump (≤ 30 s) |
 | L'IP publique a changé (autre Wi-Fi, données mobiles…) — un simple changement de port NAT ne compte pas | `endpoint_changed` | Immédiat (le jump compare l'endpoint courant à celui de l'authentification) |
 | Un admin ou le propriétaire a cliqué sur **Revoke Auth** | `revoked` | Immédiat |
+| Deux appareils ont utilisé la configuration du peer en même temps derrière la même IP publique, et le jump n'a pas pu savoir lequel s'était authentifié (voir [Configuration WireGuard volée](#configuration-wireguard-volée)) | `concurrent_use` | Heartbeat suivant du jump (≤ 30 s) |
 
 La déconnexion coupe **toutes** les connexions de l'appareil, y compris celles ouvertes pendant qu'il était authentifié (une session SSH, un téléchargement, une WebSocket) : le jump vérifie l'authentification pour chaque paquet envoyé par l'appareil, pas seulement pour le premier paquet d'une connexion. Les réponses aux connexions que l'appareil n'a pas ouvertes (un autre peer qui le joint) ne sont pas concernées.
+
+### Ordinateurs portables mis en veille (`CAPTIVE_PORTAL_IDLE_TIMEOUT`)
+
+Quand le capot d'un Mac est fermé (sans secteur ni écran externe), tout le système se met en veille — WireGuard compris : plus aucun handshake, et au bout de 3 minutes le jump considère le tunnel coupé. Capot ouvert, une session verrouillée ou fermée n'arrête pas le tunnel. Rien côté Wirety ne peut maintenir le tunnel d'un portable en veille.
+
+**`CAPTIVE_PORTAL_IDLE_TIMEOUT`** (variable d'environnement du serveur, durée Go ; défaut `3m`) est la durée pendant laquelle une session survit sans aucun handshake. Allongez-la — **1 à 2 heures** couvrent réunions, déjeuner et changements de salle sur le même Wi-Fi — et un portable qui sort de veille retrouve son accès sans le portail captif, à condition :
+
+- qu'il revienne depuis **l'IP publique qui s'est authentifiée** — sortir de veille sur un autre réseau (maison, bureau, données mobiles) redemande le portail ;
+- que la durée de session (`CAPTIVE_PORTAL_SESSION_TTL`) ne soit pas écoulée et que la session n'ait pas été révoquée.
+
+Le compromis : pendant que le portable dort, quelqu'un qui détient **une copie de sa configuration WireGuard** et se connecte **depuis la même IP publique** obtient l'accès sans SSO, jusqu'au réveil du portable (les deux appareils alternent alors et la copie est détectée) ou jusqu'à l'expiration du délai. Gardez un délai assez court pour borner cette fenêtre ; la valeur par défaut conserve le comportement précédent.
 
 ### Historique d'accès
 
 Chaque authentification (`authenticated`) et chaque fin d'accès, avec sa cause et ses détails (âge du dernier handshake, ancienne → nouvelle IP publique…), sont enregistrées et conservées **30 jours** :
 
-- **Tableau de bord** — la fenêtre **Peer Detail** affiche la **dernière déconnexion** (*Last sign-out*) et l'**historique du portail** (*Portal history*). Visible par les admins et par le propriétaire du peer.
+- **Tableau de bord** — la fenêtre **Peer Detail** affiche la **dernière déconnexion** (*Last sign-out*) et l'**historique du portail** (*Portal history*). Visible par les admins et par le propriétaire du peer. **Mes appareils** affiche la dernière déconnexion de chaque appareil de l'utilisateur (ou depuis quand il est connecté).
 - **Page du portail captif** — quand un utilisateur se reconnecte, la page lui indique pourquoi sa session précédente s'est terminée.
 - **API** — `GET /networks/{networkId}/peers/{peerId}/captive-portal-events?limit=20` (du plus récent au plus ancien).
 
-Quand des utilisateurs sont déconnectés plusieurs fois par jour, l'historique indique la cause dominante : `tunnel_inactive` (ordinateurs portables mis en veille), `endpoint_changed` (utilisateurs qui changent de réseau, ou connexion dont l'IP publique change souvent) ou `expired` (envisager un `CAPTIVE_PORTAL_SESSION_TTL` plus long).
+Quand des utilisateurs sont déconnectés plusieurs fois par jour, l'historique indique la cause dominante : `tunnel_inactive` (ordinateurs portables mis en veille — voir `CAPTIVE_PORTAL_IDLE_TIMEOUT` ci-dessus), `endpoint_changed` (utilisateurs qui changent de réseau, ou connexion dont l'IP publique change souvent) ou `expired` (envisager un `CAPTIVE_PORTAL_SESSION_TTL` plus long).
 
 ## Sécurité
 
@@ -268,6 +281,8 @@ Si la configuration WireGuard d'un utilisateur (clé privée) est volée, l'atta
 **Durée de session (`CAPTIVE_PORTAL_SESSION_TTL`, 24 heures par défaut) :** Les entrées de liste blanche expirent au bout de cette durée. L'accès de l'attaquant se termine quand l'entrée expire, même si le vol n'est pas détecté.
 
 **Liaison stricte à l'endpoint :** Chaque entrée de liste blanche est liée à l'endpoint public complet du peer (`ip:port`) au moment de l'authentification. L'agent du jump peer compare l'endpoint live retourné par `wg show endpoints` à l'endpoint stocké à chaque requête du portail captif et à chaque resync iptables (toutes les 300 ms). Une IP publique différente supprime la règle `ACCEPT` iptables et force une nouvelle authentification via le portail captif (un simple changement de port NAT est toléré). Une configuration volée utilisée depuis un autre réseau échoue donc à la vérification immédiatement, sans attendre l'expiration TTL.
+
+**Détection de l'utilisation simultanée :** deux appareils avec la même clé font alterner l'endpoint vu par le jump. Depuis une autre IP publique, deux allers-retours en 60 secondes suffisent : la source étrangère est bloquée sur l'interface physique du jump (denylist). **Derrière la même IP publique** (même NAT de bureau, même box), les appareils se distinguent par leur port source : un appareil seul change de port de temps en temps sans jamais revenir en arrière, deux appareils alternent entre leurs ports. Si l'un des deux ports est celui qui s'est authentifié, l'autre appareil est bloqué. Sinon (le port de l'appareil légitime a changé depuis, après une mise en veille par exemple), la copie ne peut pas être distinguée : la session prend fin (`concurrent_use` dans l'historique), seul le propriétaire peut se réauthentifier, et l'alternation suivante implique le port authentifié, ce qui bloque la copie. Une authentification réussie efface les blocages du peer.
 
 ### Configuration WireGuard partagée (intentionnelle)
 Si un utilisateur partage sa configuration WireGuard avec une autre personne, cette personne se connectera avec la même IP VPN mais ne pourra pas passer le portail captif : l'authentification vérifie que la session Wirety appartient au propriétaire du peer. Tenter de s'authentifier en tant qu'utilisateur différent — même un administrateur — entraîne une erreur de propriété.
@@ -301,7 +316,7 @@ La liste blanche est par jump peer et stockée dans la table `captive_portal_whi
 | Le popup du portail captif OS n'apparaît pas (tunnel complet) | CNA/NCSI se déclenche automatiquement pour les peers en tunnel complet. Si cela ne se déclenche pas, essayer de déconnecter et reconnecter WireGuard. |
 | Le popup du portail captif OS persiste après l'authentification | Le TTL DNS (5-10s) peut ne pas avoir expiré. Attendre quelques secondes ; la prochaine sonde recevra une réponse de succès. |
 | Port 80 déjà utilisé sur le jump peer | Quelque chose d'autre est lié à `<wg-ip>:80`. L'agent journalise une erreur et le portail captif ne fonctionnera pas. |
-| Le HTTPS vers une ressource interne échoue avant l'authentification | Normal — le portail captif n'intercepte pas le HTTPS ; le `:443` non authentifié est coupé (TCP reset). Déclencher le portail en HTTP, ou utiliser le pop-up de connexion du tableau de bord. Après authentification, le HTTPS fonctionne normalement. |
+| Le HTTPS vers une ressource interne échoue avant l'authentification | Normal — le portail captif n'intercepte pas le HTTPS ; le `:443` non authentifié est coupé (TCP reset). Déclencher le portail en HTTP, ou utiliser le pop-up de connexion du tableau de bord ou **Mes appareils**. Après authentification, le HTTPS fonctionne normalement. |
 
 ## Reverse Proxy et isolation d'hôte virtuel
 

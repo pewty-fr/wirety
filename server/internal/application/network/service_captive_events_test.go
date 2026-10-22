@@ -59,7 +59,7 @@ func TestDisconnectedPeerSignOutIsRecorded(t *testing.T) {
 	if len(evs) != 1 || evs[0].Event != network.CaptivePortalEventTunnelInactive {
 		t.Fatalf("want one tunnel_inactive event, got %+v", evs)
 	}
-	if evs[0].Detail != "last WireGuard handshake 5m0s ago" {
+	if evs[0].Detail != "last WireGuard handshake 5m0s ago (idle limit 3m0s)" {
 		t.Errorf("detail = %q", evs[0].Detail)
 	}
 
@@ -84,6 +84,47 @@ func TestLivePeerKeepsItsAccess(t *testing.T) {
 	}
 	if evs := events(t, s); len(evs) != 0 {
 		t.Errorf("unexpected events: %+v", evs)
+	}
+}
+
+func TestAsleepPeerKeepsItsSessionUpToTheIdleTimeout(t *testing.T) {
+	ctx := context.Background()
+	s, repo := newEventsTestService(t)
+	s.SetCaptivePortalIdleTimeout(time.Hour)
+	_ = repo.AddCaptivePortalWhitelist(ctx, "net", "jump", "10.0.0.2", "1.2.3.4:51000")
+
+	// Laptop asleep for 20 min: no handshake, the session is kept.
+	asleep := map[string]time.Time{"10.0.0.2": time.Now().Add(-20 * time.Minute)}
+	_ = s.CleanupWhitelistForDisconnectedPeers(ctx, "net", "jump", map[string]bool{}, asleep)
+	if wl, _ := repo.GetCaptivePortalWhitelist(ctx, "net", "jump"); len(wl) != 1 {
+		t.Fatalf("asleep peer lost its session within the idle timeout: %v", wl)
+	}
+	if evs := events(t, s); len(evs) != 0 {
+		t.Fatalf("unexpected events: %+v", evs)
+	}
+
+	// Past the idle timeout: the session ends.
+	gone := map[string]time.Time{"10.0.0.2": time.Now().Add(-61 * time.Minute)}
+	_ = s.CleanupWhitelistForDisconnectedPeers(ctx, "net", "jump", map[string]bool{}, gone)
+	if wl, _ := repo.GetCaptivePortalWhitelist(ctx, "net", "jump"); len(wl) != 0 {
+		t.Fatalf("peer still whitelisted past the idle timeout: %v", wl)
+	}
+	if evs := events(t, s); len(evs) != 1 || evs[0].Detail != "last WireGuard handshake 1h1m0s ago (idle limit 1h0m0s)" {
+		t.Fatalf("want one tunnel_inactive with the idle limit, got %+v", evs)
+	}
+}
+
+func TestPeerWithoutKnownHandshakeLosesItsSession(t *testing.T) {
+	ctx := context.Background()
+	s, repo := newEventsTestService(t)
+	s.SetCaptivePortalIdleTimeout(time.Hour)
+	_ = repo.AddCaptivePortalWhitelist(ctx, "net", "jump", "10.0.0.2", "1.2.3.4:51000")
+
+	// The jump knows no handshake (its interface was recreated): nothing
+	// proves the peer was recently there, the session ends.
+	_ = s.CleanupWhitelistForDisconnectedPeers(ctx, "net", "jump", map[string]bool{}, nil)
+	if wl, _ := repo.GetCaptivePortalWhitelist(ctx, "net", "jump"); len(wl) != 0 {
+		t.Fatalf("session kept without a known handshake: %v", wl)
 	}
 }
 
@@ -117,5 +158,30 @@ func TestEndpointChangeIsRecordedOncePerNewIP(t *testing.T) {
 	// The whitelist entry is kept (the agent enforces the endpoint check).
 	if wl, _ := repo.GetCaptivePortalWhitelist(ctx, "net", "jump"); len(wl) != 1 {
 		t.Errorf("whitelist entry removed: %v", wl)
+	}
+}
+
+func TestConcurrentUseBehindTheSameIPEndsTheSession(t *testing.T) {
+	ctx := context.Background()
+	s, repo := newEventsTestService(t)
+	_ = repo.AddCaptivePortalWhitelist(ctx, "net", "jump", "10.0.0.2", "1.2.3.4:51000")
+
+	err := s.processEndpointTakeovers(ctx, "net", "jump", []network.EndpointTakeoverReport{{
+		WgIP: "10.0.0.2", AuthenticatedAt: "1.2.3.4:51000", EndSession: true,
+		Endpoints: []string{"1.2.3.4:52000", "1.2.3.4:53000"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wl, _ := repo.GetCaptivePortalWhitelist(ctx, "net", "jump"); len(wl) != 0 {
+		t.Fatalf("session kept: %v", wl)
+	}
+	evs := events(t, s)
+	if len(evs) != 1 || evs[0].Event != network.CaptivePortalEventConcurrentUse || evs[0].Detail != "two devices at 1.2.3.4:52000 and 1.2.3.4:53000" {
+		t.Fatalf("want one concurrent_use event, got %+v", evs)
+	}
+	// Nothing is denylisted: the legitimate device cannot be told apart.
+	if dl, _ := repo.GetEndpointDenylist(ctx, "net", "jump"); len(dl) != 0 {
+		t.Errorf("denylisted: %+v", dl)
 	}
 }

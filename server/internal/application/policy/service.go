@@ -140,8 +140,8 @@ func (s *Service) UpdatePolicy(ctx context.Context, networkID, policyID string, 
 	if req.Name != "" {
 		policy.Name = req.Name
 	}
-	if req.Description != "" {
-		policy.Description = req.Description
+	if req.Description != nil {
+		policy.Description = *req.Description
 	}
 	policy.UpdatedAt = time.Now()
 

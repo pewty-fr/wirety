@@ -33,79 +33,10 @@ func TestCaptivePortalSessionLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	st := setupStack(ctx, t, withServerEnv("CAPTIVE_PORTAL_SESSION_TTL", sessionTTL.String()))
+	f := newCaptiveFixture(ctx, t, "lifecycle", "10.97.0.0/24", withServerEnv("CAPTIVE_PORTAL_SESSION_TTL", sessionTTL.String()))
+	st, net, regPeer, jump, peer := f.st, f.net, f.regPeer, f.jump, f.peer
+	svcIP, svcURL, jumpWgIP, session, gate := f.svcIP, f.svcURL, f.jumpWgIP, f.session, f.gate
 
-	userTok, err := dexPasswordToken(ctx, st.dexTokenURL, dexClientID, dexClientSecret, userEmail, userPassword)
-	if err != nil {
-		t.Fatalf("dex user token: %v", err)
-	}
-	owner, err := newAPIClient(st.apiBaseURL, userTok).me(ctx)
-	if err != nil {
-		t.Fatalf("user /me: %v", err)
-	}
-
-	net, err := st.admin.createNetwork(ctx, network{Name: "lifecycle", CIDR: "10.97.0.0/24"})
-	if err != nil {
-		t.Fatalf("create network: %v", err)
-	}
-	jumpPeer, err := st.admin.createPeer(ctx, net.ID, createPeerReq{
-		Name: "jump-1", IsJump: true, UseAgent: true, Endpoint: "10.255.255.254", ListenPort: 51820,
-	})
-	if err != nil {
-		t.Fatalf("create jump peer: %v", err)
-	}
-	regPeer, err := st.admin.createPeer(ctx, net.ID, createPeerReq{Name: "peer-a", OwnerID: owner.ID, UseAgent: true})
-	if err != nil {
-		t.Fatalf("create peer: %v", err)
-	}
-	svc, svcIP := st.startPrivateService(ctx, t, "private-svc")
-	startFakeSSH(ctx, t, svc)
-	rt, err := st.admin.createRoute(ctx, net.ID, createRouteReq{Name: "to-svc", DestinationCIDR: svcIP + "/32", JumpPeerID: jumpPeer.ID})
-	if err != nil {
-		t.Fatalf("create route: %v", err)
-	}
-	grp, err := st.admin.createGroup(ctx, net.ID, "users")
-	if err != nil {
-		t.Fatalf("create group: %v", err)
-	}
-	if err := st.admin.addPeerToGroup(ctx, net.ID, grp.ID, regPeer.ID); err != nil {
-		t.Fatalf("add peer to group: %v", err)
-	}
-	if err := st.admin.attachRouteToGroup(ctx, net.ID, grp.ID, rt.ID); err != nil {
-		t.Fatalf("attach route: %v", err)
-	}
-	pol, err := st.admin.createPolicy(ctx, net.ID, createPolicyReq{
-		Name:  "allow-svc",
-		Rules: []policyRule{{Direction: "output", Action: "allow", TargetType: "cidr", Target: svcIP + "/32"}},
-	})
-	if err != nil {
-		t.Fatalf("create policy: %v", err)
-	}
-	if err := st.admin.attachPolicyToGroup(ctx, net.ID, grp.ID, pol.ID); err != nil {
-		t.Fatalf("attach policy: %v", err)
-	}
-
-	jump := st.startJumpAgent(ctx, t, jumpPeer.Token, "-server", "http://server:8080", "-jump-host-ports", "22/tcp")
-	startFakeSSH(ctx, t, jump)
-	jumpWgIP := stripPrefix(jumpPeer.Address)
-	jumpIP, err := jump.ContainerIP(ctx)
-	if err != nil {
-		t.Fatalf("jump container ip: %v", err)
-	}
-	cfg, err := st.admin.peerConfig(ctx, net.ID, regPeer.ID)
-	if err != nil {
-		t.Fatalf("fetch peer config: %v", err)
-	}
-	peer := st.startPeer(ctx, t, "peer-a")
-	writeFileInContainer(ctx, t, peer, "/etc/wireguard/wg0.conf", clientConfig(cfg, fmt.Sprintf("%s:%d", jumpIP, jumpPeer.ListenPort)))
-	mustExec(ctx, t, peer, "wg-quick", "up", "wg0")
-
-	session, err := st.wiretySession(ctx, userEmail, userPassword)
-	if err != nil {
-		t.Fatalf("oidc login: %v", err)
-	}
-	gate := []string{"-s " + stripPrefix(regPeer.Address) + "/32", "-j WIRETY_POLICY"}
-	svcURL := "http://" + svcIP + "/"
 	signedOut := func() {
 		t.Helper()
 		eventually(t, 90*time.Second, defaultPollInterval, func() error {
@@ -203,6 +134,156 @@ func TestCaptivePortalSessionLifecycle(t *testing.T) {
 		}
 	}
 	t.Logf("history: %+v", events)
+}
+
+// TestCaptivePortalSessionSurvivesSleep: with CAPTIVE_PORTAL_IDLE_TIMEOUT
+// longer than WireGuard's handshake interval, a laptop put to sleep — its
+// tunnel silent for more than 3 minutes, lid closed — keeps its captive-portal
+// session, and gets its access back on waking on the same network without
+// going through the portal.
+func TestCaptivePortalSessionSurvivesSleep(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+	f := newCaptiveFixture(ctx, t, "sleep", "10.96.0.0/24", withServerEnv("CAPTIVE_PORTAL_IDLE_TIMEOUT", "10m"))
+
+	token, cpState := interceptAndStart(ctx, t, f.st, f.peer, f.svcIP)
+	if err := f.st.captivePortalAuthenticate(ctx, token, f.session, cpState); err != nil {
+		t.Fatalf("captive portal login: %v", err)
+	}
+	requireRuleEventually(ctx, t, f.jump, "WIRETY_JUMP", f.gate...)
+	requireHTTPEventually(ctx, t, f.peer, f.svcURL, "200")
+
+	// Asleep: no handshake for longer than the 185 s after which the jump
+	// reports the tunnel down, plus a heartbeat.
+	mustExec(ctx, t, f.peer, "wg-quick", "down", "wg0")
+	time.Sleep(4 * time.Minute)
+
+	t.Run("session_kept_while_asleep", func(t *testing.T) {
+		if dump, err := dumpChain(ctx, f.jump, "WIRETY_JUMP"); err != nil {
+			t.Fatal(err)
+		} else if !hasRule(dump, f.gate...) {
+			t.Error("the jump dropped the asleep peer's session")
+		}
+		requireHistory(ctx, t, f, "authenticated")
+	})
+
+	// Awake on the same network: a new tunnel (new source port), same public IP.
+	mustExec(ctx, t, f.peer, "wg-quick", "up", "wg0")
+	t.Run("access_back_on_wake_without_portal", func(t *testing.T) {
+		requireHTTPEventually(ctx, t, f.peer, f.svcURL, "200")
+		requireHistory(ctx, t, f, "authenticated")
+	})
+}
+
+// requireHistory checks peer-a's captive-portal access history, newest first.
+func requireHistory(ctx context.Context, t *testing.T, f *captiveFixture, want ...string) {
+	t.Helper()
+	events, err := f.st.admin.captivePortalEvents(ctx, f.net.ID, f.regPeer.ID)
+	if err != nil {
+		t.Fatalf("captive portal events: %v", err)
+	}
+	var got []string
+	for _, e := range events {
+		got = append(got, e.Event)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("history = %+v, want %v", events, want)
+	}
+}
+
+// captiveFixture is a device (peer-a, flagged use_agent, tunnel up, not signed
+// in) behind a jump peer, with a private host running HTTP and SSH that its
+// policy allows, SSH on the jump opened to signed-in peers, and the owner's
+// dashboard session.
+type captiveFixture struct {
+	st                *stack
+	net               network
+	jumpPeer, regPeer peer
+	jump, peer        testcontainers.Container
+	svcIP, svcURL     string
+	jumpWgIP          string
+	session           string
+	gate              []string // WIRETY_JUMP rule present while peer-a is signed in
+}
+
+func newCaptiveFixture(ctx context.Context, t *testing.T, name, cidr string, opts ...stackOption) *captiveFixture {
+	t.Helper()
+	st := setupStack(ctx, t, opts...)
+
+	userTok, err := dexPasswordToken(ctx, st.dexTokenURL, dexClientID, dexClientSecret, userEmail, userPassword)
+	if err != nil {
+		t.Fatalf("dex user token: %v", err)
+	}
+	owner, err := newAPIClient(st.apiBaseURL, userTok).me(ctx)
+	if err != nil {
+		t.Fatalf("user /me: %v", err)
+	}
+
+	net, err := st.admin.createNetwork(ctx, network{Name: name, CIDR: cidr})
+	if err != nil {
+		t.Fatalf("create network: %v", err)
+	}
+	jumpPeer, err := st.admin.createPeer(ctx, net.ID, createPeerReq{
+		Name: "jump-1", IsJump: true, UseAgent: true, Endpoint: "10.255.255.254", ListenPort: 51820,
+	})
+	if err != nil {
+		t.Fatalf("create jump peer: %v", err)
+	}
+	regPeer, err := st.admin.createPeer(ctx, net.ID, createPeerReq{Name: "peer-a", OwnerID: owner.ID, UseAgent: true})
+	if err != nil {
+		t.Fatalf("create peer: %v", err)
+	}
+	svc, svcIP := st.startPrivateService(ctx, t, "private-svc")
+	startFakeSSH(ctx, t, svc)
+	rt, err := st.admin.createRoute(ctx, net.ID, createRouteReq{Name: "to-svc", DestinationCIDR: svcIP + "/32", JumpPeerID: jumpPeer.ID})
+	if err != nil {
+		t.Fatalf("create route: %v", err)
+	}
+	grp, err := st.admin.createGroup(ctx, net.ID, "users")
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if err := st.admin.addPeerToGroup(ctx, net.ID, grp.ID, regPeer.ID); err != nil {
+		t.Fatalf("add peer to group: %v", err)
+	}
+	if err := st.admin.attachRouteToGroup(ctx, net.ID, grp.ID, rt.ID); err != nil {
+		t.Fatalf("attach route: %v", err)
+	}
+	pol, err := st.admin.createPolicy(ctx, net.ID, createPolicyReq{
+		Name:  "allow-svc",
+		Rules: []policyRule{{Direction: "output", Action: "allow", TargetType: "cidr", Target: svcIP + "/32"}},
+	})
+	if err != nil {
+		t.Fatalf("create policy: %v", err)
+	}
+	if err := st.admin.attachPolicyToGroup(ctx, net.ID, grp.ID, pol.ID); err != nil {
+		t.Fatalf("attach policy: %v", err)
+	}
+
+	jump := st.startJumpAgent(ctx, t, jumpPeer.Token, "-server", "http://server:8080", "-jump-host-ports", "22/tcp")
+	startFakeSSH(ctx, t, jump)
+	jumpWgIP := stripPrefix(jumpPeer.Address)
+	jumpIP, err := jump.ContainerIP(ctx)
+	if err != nil {
+		t.Fatalf("jump container ip: %v", err)
+	}
+	cfg, err := st.admin.peerConfig(ctx, net.ID, regPeer.ID)
+	if err != nil {
+		t.Fatalf("fetch peer config: %v", err)
+	}
+	peer := st.startPeer(ctx, t, "peer-a")
+	writeFileInContainer(ctx, t, peer, "/etc/wireguard/wg0.conf", clientConfig(cfg, fmt.Sprintf("%s:%d", jumpIP, jumpPeer.ListenPort)))
+	mustExec(ctx, t, peer, "wg-quick", "up", "wg0")
+
+	session, err := st.wiretySession(ctx, userEmail, userPassword)
+	if err != nil {
+		t.Fatalf("oidc login: %v", err)
+	}
+	return &captiveFixture{
+		st: st, net: net, jumpPeer: jumpPeer, regPeer: regPeer, jump: jump, peer: peer,
+		svcIP: svcIP, svcURL: "http://" + svcIP + "/", jumpWgIP: jumpWgIP, session: session,
+		gate: []string{"-s " + stripPrefix(regPeer.Address) + "/32", "-j WIRETY_POLICY"},
+	}
 }
 
 // requireSignedInAccess checks a signed-in peer reaches svcURL over HTTP and
