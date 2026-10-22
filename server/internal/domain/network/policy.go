@@ -2,6 +2,7 @@ package network
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"time"
@@ -37,8 +38,9 @@ type PolicyCreateRequest struct {
 
 // PolicyUpdateRequest represents the data that can be updated for a policy
 type PolicyUpdateRequest struct {
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Description: nil leaves it unchanged, "" clears it.
+	Description *string `json:"description,omitempty"`
 }
 
 // Validate validates the policy creation request
@@ -88,8 +90,12 @@ func (r *PolicyRule) Validate() error {
 
 	// If target type is CIDR, validate the CIDR format
 	if r.TargetType == "cidr" {
-		if _, _, err := net.ParseCIDR(r.Target); err != nil {
+		ip, network, err := net.ParseCIDR(r.Target)
+		if err != nil {
 			return errors.New("policy rule target must be a valid CIDR when target_type is 'cidr'")
+		}
+		if !ip.Equal(network.IP) {
+			return fmt.Errorf("policy rule target: %w", hostBitsError(r.Target, network))
 		}
 	}
 

@@ -369,6 +369,10 @@ func (m *mockFullRepository) ReleaseIP(ctx context.Context, cidr, ip string) err
 	return m.ipam.ReleaseIP(ctx, cidr, ip)
 }
 
+func (m *mockFullRepository) AcquireSpecificIP(ctx context.Context, cidr, ip string) error {
+	return m.ipam.AcquireSpecificIP(ctx, cidr, ip)
+}
+
 func (m *mockFullRepository) EnsureRootPrefix(ctx context.Context, cidr string) (*network.IPAMPrefix, error) {
 	return &network.IPAMPrefix{CIDR: cidr}, nil
 }
@@ -543,6 +547,10 @@ func (m *mockIPAMRepository) AcquireIP(ctx context.Context, cidr string) (string
 }
 
 func (m *mockIPAMRepository) ReleaseIP(ctx context.Context, cidr, ip string) error {
+	return nil
+}
+
+func (m *mockIPAMRepository) AcquireSpecificIP(ctx context.Context, cidr, ip string) error {
 	return nil
 }
 

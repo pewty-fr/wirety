@@ -1,234 +1,221 @@
-import { useState, useEffect, useCallback } from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUser, faUsers, faCog, faUserPlus } from '@fortawesome/free-solid-svg-icons';
-import PageHeader from '../../components/PageHeader';
-import UserDetailModal from '../../components/UserDetailModal';
-import DefaultPermissionsModal from '../../components/DefaultPermissionsModal';
-import CreateUserModal from '../../components/CreateUserModal';
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { AdjustmentsHorizontalIcon, KeyIcon, PencilSquareIcon, PlusIcon, TrashIcon } from '@heroicons/react/20/solid';
+import { UsersIcon } from '@heroicons/react/24/outline';
 import api from '../../api/client';
+import {
+  Alert,
+  Button,
+  EmptyState,
+  IconButton,
+  Page,
+  PageHeader,
+  Pagination,
+  Spinner,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+  apiErrorMessage,
+  useConfirm,
+  useToast,
+} from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
+import { useNetworks, useUsers } from '../../hooks/useQueries';
 import type { User } from '../../types';
+import CreateUserModal from './CreateUserModal';
+import { formatDate } from '../../utils/dates';
+import DefaultPermissionsModal from './DefaultPermissionsModal';
+import EditUserModal from './EditUserModal';
+import ResetPasswordModal from './ResetPasswordModal';
+import { RoleBadge } from './RoleBadge';
+import { BOOTSTRAP_ADMIN_ID } from './roles';
+
+const PAGE_SIZE = 25;
+
+/** A modal about one user; the user stays set while the modal closes. */
+interface UserModalState {
+  open: boolean;
+  user: User | null;
+}
+const closed: UserModalState = { open: false, user: null };
 
 export default function UsersPage() {
-  const { authConfig } = useAuth();
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user: me, authConfig } = useAuth();
+  const isAdmin = me?.role === 'administrator';
+  // In single sign-on mode, users are created on their first sign-in and have no password.
+  const passwordMode = authConfig?.simple_auth === true;
+  const { data: users = [], isLoading } = useUsers(isAdmin);
+  const { data: networks = [] } = useNetworks();
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [isDefaultPermissionsModalOpen, setIsDefaultPermissionsModalOpen] = useState(false);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
+  const [editing, setEditing] = useState<UserModalState>(closed);
+  const [resetting, setResetting] = useState<UserModalState>(closed);
+  const confirm = useConfirm();
+  const toast = useToast();
+  const queryClient = useQueryClient();
 
-  // "New user" is only meaningful when OIDC is disabled — in OIDC mode users
-  // are auto-provisioned on first login, so a manual create form would be misleading.
-  const canCreateUser = authConfig?.simple_auth === true;
+  const deleteUser = useMutation({
+    mutationFn: (u: User) => api.deleteUser(u.id),
+    onSuccess: (_, u) => {
+      toast.success(`User “${u.name}” deleted`);
+      void queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
 
-  useEffect(() => {
-    const loadCurrentUser = async () => {
-      try {
-        const userData = await api.getCurrentUser();
-        setCurrentUser(userData);
-      } catch (error) {
-        console.error('Failed to load current user:', error);
-      }
-    };
-    void loadCurrentUser();
-  }, []);
-
-  const pageSize = 20;
-
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await api.getUsers(page, pageSize);
-      // Backend returns array directly, not paginated response
-      setUsers(response);
-      setTotal(response.length);
-    } catch (error) {
-      console.error('Failed to load users:', error);
-      setUsers([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [page]);
-
-  useEffect(() => {
-    void loadUsers();
-  }, [loadUsers]);
-
-  const handleUserClick = (user: User) => {
-    setSelectedUser(user);
-    setIsDetailModalOpen(true);
+  const handleDelete = async (u: User) => {
+    const ok = await confirm({
+      title: `Delete user “${u.name}”?`,
+      message: `${u.email} will no longer be able to sign in. This cannot be undone.`,
+      confirmLabel: 'Delete user',
+      destructive: true,
+    });
+    if (ok) deleteUser.mutate(u);
   };
 
-  const totalPages = Math.ceil(total / pageSize);
+  if (!isAdmin) {
+    return (
+      <Page>
+        <PageHeader title="Users" />
+        <Alert tone="warning" title="Administrators only">
+          Only administrators can manage users.
+        </Alert>
+      </Page>
+    );
+  }
 
-  const isAdmin = currentUser?.role === 'administrator';
+  // The signed-in administrator and the built-in one cannot be deleted.
+  const canDelete = (u: User) => u.id !== me?.id && u.id !== BOOTSTRAP_ADMIN_ID;
+  // Only local users have a password; the built-in admin's comes from the server's configuration.
+  const canResetPassword = (u: User) => passwordMode && u.id !== BOOTSTRAP_ADMIN_ID;
+
+  const networkNames = (u: User) => {
+    const names = u.authorized_networks.map((id) => networks.find((n) => n.id === id)?.name ?? id);
+    return names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ');
+  };
+
+  const pages = Math.max(1, Math.ceil(users.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pages);
+  const shown = users.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const newUserButton = (
+    <Button icon={<PlusIcon className="size-4" />} onClick={() => setCreating(true)}>
+      New user
+    </Button>
+  );
 
   return (
-    <div>
-      <PageHeader 
-        title="Users" 
-        subtitle={`${total} user${total !== 1 ? 's' : ''} total`}
-        action={
-          isAdmin ? (
-            <div className="mb-6 flex items-center gap-2">
-              {canCreateUser && (
-                <button
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-                >
-                  <FontAwesomeIcon icon={faUserPlus} />
-                  New User
-                </button>
-              )}
-              <button
-                onClick={() => setIsDefaultPermissionsModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                title="Default permissions"
-              >
-                <FontAwesomeIcon icon={faCog} />
-              </button>
-            </div>
-          ) : undefined
+    <Page>
+      <PageHeader
+        title="Users"
+        description="Who can sign in to Wirety, and which networks they can use."
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              icon={<AdjustmentsHorizontalIcon className="size-4" />}
+              onClick={() => setDefaultsOpen(true)}
+            >
+              Default permissions
+            </Button>
+            {passwordMode && newUserButton}
+          </>
         }
       />
 
-      <div className="p-4 sm:p-8">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-16">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-solid border-current border-r-transparent align-[-0.125em] text-primary-600 dark:text-primary-400 motion-reduce:animate-[spin_1.5s_linear_infinite] mb-4"></div>
-            <p className="text-gray-600 dark:text-gray-300 font-medium">Loading users...</p>
-          </div>
-        ) : users.length === 0 ? (
-          <div className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-16 text-center shadow-sm">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue mb-6">
-              <FontAwesomeIcon icon={faUsers} className="text-3xl text-white" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">No users found</h3>
-            <p className="text-gray-600 dark:text-gray-300">Users will appear here once they are created</p>
-          </div>
-        ) : (
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-700">
-                <tr>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    User
-                  </th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Role
-                  </th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Networks Access
-                  </th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Last Login
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                {users.map((user) => (
-                  <tr 
-                    key={user.id} 
-                    onClick={() => handleUserClick(user)}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                  >
-                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div className="flex-shrink-0 h-10 w-10">
-                            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-accent-blue">
-                                <FontAwesomeIcon icon={faUser} className="text-lg text-white" />
-                                <span className="text-primary-700 dark:text-primary-300 font-medium text-sm"></span>
-                            </div>
-                      </div>
-                      <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{user.name}</div>
-                        <div className="text-sm text-gray-600 dark:text-gray-300">{user.email}</div>
-                      </div>
-                      </div>
-                    </td>
-                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm">
-                      {user.role === 'administrator' ? (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-                          Administrator
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200">
-                          User
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                      {user.role === 'administrator' ? (
-                        <span className="text-gray-600 dark:text-gray-300">All networks</span>
-                      ) : user.authorized_networks.length === 0 ? (
-                        <span className="text-gray-600 dark:text-gray-300">No access</span>
-                      ) : (
-                        <span>{user.authorized_networks.length} network{user.authorized_networks.length !== 1 ? 's' : ''}</span>
-                      )}
-                    </td>
-                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">
-                      {user.last_login_at ? new Date(user.last_login_at).toLocaleDateString() : 'Never'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="mt-8 flex items-center justify-between">
-            <div className="text-sm font-medium text-gray-600 dark:text-gray-300">
-              Page {page} of {totalPages}
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPage(Math.max(1, page - 1))}
-                disabled={page === 1}
-                className="px-5 py-2.5 text-sm font-semibold text-gray-700 dark:text-gray-200 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-gray-300 dark:border-gray-600 rounded-xl hover:bg-white dark:hover:bg-gray-800 hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                Previous
-              </button>
-              <button
-                onClick={() => setPage(Math.min(totalPages, page + 1))}
-                disabled={page >= totalPages}
-                className="px-5 py-2.5 text-sm font-semibold text-gray-700 dark:text-gray-200 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-gray-300 dark:border-gray-600 rounded-xl hover:bg-white dark:hover:bg-gray-800 hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Detail Modal */}
-      <UserDetailModal
-        isOpen={isDetailModalOpen}
-        onClose={() => setIsDetailModalOpen(false)}
-        user={selectedUser}
-        onUpdate={loadUsers}
-      />
-
-      {/* Default Permissions Modal */}
-      <DefaultPermissionsModal
-        isOpen={isDefaultPermissionsModalOpen}
-        onClose={() => setIsDefaultPermissionsModalOpen(false)}
-      />
-
-      {/* Create User Modal — simple-auth mode only */}
-      {canCreateUser && (
-        <CreateUserModal
-          isOpen={isCreateModalOpen}
-          onClose={() => setIsCreateModalOpen(false)}
-          onCreated={loadUsers}
+      {isLoading ? (
+        <div className="flex justify-center py-16 text-ink-muted" role="status">
+          <Spinner className="size-5" />
+          <span className="sr-only">Loading users…</span>
+        </div>
+      ) : users.length === 0 ? (
+        <EmptyState
+          icon={UsersIcon}
+          title="No user yet"
+          description={
+            passwordMode
+              ? 'Create a user to let someone sign in with their email and a password.'
+              : 'Users appear here after their first sign-in.'
+          }
+          action={passwordMode ? newUserButton : undefined}
         />
+      ) : (
+        <>
+          <Table>
+            <THead>
+              <tr>
+                <TH>User</TH>
+                <TH>Role</TH>
+                <TH>Networks</TH>
+                <TH>Last sign-in</TH>
+                <TH>
+                  <span className="sr-only">Actions</span>
+                </TH>
+              </tr>
+            </THead>
+            <TBody>
+              {shown.map((u) => (
+                <TR key={u.id} onClick={() => setEditing({ open: true, user: u })}>
+                  <TD className="max-w-xs">
+                    <div className="flex items-center gap-2 font-medium text-ink">
+                      <span className="truncate">{u.name}</span>
+                      {u.id === me?.id && <span className="text-xs font-normal text-ink-muted">(you)</span>}
+                    </div>
+                    <div className="truncate text-xs text-ink-muted">{u.email}</div>
+                  </TD>
+                  <TD>
+                    <RoleBadge role={u.role} />
+                  </TD>
+                  <TD className="max-w-xs truncate">
+                    {u.role === 'administrator' ? (
+                      <span className="text-ink-muted">All networks</span>
+                    ) : u.authorized_networks.length === 0 ? (
+                      <span className="text-ink-muted">No access</span>
+                    ) : (
+                      networkNames(u)
+                    )}
+                  </TD>
+                  <TD>{formatDate(u.last_login_at) ?? <span className="text-ink-muted">Never</span>}</TD>
+                  <TD className="w-0 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-1">
+                      <IconButton label={`Edit ${u.name}`} onClick={() => setEditing({ open: true, user: u })}>
+                        <PencilSquareIcon className="size-4" />
+                      </IconButton>
+                      {canResetPassword(u) && (
+                        <IconButton label={`Reset password for ${u.name}`} onClick={() => setResetting({ open: true, user: u })}>
+                          <KeyIcon className="size-4" />
+                        </IconButton>
+                      )}
+                      {canDelete(u) && (
+                        <IconButton label={`Delete ${u.name}`} tone="danger" onClick={() => handleDelete(u)}>
+                          <TrashIcon className="size-4" />
+                        </IconButton>
+                      )}
+                    </div>
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+          <Pagination page={currentPage} pageSize={PAGE_SIZE} total={users.length} onPageChange={setPage} />
+        </>
       )}
-    </div>
+
+      <EditUserModal
+        isOpen={editing.open}
+        onClose={() => setEditing((s) => ({ ...s, open: false }))}
+        user={editing.user}
+      />
+      <ResetPasswordModal
+        isOpen={resetting.open}
+        onClose={() => setResetting((s) => ({ ...s, open: false }))}
+        user={resetting.user}
+      />
+      <DefaultPermissionsModal isOpen={defaultsOpen} onClose={() => setDefaultsOpen(false)} />
+      {passwordMode && <CreateUserModal isOpen={creating} onClose={() => setCreating(false)} />}
+    </Page>
   );
 }

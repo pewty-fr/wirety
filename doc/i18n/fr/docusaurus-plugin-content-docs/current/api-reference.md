@@ -47,6 +47,16 @@ Toutes les réponses d'erreur utilisent :
 { "error": "message d'erreur lisible" }
 ```
 
+### Mises à jour
+
+Les requêtes `PUT` ne modifient que les champs qu'elles contiennent : un champ absent garde sa valeur. Un champ envoyé vide (`""`) est effacé, là où le champ peut être vide : descriptions des groupes, policies et routes, l'une des deux destinations d'une route ou des adresses d'un enregistrement DNS (l'autre doit rester), endpoint et propriétaire d'un peer. Les champs obligatoires (noms, plages du réseau) ignorent une valeur vide.
+
+Une mise à jour qui enfreindrait une règle (par exemple retirer la dernière destination d'une route) est refusée avec `400` ; un élément inconnu donne `404`.
+
+### CIDR
+
+Un CIDR désigne un réseau : son adresse n'a aucun bit d'hôte positionné (`10.0.0.0/8`, pas `10.0.0.1/8`). C'est le cas des plages des réseaux, des destinations des routes, des cibles des règles de policy et des IP autorisées supplémentaires des peers (qui acceptent aussi une adresse seule). Un CIDR avec des bits d'hôte est refusé avec `400`, et l'erreur donne l'adresse réseau à utiliser, par exemple `invalid CIDR: 10.0.0.1/8 has host bits set, use the network address 10.0.0.0/8`.
+
 ### Pagination
 
 Les endpoints paginés acceptent les paramètres `page` (défaut `1`) et `page_size` (défaut `20`) et retournent :
@@ -405,7 +415,9 @@ Retourne les réseaux accessibles à l'utilisateur authentifié, avec pagination
 }
 ```
 
-`dns` et `domain_suffix` sont optionnels. **Réponse `201`** — objet Network.
+`dns` et `domain_suffix` sont optionnels. `cidr` (IPv4) et `cidr_v6` (IPv6) : au moins l'un des deux, chacun de sa famille et assez grand pour 2 peers (un jump et un client). **Réponse `201`** — objet Network.
+
+Une plage qui chevauche celle d'un autre réseau est refusée avec `409` (les adresses viennent d'un seul espace IPAM, et un appareil présent sur les deux réseaux ne pourrait pas les router) : `CIDR already in use: 10.10.0.0/16 overlaps 10.10.0.0/24, the range of network “prod”`.
 
 ---
 
@@ -433,6 +445,8 @@ Retourne les réseaux accessibles à l'utilisateur authentifié, avec pagination
 ```
 
 **Réponse `200`** — objet Network mis à jour.
+
+Changer `cidr` ou `cidr_v6` déplace les peers dans la nouvelle plage : ceux dont l'adresse est encore dans la nouvelle plage la gardent (agrandir un réseau ne renumérote personne), les autres reçoivent une nouvelle adresse, et les peers gérés par l'agent reçoivent leur nouvelle configuration. Le changement est refusé, sans rien modifier, si la plage chevauche un autre réseau (`409`), si elle est trop petite pour les peers du réseau (`400`) ou — pour `cidr` — si le réseau contient des peers statiques (sans agent), qui garderaient une configuration avec leur ancienne adresse (`400`). Ajouter `cidr_v6` à un réseau IPv4 donne une adresse IPv6 à chaque peer.
 
 ---
 
@@ -504,7 +518,7 @@ Les utilisateurs non-admin ne voient que leurs propres peers. Supporte la pagina
 
 **`POST /networks/:networkId/peers`**
 
-Les utilisateurs non-admin deviennent automatiquement propriétaires du peer.
+Les utilisateurs non-admin deviennent automatiquement propriétaires du peer. Quand la plage du réseau n'a plus d'adresse libre, le peer est refusé avec `409` (`network full: …`) : agrandissez la plage avec « Mettre à jour un réseau ».
 
 **Corps de la requête**
 ```json
@@ -1204,7 +1218,7 @@ Remplace la configuration ACL complète.
 
 ### Suggérer des CIDRs disponibles
 
-Suggère un ou plusieurs CIDRs de la bonne taille pour un nombre cible de peers, découpés depuis un CIDR de base. Utile lors de la planification d'un nouveau réseau.
+Suggère un ou plusieurs CIDRs IPv4 de la bonne taille pour un nombre cible de peers, découpés depuis un CIDR de base en évitant les plages déjà utilisées par des réseaux. Utile lors de la planification d'un nouveau réseau. Renvoie moins de CIDRs que `count` quand la base s'épuise, et `409` quand elle n'en a plus aucun ; un `base_cidr` invalide, ou trop petit pour `max_peers`, donne `400`.
 
 **`GET /ipam/available-cidrs`**
 

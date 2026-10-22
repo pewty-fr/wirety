@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 
 	appauth "wirety/internal/application/auth"
 	"wirety/internal/application/ipam"
@@ -328,11 +330,41 @@ func (h *Handler) Health(c *gin.Context) {
 
 // isValidationError checks if an error is a validation error
 func isValidationError(err error) bool {
-	return err == validation.ErrInvalidDNSName ||
-		err == validation.ErrNameTooLong ||
-		err == validation.ErrNameEmpty ||
-		err == validation.ErrNameStartsWithHyphen ||
-		err == validation.ErrNameEndsWithHyphen
+	// errors.Is: services wrap these errors (e.g. "invalid peer name: …").
+	for _, target := range []error{
+		validation.ErrInvalidDNSName,
+		validation.ErrNameTooLong,
+		validation.ErrNameEmpty,
+		validation.ErrNameStartsWithHyphen,
+		validation.ErrNameEndsWithHyphen,
+		domain.ErrInvalidCIDR,
+	} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// serviceErrorStatus is the HTTP status of an error from a create or update
+// service: 404 when the item (or one it refers to) does not exist, 409 for a
+// duplicate name, a range another network uses or a full network, 500 when
+// storing failed, 400 when the request was refused (validation, invariants).
+func serviceErrorStatus(err error) int {
+	if errors.Is(err, domain.ErrCIDROverlap) || errors.Is(err, domain.ErrNetworkFull) {
+		return http.StatusConflict
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		return http.StatusNotFound
+	case strings.Contains(msg, "already exists"):
+		return http.StatusConflict
+	case strings.HasPrefix(msg, "failed to "):
+		return http.StatusInternalServerError
+	default:
+		return http.StatusBadRequest
+	}
 }
 
 // contains checks if s contains substr (case-insensitive)

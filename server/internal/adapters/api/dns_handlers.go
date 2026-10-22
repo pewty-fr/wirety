@@ -36,7 +36,7 @@ func (h *Handler) CreateDNSMapping(c *gin.Context) {
 
 	mapping, err := h.dnsService.CreateDNSMapping(c.Request.Context(), networkID, routeID, &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *Handler) UpdateDNSMapping(c *gin.Context) {
 
 	mapping, err := h.dnsService.UpdateDNSMapping(c.Request.Context(), networkID, routeID, dnsID, &req)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 

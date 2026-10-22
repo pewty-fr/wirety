@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react';
+import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { ArrowRightEndOnRectangleIcon, ClockIcon, LockClosedIcon, WifiIcon } from '@heroicons/react/20/solid';
+import { CheckCircleIcon, LinkSlashIcon, ShieldExclamationIcon, XCircleIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../contexts/AuthContext';
 import type { CaptivePortalEvent } from '../../types';
 import { describeCaptivePortalEvent } from '../../utils/captivePortalEvents';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import {
-  faWifi,
-  faShieldAlt,
-  faCheckCircle,
-  faExclamationTriangle,
-  faTriangleExclamation,
-} from '@fortawesome/free-solid-svg-icons';
+import { Alert, Button, Card, Spinner, cx } from '../../components/ui';
+import AuthShell, { StatusIcon } from '../auth/AuthShell';
+import type { StatusTone } from '../auth/AuthShell';
 
 interface TokenPreview {
   peer_id: string;
@@ -29,11 +27,85 @@ function PreviousSignOut({ event }: { event?: CaptivePortalEvent }) {
   if (!event) return null;
   const { label, explanation } = describeCaptivePortalEvent(event);
   return (
-    <div className="mb-5 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
-      <span className="font-semibold text-gray-900 dark:text-white">Why sign in again? </span>
-      {label} on {new Date(event.created_at).toLocaleString()}. {explanation}
-      {event.detail && <> ({event.detail})</>}
+    <div className="flex gap-2.5 rounded-control border border-line bg-surface-muted px-3 py-2.5 text-sm">
+      <ClockIcon className="mt-0.5 size-4 shrink-0 text-ink-subtle" aria-hidden="true" />
+      <div className="min-w-0 space-y-0.5">
+        <p className="font-medium text-ink">Why sign in again?</p>
+        <p className="text-ink-secondary">
+          {label} on {new Date(event.created_at).toLocaleString()}. {explanation}
+          {event.detail && <> ({event.detail})</>}
+        </p>
+      </div>
     </div>
+  );
+}
+
+/**
+ * The sign-in request the user is about to approve: which device, and from
+ * which public IP. The public IP is the phishing tell — it must stand out.
+ */
+function RequestDetails({ preview, ipLabel, tone }: { preview: TokenPreview; ipLabel: string; tone: 'warning' | 'danger' }) {
+  return (
+    <dl aria-label="Sign-in request" className="overflow-hidden rounded-control border border-line text-sm">
+      <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+        <dt className="text-ink-muted">Device</dt>
+        <dd className="text-right text-[15px] font-semibold break-all text-ink">{preview.peer_name}</dd>
+      </div>
+      <div className="flex items-baseline justify-between gap-4 border-t border-line px-3.5 py-2.5">
+        <dt className="text-ink-muted">Network</dt>
+        <dd className="text-right font-medium break-all text-ink">{preview.network_name}</dd>
+      </div>
+      <div className="flex items-baseline justify-between gap-4 border-t border-line px-3.5 py-2.5">
+        <dt className="text-ink-muted">VPN address</dt>
+        <dd className="text-right font-mono text-[13px] text-ink">{preview.peer_wg_ip}</dd>
+      </div>
+      <div
+        className={cx(
+          'flex items-baseline justify-between gap-4 border-t px-3.5 py-3',
+          tone === 'danger'
+            ? 'border-red-200 bg-red-50 dark:border-red-500/20 dark:bg-red-500/10'
+            : 'border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/10',
+        )}
+      >
+        <dt className={tone === 'danger' ? 'text-red-800 dark:text-red-200' : 'text-amber-900 dark:text-amber-200'}>
+          {ipLabel}
+        </dt>
+        <dd
+          className={cx(
+            'text-right font-mono text-base font-semibold break-all',
+            tone === 'danger' ? 'text-red-700 dark:text-red-300' : 'text-amber-800 dark:text-amber-300',
+          )}
+        >
+          {preview.endpoint_ip || '(unknown)'}
+        </dd>
+      </div>
+    </dl>
+  );
+}
+
+/** A status screen: icon, title, message, then any content. */
+function StatusCard({
+  icon,
+  tone,
+  title,
+  message,
+  children,
+}: {
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+  tone: StatusTone;
+  title: string;
+  message?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <Card className="space-y-5 p-6 sm:p-8">
+      <div className="space-y-3 text-center">
+        <StatusIcon icon={icon} tone={tone} />
+        <h1 className="text-lg font-semibold tracking-tight text-ink">{title}</h1>
+        {message && <div className="text-sm text-ink-muted">{message}</div>}
+      </div>
+      {children}
+    </Card>
   );
 }
 
@@ -87,7 +159,7 @@ function safeRedirect(raw: string | null): string | null {
 export default function CaptivePortalPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { login, logout, user, isAuthenticated } = useAuth();
+  const { login, logout, user, isAuthenticated, isLoading } = useAuth();
 
   // 'initial' = first load before we've fetched the preview
   // 'preview' = preview loaded, awaiting user click
@@ -165,52 +237,52 @@ export default function CaptivePortalPage() {
     login();
   };
 
+  const goToDashboard = (
+    <Button variant="secondary" className="w-full" onClick={() => navigate('/dashboard')}>
+      Go to dashboard
+    </Button>
+  );
+
   if (!captiveToken) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700 flex items-center justify-center px-4">
-        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-2xl p-8">
-          <div className="text-center">
-            <FontAwesomeIcon icon={faExclamationTriangle} className="text-6xl text-yellow-500 mb-4" />
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Invalid Request</h1>
-            <p className="text-gray-600 dark:text-gray-400">
-              Missing authentication token. Please try accessing the network again.
-            </p>
-          </div>
-        </div>
-      </div>
+      <AuthShell footer="Powered by Wirety">
+        <StatusCard
+          icon={LinkSlashIcon}
+          tone="warning"
+          title="Invalid sign-in link"
+          message="Missing authentication token. Please try accessing the network again."
+        />
+      </AuthShell>
     );
   }
 
   if (status === 'success') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center px-4">
-        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-2xl p-8">
-          <div className="text-center">
-            <FontAwesomeIcon icon={faCheckCircle} className="text-6xl text-green-500 mb-4" />
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Access Granted!</h1>
-            <p className="text-gray-600 dark:text-gray-400 mb-4">
-              You now have access to this network.
-            </p>
-            {redirectUrl ? (
-              <>
-                <p className="text-sm text-gray-500 dark:text-gray-500 mb-3">
-                  Redirecting you to your destination…
-                </p>
-                <a
-                  href={redirectUrl}
-                  className="text-sm text-green-600 dark:text-green-400 underline"
-                >
-                  Click here if not redirected automatically.
-                </a>
-              </>
-            ) : (
-              <p className="text-sm text-gray-500 dark:text-gray-500">
-                You can now close this tab and access the network.
+      <AuthShell footer="Powered by Wirety">
+        <StatusCard
+          icon={CheckCircleIcon}
+          tone="success"
+          title="Access granted"
+          message="You now have access to this network."
+        >
+          {redirectUrl ? (
+            <div role="status" className="space-y-1.5 text-center text-sm">
+              <p className="flex items-center justify-center gap-2 text-ink-secondary">
+                <Spinner className="text-ink-subtle" />
+                Redirecting you to your destination…
               </p>
-            )}
-          </div>
-        </div>
-      </div>
+              <a
+                href={redirectUrl}
+                className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-400"
+              >
+                Click here if not redirected automatically.
+              </a>
+            </div>
+          ) : (
+            <p className="text-center text-sm text-ink-secondary">You can now close this tab and access the network.</p>
+          )}
+        </StatusCard>
+      </AuthShell>
     );
   }
 
@@ -227,244 +299,158 @@ export default function CaptivePortalPage() {
       errorMessage.toLowerCase().includes('not bound to a browser session');
     const isOwnershipError = errorMessage.includes('belongs to another user');
 
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center px-4 py-8">
-        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-2xl p-8">
-          <div className="text-center mb-5">
-            <FontAwesomeIcon icon={faExclamationTriangle} className="text-6xl text-red-500 mb-4" />
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-              {isPhishingSignal ? 'Sign-in blocked for safety' : 'Authentication Failed'}
-            </h1>
-          </div>
-
-          {isPhishingSignal ? (
-            // Phishing-defense trip.  Make the security implication obvious
-            // and show the same endpoint details the user saw on the preview
-            // screen, so they can verify whether the request came from their
-            // own connection or someone else's.
-            <>
-              <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg p-4 mb-5">
-                <p className="text-sm text-red-800 dark:text-red-200 font-medium mb-2">
-                  This sign-in link was opened in a different browser than the one that requested it.
-                </p>
-                <p className="text-xs text-red-700 dark:text-red-300 leading-relaxed">
-                  This is the response we give when a captive-portal link is shared, forwarded, or
-                  pasted into another browser — usually one of two situations:
-                </p>
-                <ul className="text-xs text-red-700 dark:text-red-300 list-disc list-inside mt-2 space-y-1">
-                  <li>You legitimately copy-pasted the URL into another browser. In that case, just
-                    re-open the captive portal from the device that needs network access.</li>
-                  <li>Someone else is using your WireGuard config and tried to phish you into
-                    completing their sign-in. <strong>Verify the public IP below</strong>, and if it
-                    isn't yours, do <strong>not</strong> sign in here — instead go to the dashboard
-                    and click <em>Reset Auth</em> on the device.</li>
-                </ul>
-              </div>
-
-              {preview ? (
-                <>
-                <dl className="bg-gray-50 dark:bg-gray-900 rounded-lg p-5 mb-5 text-sm space-y-3">
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-gray-500 dark:text-gray-400">Device</dt>
-                    <dd className="text-gray-900 dark:text-white font-medium text-right">
-                      {preview.peer_name}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-gray-500 dark:text-gray-400">Network</dt>
-                    <dd className="text-gray-900 dark:text-white font-medium text-right">
-                      {preview.network_name}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-gray-500 dark:text-gray-400">VPN address</dt>
-                    <dd className="text-gray-900 dark:text-white font-mono text-right">
-                      {preview.peer_wg_ip}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-4 pt-3 border-t border-gray-200 dark:border-gray-700">
-                    <dt className="text-gray-500 dark:text-gray-400">Public IP that requested sign-in</dt>
-                    <dd className="text-red-700 dark:text-red-400 font-mono font-semibold text-right break-all">
-                      {preview.endpoint_ip || '(unknown)'}
-                    </dd>
-                  </div>
-                </dl>
-                <PreviousSignOut event={preview.last_sign_out} />
-                </>
-              ) : (
-                <p className="text-xs text-gray-500 dark:text-gray-400 italic mb-5">
-                  Token preview unavailable — could not display the requesting endpoint IP.
-                </p>
-              )}
-
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-5 text-center">
-                Raw error: <code className="font-mono">{errorMessage}</code>
+    if (isPhishingSignal) {
+      // Phishing-defense trip.  Make the security implication obvious and show
+      // the same endpoint details the user saw on the preview screen, so they
+      // can verify whether the request came from their own connection or
+      // someone else's.
+      return (
+        <AuthShell wide footer="Powered by Wirety">
+          <StatusCard icon={ShieldExclamationIcon} tone="danger" title="Sign-in blocked for safety">
+            <Alert tone="danger" title="This sign-in link was opened in a different browser than the one that requested it.">
+              <p>
+                This is the response we give when a captive-portal link is shared, forwarded, or pasted into another
+                browser — usually one of two situations:
               </p>
+              <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                <li>
+                  You legitimately copy-pasted the URL into another browser. In that case, just re-open the captive
+                  portal from the device that needs network access.
+                </li>
+                <li>
+                  Someone else is using your WireGuard config and tried to phish you into completing their sign-in.{' '}
+                  <strong>Verify the public IP below</strong>, and if it isn’t yours, do <strong>not</strong> sign in
+                  here — instead go to the dashboard and click <em>Reset auth</em> on the device.
+                </li>
+              </ul>
+            </Alert>
 
-              <button
-                onClick={() => navigate('/dashboard')}
-                className="btn-brand w-full"
-              >
-                Go to Dashboard
-              </button>
-            </>
-          ) : (
-            // Generic auth failure (expired token, ownership mismatch, etc.).
-            <div className="text-center">
-              <p className="text-gray-600 dark:text-gray-400 mb-4">{errorMessage}</p>
-              {isOwnershipError ? (
-                <button
-                  onClick={() => { logout(); window.location.reload(); }}
-                  className="btn-brand"
-                >
-                  Sign in with a different account
-                </button>
-              ) : (
-                <button
-                  onClick={() => navigate('/dashboard')}
-                  className="btn-brand"
-                >
-                  Go to Dashboard
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
+            {preview ? (
+              <>
+                <RequestDetails preview={preview} ipLabel="Public IP that requested sign-in" tone="danger" />
+                <PreviousSignOut event={preview.last_sign_out} />
+              </>
+            ) : (
+              <p className="text-sm text-ink-muted italic">
+                Token preview unavailable — could not display the requesting endpoint IP.
+              </p>
+            )}
 
-  if (status === 'authenticating') {
+            <p className="text-center text-xs break-words text-ink-muted">
+              Raw error: <code className="font-mono">{errorMessage}</code>
+            </p>
+
+            {goToDashboard}
+          </StatusCard>
+        </AuthShell>
+      );
+    }
+
+    // Generic auth failure (expired token, ownership mismatch, etc.).
     return (
-      <div className="min-h-screen bg-gradient-to-br from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700 flex items-center justify-center px-4">
-        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-2xl p-8">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-primary-600 mx-auto mb-4" />
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Authenticating…</h1>
-            <p className="text-gray-600 dark:text-gray-400">Please wait while we verify your access.</p>
-          </div>
-        </div>
-      </div>
+      <AuthShell footer="Powered by Wirety">
+        <StatusCard icon={XCircleIcon} tone="danger" title="Authentication failed">
+          <Alert tone="danger" className="break-words">
+            {errorMessage}
+          </Alert>
+          {isOwnershipError ? (
+            <Button
+              className="w-full"
+              onClick={() => {
+                logout();
+                window.location.reload();
+              }}
+            >
+              Sign in with a different account
+            </Button>
+          ) : (
+            goToDashboard
+          )}
+        </StatusCard>
+      </AuthShell>
     );
   }
 
-  // Initial state — before sign-in OR while preview is loading.
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-500 to-accent-blue dark:from-dark dark:to-primary-700 flex items-center justify-center px-4">
-      <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-2xl p-8">
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-primary-500 to-accent-blue rounded-full mb-4 shadow-lg">
-            <FontAwesomeIcon icon={faWifi} className="text-4xl text-white" />
+  // Not signed in yet: the identity provider comes first.
+  if (!isAuthenticated && !isLoading) {
+    return (
+      <AuthShell footer="Powered by Wirety">
+        <Card className="space-y-6 p-6 sm:p-8">
+          <div className="space-y-1">
+            <h1 className="text-lg font-semibold tracking-tight text-ink">Network access required</h1>
+            <p className="text-sm text-ink-muted">Sign in to access the network through this VPN.</p>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Network Access Required</h1>
-          <p className="text-gray-600 dark:text-gray-400">
-            Authenticate to access the internet through this network
-          </p>
+          <ul className="space-y-4">
+            <li className="flex gap-3">
+              <LockClosedIcon className="mt-0.5 size-4 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+              <div className="text-sm">
+                <p className="font-medium text-ink">Secure authentication</p>
+                <p className="text-ink-muted">This network requires authentication through your organization’s identity provider.</p>
+              </div>
+            </li>
+            <li className="flex gap-3">
+              <WifiIcon className="mt-0.5 size-4 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+              <div className="text-sm">
+                <p className="font-medium text-ink">Internet access</p>
+                <p className="text-ink-muted">Once authenticated, you’ll have full internet access through the jump server.</p>
+              </div>
+            </li>
+          </ul>
+          <Button className="w-full" icon={<ArrowRightEndOnRectangleIcon className="size-4" />} onClick={handleLogin}>
+            Sign in to continue
+          </Button>
+        </Card>
+      </AuthShell>
+    );
+  }
+
+  // Signed in (or checking the session), the preview is loading.
+  if (!preview) {
+    return (
+      <AuthShell footer="Powered by Wirety">
+        <div role="status" className="flex flex-col items-center gap-3 py-6 text-center">
+          <Spinner className="size-6 text-primary-500" />
+          <p className="text-sm font-medium text-ink">Verifying your sign-in request…</p>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // Preview + Continue.  This is the user-visible half of phishing defense:
+  // the user sees the device name and the public IP that requested the
+  // sign-in, and must explicitly confirm "yes, this is me" before the token
+  // is consumed.
+  const authenticating = status === 'authenticating';
+  return (
+    <AuthShell wide footer="Powered by Wirety">
+      <Card>
+        <div className="space-y-5 p-6 sm:p-8">
+          <div className="space-y-1">
+            <h1 className="text-lg font-semibold tracking-tight text-ink">Is this you?</h1>
+            <p className="text-sm text-ink-muted">
+              A device asked to join the network with your account. Check that it is yours before granting it access.
+            </p>
+          </div>
+
+          <Alert tone="warning" title="Verify before granting access">
+            Confirm the device and public IP below. If you don’t recognise either — for example, the IP isn’t your
+            current connection — <strong>do not continue</strong>. Your VPN config may be in use by someone else.
+          </Alert>
+
+          <RequestDetails preview={preview} ipLabel="Public IP" tone="warning" />
+
+          <PreviousSignOut event={preview.last_sign_out} />
         </div>
 
-        {!isAuthenticated ? (
-          <>
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6 mb-6">
-              <div className="flex items-start gap-3 mb-4">
-                <FontAwesomeIcon icon={faShieldAlt} className="text-primary-600 dark:text-primary-400 mt-1" />
-                <div>
-                  <h3 className="font-semibold text-gray-900 dark:text-white mb-1">Secure Authentication</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    This network requires authentication through your organization's identity provider.
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <FontAwesomeIcon icon={faWifi} className="text-primary-600 dark:text-primary-400 mt-1" />
-                <div>
-                  <h3 className="font-semibold text-gray-900 dark:text-white mb-1">Internet Access</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Once authenticated, you'll have full internet access through the jump server.
-                  </p>
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={handleLogin}
-              className="w-full btn-brand font-medium py-3 px-4 rounded-lg transition-all"
-            >
-              Sign In to Continue
-            </button>
-          </>
-        ) : status === 'initial' || !preview ? (
-          <div className="text-center py-4">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4" />
-            <p className="text-gray-600 dark:text-gray-400">Verifying your sign-in request…</p>
-          </div>
-        ) : (
-          // Preview + Continue.  This is the user-visible half of phishing
-          // defense: the user sees the device name and the public IP that
-          // requested the sign-in, and must explicitly confirm "yes, this
-          // is me" before the token is consumed.
-          <>
-            <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg p-4 mb-5">
-              <div className="flex items-start gap-3">
-                <FontAwesomeIcon icon={faTriangleExclamation} className="text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
-                <div className="text-sm text-gray-800 dark:text-gray-200">
-                  <p className="font-semibold mb-1">Verify before granting access</p>
-                  <p className="text-xs">
-                    Confirm the device and public IP below. If you don't recognise either — for example, the IP isn't your current
-                    connection — <strong>do not continue</strong>. Your VPN config may be in use by someone else.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <dl className="bg-gray-50 dark:bg-gray-900 rounded-lg p-5 mb-6 text-sm space-y-3">
-              <div className="flex justify-between gap-4">
-                <dt className="text-gray-500 dark:text-gray-400">Device</dt>
-                <dd className="text-gray-900 dark:text-white font-medium text-right">
-                  {preview.peer_name}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-gray-500 dark:text-gray-400">Network</dt>
-                <dd className="text-gray-900 dark:text-white font-medium text-right">
-                  {preview.network_name}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-gray-500 dark:text-gray-400">VPN address</dt>
-                <dd className="text-gray-900 dark:text-white font-mono text-right">
-                  {preview.peer_wg_ip}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4 pt-3 border-t border-gray-200 dark:border-gray-700">
-                <dt className="text-gray-500 dark:text-gray-400">Public IP</dt>
-                <dd className="text-amber-700 dark:text-amber-400 font-mono font-semibold text-right break-all">
-                  {preview.endpoint_ip || '(unknown)'}
-                </dd>
-              </div>
-            </dl>
-
-            <PreviousSignOut event={preview.last_sign_out} />
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => navigate('/dashboard')}
-                className="flex-1 px-4 py-3 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirm}
-                className="flex-1 btn-brand font-medium py-3 px-4 rounded-lg transition-all"
-              >
-                Continue, this is me
-              </button>
-            </div>
-          </>
-        )}
-
-        <p className="text-xs text-center text-gray-500 dark:text-gray-500 mt-6">
-          Powered by Wirety
-        </p>
-      </div>
-    </div>
+        <div className="flex flex-col-reverse gap-2 rounded-b-panel border-t border-line bg-surface-muted/60 px-6 py-4 sm:flex-row sm:justify-end sm:px-8">
+          <Button variant="secondary" onClick={() => navigate('/dashboard')} disabled={authenticating}>
+            Cancel
+          </Button>
+          <Button onClick={handleConfirm} loading={authenticating}>
+            Continue, this is me
+          </Button>
+        </div>
+      </Card>
+    </AuthShell>
   );
 }

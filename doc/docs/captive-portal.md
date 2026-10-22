@@ -183,6 +183,7 @@ Removing the interception means **no HSTS dead-ends** and HTTPS-only apps keep w
 
 - **OS captive-portal detection** — the OS probes (plain HTTP) are DNS-intercepted to the jump peer and answered on `:80`, raising the native "Sign in to network" banner. The `:443` TCP reset additionally nudges iOS/Android to run their detection.
 - **The dashboard sign-in popup** — the Wirety web app polls each device's state and, when one needs sign-in, offers an on-demand link to the portal (over HTTP).
+- **My devices** — the page of the web app listing the user's own devices by network, with each device's state, why it was last signed out, and a **Sign in** link to each network's portal. It is the way in when the popup does not appear or was dismissed; the menu entry shows how many devices are waiting for their owner.
 
 Once the peer authenticates, DNS resolves the app to its **real IP** and HTTPS works untouched — the portal is never in the TLS path.
 
@@ -268,6 +269,8 @@ The three layers fire in order, escalating only when there's clear evidence the 
 
 **Layer 3 — Physical-interface denylist — only on confirmed oscillation.** This is the heavy hammer: an iptables `-p udp --dport <wg-port> -s <rogue-ip> --sport <rogue-port> -j DROP` rule on the egress interface, BEFORE WireGuard decapsulates. The rogue source can no longer complete WireGuard handshakes at all. **It only fires when the agent observes the endpoint flip stored→foreign at least twice within 60 seconds** — the unambiguous signature of two devices simultaneously sending handshakes. "Stored" and "foreign" are told apart by **public IP**: the legitimate device may come back with another source port (NAT rebind, sleep/resume, WireGuard restart) and is still recognised; a port change alone is never a takeover. A single endpoint change (NAT rebind, roam, etc.) never trips this layer; layers 1+2 handle it gracefully.
 
+**Copies behind the same public IP** (same office NAT, same home box) are told apart by their **source ports**: one device changes port now and then but never goes back and forth, while two devices make the endpoint alternate between their ports. When the endpoint goes back to a port already seen twice within 60 seconds, the agent reports it. If one of the two ports is the one that signed in, the other device is denylisted. Otherwise (the legitimate device's port changed since it signed in, after a sleep for example), the clone cannot be told apart: the session ends (`concurrent_use` in the access history), only the owner can sign in again, and the next alternation then involves the port that signed in, so the clone is denylisted.
+
 #### Why "oscillation" is the only safe trigger for the denylist
 
 | Pattern observed by `wg show endpoints` | What it really is | What we do |
@@ -275,6 +278,7 @@ The three layers fire in order, escalating only when there's clear evidence the 
 | `A` → `B`, then stable at `B` | NAT rebound, user roamed, fresh tunnel | Drop peer from whitelist (Layer 1+2). User re-auths via captive portal. **No denylist.** |
 | `A` → `B` → `A` → `B` (oscillating) | Two devices competing for the slot | Denylist `B` (Layer 3). Legitimate user stops being interrupted. |
 | `A` → `B` → `A`, then stable at `A` | Brief blip (single rogue handshake that didn't repeat, or a transient mis-route) | One flip counted, but the second flip never comes. Counter resets after 60 s. **No denylist.** |
+| `ip:1` → `ip:2` → `ip:1` → `ip:2` (same public IP) | Two devices behind the same NAT | Denylist the port that did not sign in — or, when neither did, end the session (`concurrent_use`) so the owner signs in again. |
 
 The trade-off: the rogue gets a brief window of disruption before they're identified. Layer 2 (the stability window) prevents either side from having stable access during that window, so the rogue cannot exploit it to do useful work — and the moment they earn their second flip, Layer 3 cuts them off completely.
 
@@ -323,21 +327,33 @@ A peer has to go back through the captive portal earlier when:
 | Cause | Event | When |
 |-------|-------|------|
 | The session duration is reached | `expired` | Access removed within ~30 s (next jump heartbeat) |
-| The tunnel is disconnected — no WireGuard handshake for more than 185 s (device asleep, network lost, VPN turned off) | `tunnel_inactive` | Next jump heartbeat (≤ 30 s) |
+| The tunnel is disconnected — no WireGuard handshake for longer than **`CAPTIVE_PORTAL_IDLE_TIMEOUT`** (3 min by default): device asleep, network lost, VPN turned off | `tunnel_inactive` | Next jump heartbeat (≤ 30 s) |
 | The public IP changed (other Wi-Fi, mobile data…) — a NAT port change alone does not count | `endpoint_changed` | Immediately (the jump compares the live endpoint to the one that signed in) |
 | An admin or the owner clicked **Revoke Auth** | `revoked` | Immediately |
+| Two devices used the peer's config at the same time behind the same public IP, and the jump could not tell which one signed in (see [Stolen / shared WireGuard config](#stolen--shared-wireguard-config--three-layers-of-defence)) | `concurrent_use` | Next jump heartbeat (≤ 30 s) |
 
 The sign-out cuts **every** connection of the device, including the ones opened while it was signed in (an SSH session, a download, a WebSocket): the jump checks each packet a device sends against its sign-in, not only the first packet of a connection. Replies to connections the device did not open (another peer reaching it) are not affected.
+
+### Laptops going to sleep (`CAPTIVE_PORTAL_IDLE_TIMEOUT`)
+
+When a Mac's lid is closed (without power and an external display), the whole system sleeps — WireGuard included: no more handshakes, and after 3 minutes the jump reports the tunnel down. With the lid open, a locked or logged-out session does not stop the tunnel. Nothing on the Wirety side can keep a sleeping laptop's tunnel up.
+
+**`CAPTIVE_PORTAL_IDLE_TIMEOUT`** (server environment variable, a Go duration; default `3m`) is how long a session survives without any handshake. Set it longer — **1 to 2 hours** covers meetings, lunch and moving between rooms on the same Wi-Fi — and a laptop that wakes up gets its access back without the captive portal, as long as:
+
+- it comes back from the **public IP that signed in** — waking up on another network (home, office, mobile data) still requires the portal;
+- the session duration (`CAPTIVE_PORTAL_SESSION_TTL`) has not elapsed, and it was not revoked.
+
+The trade-off: while the laptop sleeps, someone holding **a copy of its WireGuard config** and connecting **from the same public IP** gets access without SSO, until the laptop wakes up (the two devices then alternate and the copy is detected) or the timeout elapses. Keep the timeout short enough to bound that window; the default keeps the previous behaviour.
 
 ### Access history
 
 Every sign-in (`authenticated`) and every end of access, with its cause and details (last handshake age, old → new public IP…), is recorded and kept **30 days**:
 
-- **Dashboard** — the **Peer Detail** modal shows the **Last sign-out** and the **Portal history**. Visible to admins and to the peer's owner.
+- **Dashboard** — the **Peer Detail** modal shows the **Last sign-out** and the **Portal history**. Visible to admins and to the peer's owner. **My devices** shows each of the user's devices' last sign-out (or since when it is signed in).
 - **Captive portal page** — when a user signs in again, the page tells them why the previous session ended.
 - **API** — `GET /networks/{networkId}/peers/{peerId}/captive-portal-events?limit=20` (newest first).
 
-When users are signed out several times a day, the history tells which cause dominates: `tunnel_inactive` (laptops going to sleep), `endpoint_changed` (users moving between networks, or a connection whose public IP changes frequently), or `expired` (consider a longer `CAPTIVE_PORTAL_SESSION_TTL`).
+When users are signed out several times a day, the history tells which cause dominates: `tunnel_inactive` (laptops going to sleep — see `CAPTIVE_PORTAL_IDLE_TIMEOUT` above), `endpoint_changed` (users moving between networks, or a connection whose public IP changes frequently), or `expired` (consider a longer `CAPTIVE_PORTAL_SESSION_TTL`).
 
 ## Database Tables
 
@@ -376,7 +392,7 @@ Background cleanup tasks (server):
 | OS captive portal popup does not appear (full-tunnel) | CNA/NCSI fires automatically for full-tunnel peers. If it does not trigger, try disconnecting and reconnecting to WireGuard. |
 | OS captive portal popup persists after authentication | DNS TTL (5–10s) may not have expired yet. Wait a few seconds; the next probe will receive a success response. |
 | Port 80 already in use on jump peer | Something else is bound to `<wg-ip>:80`. The agent logs an error and the captive portal will not function. |
-| HTTPS to an internal resource fails before authentication | Expected — the captive portal does not intercept HTTPS; unauthenticated `:443` is reset. Trigger the portal over HTTP, or use the dashboard sign-in popup. After authenticating, HTTPS works normally. |
+| HTTPS to an internal resource fails before authentication | Expected — the captive portal does not intercept HTTPS; unauthenticated `:443` is reset. Trigger the portal over HTTP, or use the dashboard sign-in popup or **My devices**. After authenticating, HTTPS works normally. |
 
 ## Reverse Proxy and Virtual Host Isolation
 

@@ -109,7 +109,7 @@ class ApiClient {
     
     for (const network of networks.data) {
       try {
-        const params = new URLSearchParams({ page: '1', page_size: '100' });
+        const params = new URLSearchParams({ page: '1', page_size: '1000' });
         const response = await this.client.get(`/networks/${network.id}/peers?${params}`);
         const peers = response.data.data || [];
         // Add network info to each peer and fetch session status for agents
@@ -441,7 +441,7 @@ class ApiClient {
     return response.data;
   }
 
-  async createPolicy(networkId: string, data: { name: string; description?: string; rules?: PolicyRule[] }): Promise<Policy> {
+  async createPolicy(networkId: string, data: { name: string; description?: string; rules?: Omit<PolicyRule, 'id'>[] }): Promise<Policy> {
     const response = await this.client.post(`/networks/${networkId}/policies`, data);
     return response.data;
   }
@@ -556,11 +556,6 @@ class ApiClient {
 
   async deleteDNSMapping(networkId: string, routeId: string, dnsId: string): Promise<void> {
     await this.client.delete(`/networks/${networkId}/routes/${routeId}/dns/${dnsId}`);
-  }
-
-  async getNetworkDNSRecords(networkId: string): Promise<DNSMapping[]> {
-    const response = await this.client.get(`/networks/${networkId}/dns`);
-    return response.data;
   }
 
   // API Tokens

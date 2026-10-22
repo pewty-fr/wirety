@@ -1,280 +1,234 @@
-import { useState, useEffect } from 'react';
+import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { Link } from 'react-router-dom';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faNetworkWired, faDesktop, faChartBar } from '@fortawesome/free-solid-svg-icons';
+import { useQueries, useQuery } from '@tanstack/react-query';
+import { ChartBarIcon, ComputerDesktopIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import api from '../../api/client';
+import { Alert, Card, CardHeader, Page, PageHeader, Spinner, apiErrorMessage } from '../../components/ui';
+import { useAuth } from '../../contexts/AuthContext';
+import { queryKeys, useUsers } from '../../hooks/useQueries';
 import type { Network } from '../../types';
-import { computeCapacityFromCIDR } from '../../utils/networkCapacity';
+import { computeCapacityFromCIDR, formatCapacity } from '../../utils/networkCapacity';
 
-interface DashboardStats {
-  networks: {
-    total: number;
-    recentNetworks: Network[];
-  };
-  peers: {
-    total: number;
-    byType: {
-      jump: number;
-      regular: number;
-    };
-    byAgent: {
-      agent: number;
-      static: number;
-    };
-  };
-  ipam: {
-    total: number;
-    allocated: number;
-    available: number;
-    utilizationPercent: number;
-  };
-  users: {
-    total: number;
-    administrators: number;
-    regularUsers: number;
-  };
+const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+
+function StatCard({
+  to,
+  label,
+  value,
+  detail,
+  icon: Icon,
+}: {
+  to: string;
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+}) {
+  return (
+    <Link
+      to={to}
+      className="group block rounded-panel border border-line bg-surface p-5 shadow-panel transition-colors hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+    >
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-sm font-medium text-ink-muted">{label}</span>
+        <Icon className="size-5 text-ink-subtle transition-colors group-hover:text-primary-500" aria-hidden="true" />
+      </div>
+      <p className="mt-3 text-2xl font-semibold tracking-tight text-ink tabular-nums">{value}</p>
+      {detail && <p className="mt-1 text-xs text-ink-muted">{detail}</p>}
+    </Link>
+  );
 }
 
+/** Rows of counts, each with a bar showing its share of `total`. */
+function Breakdown({ title, total, rows }: { title: string; total: number; rows: { label: string; value: number }[] }) {
+  return (
+    <div>
+      <h3 className="text-xs font-medium text-ink-muted">{title}</h3>
+      <dl className="mt-3 space-y-3">
+        {rows.map((r) => (
+          <div key={r.label}>
+            <div className="flex items-center justify-between text-sm">
+              <dt className="text-ink-secondary">{r.label}</dt>
+              <dd className="font-medium text-ink tabular-nums">{r.value.toLocaleString()}</dd>
+            </div>
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-muted" aria-hidden="true">
+              <div
+                className="h-full rounded-full bg-primary-500"
+                style={{ width: `${total ? Math.round((r.value / total) * 100) : 0}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function ViewAll({ to, what }: { to: string; what: string }) {
+  return (
+    <Link
+      to={to}
+      aria-label={`View all ${what}`}
+      className="text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+    >
+      View all
+    </Link>
+  );
+}
+
+const byNewest = (a: Network, b: Network) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'administrator';
 
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
+  const networksQuery = useQuery({
+    queryKey: ['networks', 'dashboard'],
+    queryFn: () => api.getNetworks(1, 100),
+  });
+  const networks = networksQuery.data?.data ?? [];
+  // The same queries as the topology and the peer pickers: they share the cache.
+  const peerQueries = useQueries({
+    queries: networks.map((n) => ({
+      queryKey: queryKeys.networkPeers(n.id),
+      queryFn: () => api.getAllNetworkPeers(n.id),
+    })),
+  });
+  const { data: users = [] } = useUsers(isAdmin);
 
-  const loadDashboardData = async () => {
-    setLoading(true);
-    try {
-      const [networksRes, peersRes, , usersRes] = await Promise.all([
-        api.getNetworks(1, 5).catch(() => null),
-        api.getAllPeers(1, 1000).catch(() => null),
-        api.getIPAMAllocations(1, 1000).catch(() => null),
-        api.getUsers(1, 100).catch(() => null),
-      ]);
+  const header = <PageHeader title="Dashboard" description="Overview of your WireGuard infrastructure." />;
 
-      const peers = peersRes?.peers || [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const usersData = (usersRes || []) as any[];
-      const networks = networksRes?.data || [];
-
-      // Calculate total capacity and used slots across all networks
-      let totalCapacity = 0;
-      let totalUsedSlots = 0;
-      
-      networks.forEach(network => {
-        const capacity = computeCapacityFromCIDR(network.cidr);
-        if (capacity !== null) {
-          totalCapacity += capacity;
-          totalUsedSlots += network.peer_count || 0;
-        }
-      });
-
-      const dashboardStats: DashboardStats = {
-        networks: {
-          total: networksRes?.total || 0,
-          recentNetworks: networks,
-        },
-        peers: {
-          total: peersRes?.total || 0,
-          byType: {
-            jump: peers.filter(p => p.is_jump).length,
-            regular: peers.filter(p => !p.is_jump).length,
-          },
-          byAgent: {
-            agent: peers.filter(p => p.use_agent).length,
-            static: peers.filter(p => !p.use_agent).length,
-          },
-        },
-        ipam: {
-          total: totalCapacity,
-          allocated: totalUsedSlots,
-          available: totalCapacity - totalUsedSlots,
-          utilizationPercent: totalCapacity > 0
-            ? Math.round((totalUsedSlots / totalCapacity) * 100)
-            : 0,
-        },
-        users: {
-          total: usersData.length,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          administrators: usersData.filter((u: any) => u.role === 'administrator').length,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          regularUsers: usersData.filter((u: any) => u.role === 'user').length,
-        },
-      };
-
-      setStats(dashboardStats);
-    } catch (error) {
-      console.error('Failed to load dashboard data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading) {
+  if (networksQuery.isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-gray-500">Loading dashboard...</div>
-      </div>
+      <Page>
+        {header}
+        <div className="flex justify-center py-16 text-ink-muted" role="status">
+          <Spinner className="size-5" />
+          <span className="sr-only">Loading the dashboard…</span>
+        </div>
+      </Page>
     );
   }
 
-  if (!stats) {
+  if (networksQuery.isError) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-gray-500">Failed to load dashboard data</div>
-      </div>
+      <Page>
+        {header}
+        <Alert tone="danger" title="The dashboard could not be loaded">
+          {apiErrorMessage(networksQuery.error)}
+        </Alert>
+      </Page>
     );
   }
+
+  const peers = peerQueries.flatMap((q) => q.data ?? []);
+  const peerTotal = networks.reduce((sum, n) => sum + (n.peer_count ?? 0), 0);
+  const jump = peers.filter((p) => p.is_jump).length;
+  const agent = peers.filter((p) => p.use_agent).length;
+
+  // IPv4 capacity of every network (IPv6 ranges are not limiting).
+  let capacity = 0;
+  let used = 0;
+  for (const n of networks) {
+    const c = computeCapacityFromCIDR(n.cidr ?? '');
+    if (c === null) continue;
+    capacity += c;
+    used += n.peer_count ?? 0;
+  }
+  const utilization = capacity > 0 ? Math.round((used / capacity) * 100) : 0;
+
+  const admins = users.filter((u) => u.role === 'administrator').length;
+  const recent = [...networks].sort(byNewest).slice(0, 5);
 
   return (
-    <div className="p-4 sm:p-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
-        <p className="text-gray-500">Overview of your WireGuard infrastructure</p>
+    <Page>
+      {header}
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard to="/networks" label="Networks" value={(networksQuery.data?.total ?? 0).toLocaleString()} icon={GlobeAltIcon} />
+        <StatCard
+          to="/peers"
+          label="Peers"
+          value={peerTotal.toLocaleString()}
+          detail={`${plural(jump, 'jump server')} · ${agent.toLocaleString()} with the agent`}
+          icon={ComputerDesktopIcon}
+        />
+        <StatCard
+          to="/ipam"
+          label="IP utilization"
+          value={`${utilization}%`}
+          detail={`${used.toLocaleString()} of ${formatCapacity(capacity)} IPv4 addresses used`}
+          icon={ChartBarIcon}
+        />
       </div>
 
-      {/* Main Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {/* Networks */}
-        <Link to="/networks" className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 hover:border-primary-300 dark:hover:border-primary-500 hover:shadow-md transition-all">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Networks</span>
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-accent-blue">
-              <FontAwesomeIcon icon={faNetworkWired} className="text-xl text-white" />
-            </div>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader title="Peer distribution" description={plural(peers.length, 'peer')} />
+          <div className="grid gap-6 px-5 py-5 sm:grid-cols-2">
+            <Breakdown
+              title="By type"
+              total={peers.length}
+              rows={[
+                { label: 'Jump servers', value: jump },
+                { label: 'Regular', value: peers.length - jump },
+              ]}
+            />
+            <Breakdown
+              title="By management"
+              total={peers.length}
+              rows={[
+                { label: 'Agent-managed', value: agent },
+                { label: 'Static config', value: peers.length - agent },
+              ]}
+            />
           </div>
-          <div className="text-3xl font-bold text-gray-900 dark:text-white">{stats.networks.total}</div>
-        </Link>
+        </Card>
 
-        {/* Peers */}
-        <Link to="/peers" className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 hover:border-primary-300 dark:hover:border-primary-500 hover:shadow-md transition-all">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Peers</span>
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-accent-blue">
-              <FontAwesomeIcon icon={faDesktop} className="text-xl text-white" />
-            </div>
-          </div>
-          <div className="text-3xl font-bold text-gray-900 dark:text-white">{stats.peers.total}</div>
-        </Link>
-
-        {/* IP Utilization */}
-        <Link to="/ipam" className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 hover:border-primary-300 dark:hover:border-primary-500 hover:shadow-md transition-all">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">IP Utilization</span>
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-accent-blue">
-              <FontAwesomeIcon icon={faChartBar} className="text-xl text-white" />
-            </div>
-          </div>
-          <div className="text-3xl font-bold text-gray-900 dark:text-white">{stats.ipam.utilizationPercent}%</div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            {stats.ipam.allocated} / {stats.ipam.total} allocated
-          </div>
-        </Link>
-
-      </div>
-
-      {/* Two Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* Peers Breakdown */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Peer Distribution</h2>
-          
-          <div className="space-y-3">
-            <div>
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-gray-600 dark:text-gray-400">By Type</span>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-700 dark:text-gray-300">Jump Servers</span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">{stats.peers.byType.jump}</span>
+        {isAdmin && (
+          <Card>
+            <CardHeader title="Users" actions={<ViewAll to="/users" what="users" />} />
+            <dl className="divide-y divide-line px-5">
+              {[
+                { label: 'Total users', value: users.length },
+                { label: 'Administrators', value: admins },
+                { label: 'Regular users', value: users.length - admins },
+              ].map((r) => (
+                <div key={r.label} className="flex items-center justify-between py-3 text-sm">
+                  <dt className="text-ink-secondary">{r.label}</dt>
+                  <dd className="font-medium text-ink tabular-nums">{r.value.toLocaleString()}</dd>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-700 dark:text-gray-300">Regular</span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">{stats.peers.byType.regular}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-gray-600 dark:text-gray-400">By Management</span>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-700 dark:text-gray-300">Agent-managed</span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">{stats.peers.byAgent.agent}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-700 dark:text-gray-300">Static config</span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">{stats.peers.byAgent.static}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Users Overview */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Users</h2>
-            <Link to="/users" className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
-              View all →
-            </Link>
-          </div>
-          
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-700 dark:text-gray-300">Total Users</span>
-              <span className="text-2xl font-bold text-gray-900 dark:text-white">{stats.users.total}</span>
-            </div>
-            <div className="flex justify-between items-center pt-3 border-t border-gray-200 dark:border-gray-700">
-              <span className="text-sm text-gray-700 dark:text-gray-300">Administrators</span>
-              <span className="text-sm font-medium text-gray-900 dark:text-white">{stats.users.administrators}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-700 dark:text-gray-300">Regular Users</span>
-              <span className="text-sm font-medium text-gray-900 dark:text-white">{stats.users.regularUsers}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Recent Networks */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Recent Networks</h2>
-          <Link to="/networks" className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
-            View all →
-          </Link>
-        </div>
-
-        {stats.networks.recentNetworks.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">No networks yet</p>
-        ) : (
-          <div className="space-y-3">
-            {stats.networks.recentNetworks.map(network => (
-              <Link
-                key={network.id}
-                to={`/networks/${network.id}`}
-                className="block p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-primary-300 dark:hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              >
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900 dark:text-white">{network.name}</div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">{network.cidr}</div>
-                  </div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">
-                    {network.peer_count || 0} peers
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
+              ))}
+            </dl>
+          </Card>
         )}
+
+        <Card className={isAdmin ? 'lg:col-span-2' : undefined}>
+          <CardHeader title="Recent networks" actions={<ViewAll to="/networks" what="networks" />} />
+          {recent.length === 0 ? (
+            <p className="px-5 py-8 text-center text-sm text-ink-muted">No network yet.</p>
+          ) : (
+            <ul aria-label="Recent networks" className="divide-y divide-line">
+              {recent.map((n) => (
+                <li key={n.id}>
+                  <Link
+                    to="/networks"
+                    className="flex items-center justify-between gap-4 px-5 py-3 transition-colors hover:bg-surface-hover/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-500"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-ink">{n.name}</div>
+                      <div className="truncate font-mono text-xs text-ink-muted">
+                        {[n.cidr, n.cidr_v6].filter(Boolean).join(' · ')}
+                      </div>
+                    </div>
+                    <span className="shrink-0 text-sm text-ink-muted tabular-nums">{plural(n.peer_count ?? 0, 'peer')}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
       </div>
-    </div>
+    </Page>
   );
 }

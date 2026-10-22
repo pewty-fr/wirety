@@ -285,7 +285,7 @@ func TestDNSMappingUpdateRequest_Validate(t *testing.T) {
 		{
 			name: "valid request - IP only",
 			request: &DNSMappingUpdateRequest{
-				IPAddress: "192.168.1.10",
+				IPAddress: new("192.168.1.10"),
 			},
 			expectError: false,
 		},
@@ -293,7 +293,7 @@ func TestDNSMappingUpdateRequest_Validate(t *testing.T) {
 			name: "valid request - both fields",
 			request: &DNSMappingUpdateRequest{
 				Name:      "server1",
-				IPAddress: "192.168.1.10",
+				IPAddress: new("192.168.1.10"),
 			},
 			expectError: false,
 		},
@@ -312,7 +312,7 @@ func TestDNSMappingUpdateRequest_Validate(t *testing.T) {
 		{
 			name: "invalid IP",
 			request: &DNSMappingUpdateRequest{
-				IPAddress: "not-an-ip",
+				IPAddress: new("not-an-ip"),
 			},
 			expectError: true,
 		},

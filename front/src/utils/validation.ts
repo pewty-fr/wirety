@@ -158,3 +158,27 @@ export function suggestIPv6ULACIDRs(count: number = 5): string[] {
   }
   return out;
 }
+
+const IPV4_OCTET = '(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)';
+const IPV4 = new RegExp(`^${IPV4_OCTET}(\\.${IPV4_OCTET}){3}$`);
+
+/** A dotted-quad IPv4 address, e.g. 10.0.0.50. */
+export function isIPv4(ip: string): boolean {
+  return IPV4.test(ip);
+}
+
+/** An IPv6 address, e.g. fd00::50 (no zone, no brackets). */
+export function isIPv6(ip: string): boolean {
+  if (!ip.includes(':') || /[[\]/%\s]/.test(ip)) return false;
+  // The URL parser implements the full IPv6 grammar (compression, embedded IPv4…).
+  try {
+    new URL(`http://[${ip}]/`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isIPAddress(ip: string): boolean {
+  return isIPv4(ip) || isIPv6(ip);
+}

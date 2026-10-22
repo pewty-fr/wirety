@@ -590,6 +590,7 @@ Le flag `--skip-tls-verify` désactive la validation du certificat TLS pour la c
 | LOG_FORMAT | Format de sortie des logs : `text`\|`json` | `text` | Non |
 | AUDIT_LOG | Émettre des événements d'audit JSON sur stdout | `false` | Non |
 | CAPTIVE_PORTAL_SESSION_TTL | Durée de validité d'une authentification au portail captif (durée Go, ex. `8h`, `30m`) | `24h` | Non |
+| CAPTIVE_PORTAL_IDLE_TIMEOUT | Durée pendant laquelle une session du portail captif survit sans aucun handshake WireGuard (portable en veille, ex. `1h`) ; elle ne reprend que depuis l'IP publique qui s'est authentifiée | `3m` | Non |
 
 ### Variables d'environnement de l'agent
 

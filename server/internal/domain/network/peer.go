@@ -46,9 +46,11 @@ type PeerCreateRequest struct {
 
 // PeerUpdateRequest represents the data that can be updated for a peer
 type PeerUpdateRequest struct {
-	Name                 string   `json:"name,omitempty"`
-	Endpoint             string   `json:"endpoint,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Endpoint and OwnerID: nil leaves the field unchanged, "" clears it
+	// (no endpoint; no owner). Only administrators change the owner.
+	Endpoint             *string  `json:"endpoint,omitempty"`
 	ListenPort           int      `json:"listen_port,omitempty"`
 	AdditionalAllowedIPs []string `json:"additional_allowed_ips,omitempty"`
-	OwnerID              string   `json:"owner_id,omitempty"` // Admin can change owner
+	OwnerID              *string  `json:"owner_id,omitempty"`
 }

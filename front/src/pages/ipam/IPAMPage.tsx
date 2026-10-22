@@ -1,178 +1,131 @@
-import { useState, useEffect } from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChartBar } from '@fortawesome/free-solid-svg-icons';
-import PageHeader from '../../components/PageHeader';
+import { useState } from 'react';
+import { MagnifyingGlassIcon } from '@heroicons/react/20/solid';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { TableCellsIcon } from '@heroicons/react/24/outline';
 import api from '../../api/client';
-import type { IPAMAllocation } from '../../types';
+import {
+  Alert,
+  Badge,
+  EmptyState,
+  Page,
+  PageHeader,
+  Pagination,
+  Spinner,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+  TextInput,
+  apiErrorMessage,
+} from '../../components/ui';
 import { useDebounce } from '../../hooks/useDebounce';
+import type { IPAMAllocation } from '../../types';
 
+const PAGE_SIZE = 50;
+
+// Older servers (before dual-stack IPAM) don't send the family: infer it.
+const familyOf = (a: IPAMAllocation) => a.family || (a.ip.includes(':') ? 'ipv6' : 'ipv4');
+
+/** Every address of every network, allocated to a peer or free. */
 export default function IPAMPage() {
-  const [allocations, setAllocations] = useState<IPAMAllocation[]>([]);
-  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [filter, setFilter] = useState('');
+  const [search, setSearch] = useState('');
+  const filter = useDebounce(search.trim(), 300);
 
-  const pageSize = 50;
-  const debouncedFilter = useDebounce(filter, 500);
-
-  useEffect(() => {
-    const loadAllocations = async () => {
-    setLoading(true);
-    try {
-      const response = await api.getIPAMAllocations(page, pageSize, debouncedFilter);
-      setAllocations(response.data || []);
-      setTotal(response.total || 0);
-    } catch (error) {
-      console.error('Failed to load IPAM allocations:', error);
-      setAllocations([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-    loadAllocations();
-  }, [page, debouncedFilter]);
-
-  const totalPages = Math.ceil(total / pageSize);
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['ipam', page, PAGE_SIZE, filter],
+    queryFn: () => api.getIPAMAllocations(page, PAGE_SIZE, filter || undefined),
+    placeholderData: keepPreviousData,
+  });
+  const allocations = data?.data ?? [];
+  const total = data?.total ?? 0;
 
   return (
-    <div>
-      <PageHeader 
-        title="IP Address Management" 
-        subtitle={`${total} IP addresses tracked`}
+    <Page>
+      <PageHeader
+        title="IP address management"
+        description={
+          data
+            ? `${total.toLocaleString()} address${total === 1 ? '' : 'es'} tracked across your networks.`
+            : 'The addresses of your networks and the peers they are allocated to.'
+        }
       />
 
-      <div className="p-4 sm:p-8">
+      <TextInput
+        label="Search"
+        type="search"
+        value={search}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setPage(1);
+        }}
+        placeholder="Network, IP or peer…"
+        leading={<MagnifyingGlassIcon />}
+        className="w-full sm:w-72"
+        autoComplete="off"
+      />
 
-        {/* Search */}
-        <div className="mb-6">
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-            <input
-              type="text"
-              placeholder="Search by network, IP, or peer name..."
-              value={filter}
-              onChange={(e) => {
-                setFilter(e.target.value);
-                setPage(1);
-              }}
-              className="w-full pl-11 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-2xl bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent hover:shadow-md transition-all"
-            />
-          </div>
+      {isError ? (
+        <Alert tone="danger" title="The addresses could not be loaded">
+          {apiErrorMessage(error)}
+        </Alert>
+      ) : isLoading ? (
+        <div className="flex justify-center py-16 text-ink-muted" role="status">
+          <Spinner className="size-5" />
+          <span className="sr-only">Loading addresses…</span>
         </div>
-
-        {/* Allocations Table */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-16">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-solid border-current border-r-transparent align-[-0.125em] text-primary-600 dark:text-primary-400 motion-reduce:animate-[spin_1.5s_linear_infinite] mb-4"></div>
-            <p className="text-gray-600 dark:text-gray-300 font-medium">Loading IP allocations...</p>
-          </div>
-        ) : allocations.length === 0 ? (
-          <div className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-16 text-center shadow-sm">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue mb-6">
-              <FontAwesomeIcon icon={faChartBar} className="text-3xl text-white" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">No IP allocations found</h3>
-            <p className="text-gray-600 dark:text-gray-300">
-              {filter ? 'Try adjusting your search criteria' : 'IP allocations will appear here'}
-            </p>
-          </div>
-        ) : (
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-700">
-                <tr>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    IP Address
-                  </th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Family
-                  </th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Network
-                  </th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Peer
-                  </th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Status
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                {allocations.map((allocation, idx) => {
-                  // Older servers (pre-dual-stack-IPAM) don't emit `family`;
-                  // infer it from the address shape so the badge still works.
-                  const family = allocation.family || (allocation.ip.includes(':') ? 'ipv6' : 'ipv4');
-                  return (
-                    <tr key={`${allocation.network_id}-${allocation.ip}-${idx}`} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                      <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-mono font-medium text-gray-900 dark:text-gray-100">{allocation.ip}</div>
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
-                        {family === 'ipv6' ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">IPv6</span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200">IPv4</span>
-                        )}
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900 dark:text-gray-100">{allocation.network_name}</div>
-                        <div className="text-sm text-gray-600 dark:text-gray-300 font-mono">{allocation.network_cidr}</div>
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                        {allocation.peer_name || '-'}
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm">
-                        {allocation.allocated ? (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                            Allocated
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
-                            Available
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="mt-8 flex items-center justify-between">
-            <div className="text-sm font-medium text-gray-600 dark:text-gray-300">
-              Page {page} of {totalPages}
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPage(Math.max(1, page - 1))}
-                disabled={page === 1}
-                className="px-5 py-2.5 text-sm font-semibold text-gray-700 dark:text-gray-200 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-gray-300 dark:border-gray-600 rounded-xl hover:bg-white dark:hover:bg-gray-800 hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                Previous
-              </button>
-              <button
-                onClick={() => setPage(Math.min(totalPages, page + 1))}
-                disabled={page >= totalPages}
-                className="px-5 py-2.5 text-sm font-semibold text-gray-700 dark:text-gray-200 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-gray-300 dark:border-gray-600 rounded-xl hover:bg-white dark:hover:bg-gray-800 hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+      ) : allocations.length === 0 ? (
+        <EmptyState
+          icon={TableCellsIcon}
+          title={filter ? `No address matches “${filter}”` : 'No address yet'}
+          description={
+            filter ? 'Try another network, IP or peer name.' : 'The addresses of your networks appear here once they have peers.'
+          }
+        />
+      ) : (
+        <>
+          <Table>
+            <THead>
+              <tr>
+                <TH>IP address</TH>
+                <TH>Family</TH>
+                <TH>Network</TH>
+                <TH>Peer</TH>
+                <TH>Status</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {allocations.map((a, i) => (
+                <TR key={`${a.network_id}-${a.ip}-${i}`}>
+                  <TD mono>
+                    <span className="font-medium text-ink">{a.ip}</span>
+                  </TD>
+                  <TD>
+                    {familyOf(a) === 'ipv6' ? <Badge tone="info">IPv6</Badge> : <Badge tone="neutral">IPv4</Badge>}
+                  </TD>
+                  <TD>
+                    <div className="text-ink">{a.network_name}</div>
+                    <div className="font-mono text-xs text-ink-muted">{a.network_cidr}</div>
+                  </TD>
+                  <TD>{a.peer_name || <span className="text-ink-subtle">—</span>}</TD>
+                  <TD>
+                    {a.allocated ? (
+                      <Badge tone="success" dot>
+                        Allocated
+                      </Badge>
+                    ) : (
+                      <Badge tone="neutral">Free</Badge>
+                    )}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+          <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
+        </>
+      )}
+    </Page>
   );
 }

@@ -45,12 +45,14 @@ type RouteCreateRequest struct {
 // Empty strings are interpreted as "leave unchanged" (use a sentinel like
 // "-" if you ever need an explicit "clear this field").
 type RouteUpdateRequest struct {
-	Name              string `json:"name,omitempty"`
-	Description       string `json:"description,omitempty"`
-	DestinationCIDR   string `json:"destination_cidr,omitempty"`
-	DestinationCIDRv6 string `json:"destination_cidr_v6,omitempty"`
-	JumpPeerID        string `json:"jump_peer_id,omitempty"`
-	DomainSuffix      string `json:"domain_suffix,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Description and the destinations: nil leaves the field unchanged, ""
+	// clears it (one destination must remain).
+	Description       *string `json:"description,omitempty"`
+	DestinationCIDR   *string `json:"destination_cidr,omitempty"`
+	DestinationCIDRv6 *string `json:"destination_cidr_v6,omitempty"`
+	JumpPeerID        string  `json:"jump_peer_id,omitempty"`
+	DomainSuffix      string  `json:"domain_suffix,omitempty"`
 }
 
 // Validate validates the route creation request
@@ -93,13 +95,13 @@ func (r *RouteUpdateRequest) Validate() error {
 			return err
 		}
 	}
-	if r.DestinationCIDR != "" {
-		if err := ValidateCIDRFamily(r.DestinationCIDR, false); err != nil {
+	if r.DestinationCIDR != nil && *r.DestinationCIDR != "" {
+		if err := ValidateCIDRFamily(*r.DestinationCIDR, false); err != nil {
 			return fmt.Errorf("destination_cidr: %w", err)
 		}
 	}
-	if r.DestinationCIDRv6 != "" {
-		if err := ValidateCIDRFamily(r.DestinationCIDRv6, true); err != nil {
+	if r.DestinationCIDRv6 != nil && *r.DestinationCIDRv6 != "" {
+		if err := ValidateCIDRFamily(*r.DestinationCIDRv6, true); err != nil {
 			return fmt.Errorf("destination_cidr_v6: %w", err)
 		}
 	}
@@ -117,9 +119,12 @@ func ValidateCIDR(cidr string) error {
 	if cidr == "" {
 		return errors.New("CIDR cannot be empty")
 	}
-	_, _, err := net.ParseCIDR(cidr)
+	ip, network, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return errors.New("invalid CIDR format")
+	}
+	if !ip.Equal(network.IP) {
+		return hostBitsError(cidr, network)
 	}
 	return nil
 }
@@ -132,9 +137,12 @@ func ValidateCIDRFamily(cidr string, wantV6 bool) error {
 	if cidr == "" {
 		return errors.New("CIDR cannot be empty")
 	}
-	ip, _, err := net.ParseCIDR(cidr)
+	ip, network, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return errors.New("invalid CIDR format")
+	}
+	if !ip.Equal(network.IP) {
+		return hostBitsError(cidr, network)
 	}
 	isV6 := ip.To4() == nil
 	if wantV6 && !isV6 {

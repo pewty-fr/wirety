@@ -15,6 +15,7 @@ Le serveur Wirety fournit des API REST et WebSocket, orchestre les peers, les in
 | `CORS_ORIGIN` | Origine(s) CORS autorisée(s) — séparées par des virgules pour plusieurs origines (ex. `https://app.example.com,https://admin.example.com`). `ALLOWED_ORIGIN` est un alias hérité. | `*` |
 | `AUDIT_LOG` | Activer la journalisation d'audit JSON structurée sur stdout | `false` |
 | `CAPTIVE_PORTAL_SESSION_TTL` | Durée de validité d'une authentification au portail captif (durée Go, ex. `8h`, `30m`) — voir [Portail captif](captive-portal#durée-de-session-et-causes-de-déconnexion) | `24h` |
+| `CAPTIVE_PORTAL_IDLE_TIMEOUT` | Durée pendant laquelle une session du portail captif survit sans aucun handshake WireGuard (portable en veille) ; elle ne reprend que depuis l'IP publique qui s'est authentifiée — voir [Portail captif](captive-portal#ordinateurs-portables-mis-en-veille-captive_portal_idle_timeout) | `3m` |
 
 ### Authentification
 | Variable | Description | Défaut |

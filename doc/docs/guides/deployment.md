@@ -590,6 +590,7 @@ The `--skip-tls-verify` flag disables TLS certificate validation for the connect
 | LOG_FORMAT | Log output format: `text`\|`json` | `text` | No |
 | AUDIT_LOG | Emit JSON audit events to stdout | `false` | No |
 | CAPTIVE_PORTAL_SESSION_TTL | How long a captive-portal sign-in stays valid (Go duration, e.g. `8h`, `30m`) | `24h` | No |
+| CAPTIVE_PORTAL_IDLE_TIMEOUT | How long a captive-portal session survives without any WireGuard handshake (laptop asleep, e.g. `1h`); it resumes only from the public IP that signed in | `3m` | No |
 
 ### Agent Environment Variables
 
