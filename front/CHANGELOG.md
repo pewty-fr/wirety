@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.1.5...wirety-front/v3.2.0) (2026-10-26)
+
+
+### Features
+
+* new front ([#428](https://github.com/pewty-fr/wirety/issues/428)) ([25ee39e](https://github.com/pewty-fr/wirety/commit/25ee39e1ea2fbc05baf167e3880d28657cf5ed25))
+
 ## [3.1.5](https://github.com/pewty-fr/wirety/compare/wirety-front/v3.1.4...wirety-front/v3.1.5) (2026-10-01)
 
 
