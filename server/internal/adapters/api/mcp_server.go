@@ -334,11 +334,11 @@ func (h *Handler) buildMCPServer() *mcp.Server {
 		)
 
 		type UpdateGroupParams struct {
-			NetworkID   string `json:"network_id"`
-			GroupID     string `json:"group_id"`
-			Name        string `json:"name,omitempty"`
-			Description string `json:"description,omitempty"`
-			Priority    *int   `json:"priority,omitempty"`
+			NetworkID   string  `json:"network_id"`
+			GroupID     string  `json:"group_id"`
+			Name        string  `json:"name,omitempty"`
+			Description *string `json:"description,omitempty"`
+			Priority    *int    `json:"priority,omitempty"`
 		}
 		mcp.AddTool(s,
 			&mcp.Tool{Name: "update_group", Description: "Update a group's name, description, or priority (admin only)."},
@@ -401,10 +401,10 @@ func (h *Handler) buildMCPServer() *mcp.Server {
 		)
 
 		type UpdatePolicyParams struct {
-			NetworkID   string `json:"network_id"`
-			PolicyID    string `json:"policy_id"`
-			Name        string `json:"name,omitempty"`
-			Description string `json:"description,omitempty"`
+			NetworkID   string  `json:"network_id"`
+			PolicyID    string  `json:"policy_id"`
+			Name        string  `json:"name,omitempty"`
+			Description *string `json:"description,omitempty"`
 		}
 		mcp.AddTool(s,
 			&mcp.Tool{Name: "update_policy", Description: "Update a policy's name or description (admin only)."},
@@ -470,14 +470,14 @@ func (h *Handler) buildMCPServer() *mcp.Server {
 		)
 
 		type UpdateRouteParams struct {
-			NetworkID         string `json:"network_id"`
-			RouteID           string `json:"route_id"`
-			Name              string `json:"name,omitempty"`
-			Description       string `json:"description,omitempty"`
-			DestinationCIDR   string `json:"destination_cidr,omitempty"`
-			DestinationCIDRv6 string `json:"destination_cidr_v6,omitempty"`
-			JumpPeerID        string `json:"jump_peer_id,omitempty"`
-			DomainSuffix      string `json:"domain_suffix,omitempty"`
+			NetworkID         string  `json:"network_id"`
+			RouteID           string  `json:"route_id"`
+			Name              string  `json:"name,omitempty"`
+			Description       *string `json:"description,omitempty"`
+			DestinationCIDR   *string `json:"destination_cidr,omitempty"`
+			DestinationCIDRv6 *string `json:"destination_cidr_v6,omitempty"`
+			JumpPeerID        string  `json:"jump_peer_id,omitempty"`
+			DomainSuffix      string  `json:"domain_suffix,omitempty"`
 		}
 		mcp.AddTool(s,
 			&mcp.Tool{Name: "update_route", Description: "Update a route's configuration (admin only)."},

@@ -1,10 +1,12 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"wirety/internal/adapters/api/middleware"
+	appipam "wirety/internal/application/ipam"
 
 	"github.com/gin-gonic/gin"
 )
@@ -35,6 +37,7 @@ type IPAMAllocation struct {
 // @Param        base_cidr  query string false "Root CIDR to carve from" default(10.0.0.0/8)
 // @Success      200 {object} map[string]any
 // @Failure      400 {object} map[string]string
+// @Failure      409 {object} map[string]string "no free range of that size left"
 // @Failure      500 {object} map[string]string
 // @Router       /ipam/available-cidrs [get]
 // @Security     BearerAuth
@@ -62,8 +65,25 @@ func (h *Handler) GetAvailableCIDRs(c *gin.Context) {
 	}
 	baseCIDR := c.DefaultQuery("base_cidr", "10.0.0.0/8")
 
-	prefixLen, cidrs, err := h.ipamService.SuggestCIDRs(c.Request.Context(), baseCIDR, maxPeers, count)
+	networks, err := h.service.ListNetworks(c.Request.Context())
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	inUse := make([]string, 0, len(networks))
+	for _, n := range networks {
+		inUse = append(inUse, n.CIDR)
+	}
+
+	prefixLen, cidrs, err := h.ipamService.SuggestCIDRs(c.Request.Context(), baseCIDR, maxPeers, count, inUse)
+	switch {
+	case errors.Is(err, appipam.ErrNoFreeRange):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	case isValidationError(err):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

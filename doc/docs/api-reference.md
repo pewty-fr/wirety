@@ -47,6 +47,16 @@ All error responses use:
 { "error": "human-readable error message" }
 ```
 
+### Updates
+
+`PUT` requests change only the fields they contain: a field left out keeps its value. A field sent empty (`""`) is cleared, where the field may be empty: descriptions of groups, policies and routes, one of the two destinations of a route or addresses of a DNS record (the other must remain), and the endpoint and owner of a peer. Required fields (names, network ranges) ignore an empty value.
+
+An update that would break a rule (for example remove the last destination of a route) is refused with `400`; an unknown item gives `404`.
+
+### CIDRs
+
+A CIDR names a network: its address has no host bits set (`10.0.0.0/8`, not `10.0.0.1/8`). This applies to network ranges, route destinations, policy rule targets and peers' additional allowed IPs (which also take single addresses). A CIDR with host bits set is refused with `400`, and the error gives the network address to use, e.g. `invalid CIDR: 10.0.0.1/8 has host bits set, use the network address 10.0.0.0/8`.
+
 ### Pagination
 
 Paginated endpoints accept `page` (default `1`) and `page_size` (default `20`) query parameters and return:
@@ -405,7 +415,9 @@ Returns networks accessible to the authenticated user, with pagination and optio
 }
 ```
 
-`dns` and `domain_suffix` are optional. **Response `201`** — Network object.
+`dns` and `domain_suffix` are optional. `cidr` (IPv4) and `cidr_v6` (IPv6): at least one, each of its own family and with room for at least 2 peers (a jump and a client). **Response `201`** — Network object.
+
+A range overlapping another network's is refused with `409` (addresses come from a single IPAM space, and a device on both networks could not route them): `CIDR already in use: 10.10.0.0/16 overlaps 10.10.0.0/24, the range of network “prod”`.
 
 ---
 
@@ -433,6 +445,8 @@ Returns networks accessible to the authenticated user, with pagination and optio
 ```
 
 **Response `200`** — updated Network object.
+
+Changing `cidr` or `cidr_v6` moves the peers to the new range: peers whose address the new range still contains keep it (growing a network renumbers no one), the others get a new address, and agent-managed peers receive their new configuration. The change is refused, with nothing modified, when the range overlaps another network (`409`), is too small for the network's peers (`400`), or — for `cidr` — when the network has static (non-agent) peers, which would keep a configuration with their old address (`400`). Adding `cidr_v6` to an IPv4 network gives every peer an IPv6 address.
 
 ---
 
@@ -504,7 +518,7 @@ Non-admin users only see peers they own. Supports pagination and filtering.
 
 **`POST /networks/:networkId/peers`**
 
-Non-admin users automatically become the peer owner.
+Non-admin users automatically become the peer owner. When the network's range has no free address left, the peer is refused with `409` (`network full: …`): widen the range with Update Network.
 
 **Request Body**
 ```json
@@ -1223,7 +1237,7 @@ Replaces the entire ACL configuration.
 
 ### Suggest Available CIDRs
 
-Suggests one or more CIDRs of the right size for a target number of peers, carved from a base CIDR. Useful when planning a new network.
+Suggests one or more IPv4 CIDRs of the right size for a target number of peers, carved from a base CIDR and skipping the ranges networks already use. Useful when planning a new network. It returns fewer CIDRs than `count` when the base runs out, and `409` when it has none left; an invalid `base_cidr`, or one too small for `max_peers`, gives `400`.
 
 **`GET /ipam/available-cidrs`**
 

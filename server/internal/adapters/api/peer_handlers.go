@@ -55,6 +55,7 @@ type PaginatedPeers struct {
 //	@Param			peer		body		domain.PeerCreateRequest	true	"Peer creation request"
 //	@Success		201			{object}	domain.Peer
 //	@Failure		400			{object}	map[string]string
+//	@Failure		409			{object}	map[string]string	"no free address left in the network"
 //	@Failure		500			{object}	map[string]string
 //	@Router			/networks/{networkId}/peers [post]
 //	@Security		BearerAuth
@@ -79,11 +80,7 @@ func (h *Handler) CreatePeer(c *gin.Context) {
 
 	peer, err := h.service.AddPeer(c.Request.Context(), networkID, &req, ownerID)
 	if err != nil {
-		if isValidationError(err) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -254,7 +251,7 @@ func (h *Handler) UpdatePeer(c *gin.Context) {
 		return
 	}
 
-	if req.OwnerID != "" && user != nil && !user.IsAdministrator() {
+	if req.OwnerID != nil && *req.OwnerID != peer.OwnerID && user != nil && !user.IsAdministrator() {
 		c.JSON(http.StatusForbidden, gin.H{"error": "only administrators can change peer ownership"})
 		return
 	}

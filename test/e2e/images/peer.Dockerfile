@@ -5,9 +5,11 @@
 # Runs as root + needs NET_ADMIN to create the wg interface. Sleeps forever so
 # the test drives it via `docker exec`.
 FROM alpine:3.24
-# bash: wg-quick is a bash script.
+# bash: wg-quick is a bash script. iptables: NAT for a second device behind
+# the same public IP (network namespace), in the attack scenarios.
 RUN apk add --no-cache \
     bash \
+    iptables \
     wireguard-tools \
     iproute2 \
     curl \

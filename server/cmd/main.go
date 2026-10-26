@@ -139,10 +139,12 @@ func main() {
 		r.SetCaptivePortalSessionTTL(cfg.CaptivePortalSessionTTL)
 		log.Info().Dur("captive_portal_session_ttl", cfg.CaptivePortalSessionTTL).Msg("captive portal session duration")
 	}
+	networkService.SetCaptivePortalIdleTimeout(cfg.CaptivePortalIdleTimeout)
+	log.Info().Dur("captive_portal_idle_timeout", cfg.CaptivePortalIdleTimeout).Msg("captive portal session idle timeout")
 	if events, ok := networkRepo.(domainnetwork.CaptivePortalEventRepository); ok {
 		networkService.SetCaptivePortalEventRepository(events)
 	}
-	ipamService := ipam.NewService(ipamRepo)
+	ipamService := ipam.NewService()
 
 	var authService *appauth.Service
 	if cfg.Auth.Enabled {

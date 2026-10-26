@@ -317,6 +317,110 @@ func TestAttackScenarios(t *testing.T) {
 			t.Fatal("denylisted attacker still reaches the private service")
 		}
 	})
+
+	// ==== Stolen config used behind the same public IP =======================
+	// The copy runs behind the victim's own public IP (same office NAT, same
+	// home box): only the source port tells the two devices apart. One device
+	// changes port now and then; two make the endpoint alternate between
+	// their ports. The victim's tunnel restarted since it signed in (above),
+	// so neither port is the one that signed in: the session is ended — only
+	// the owner can sign in again — and the next alternation involves the
+	// port that signed in, so the clone is denylisted.
+	t.Run("stolen_config_same_network_clone", func(t *testing.T) {
+		victimIP, err := victim.ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		victimPort := strings.TrimSpace(mustExec(ctx, t, victim, "wg", "show", "wg0", "listen-port"))
+		clonePort := startSameNetworkClone(ctx, t, victim, clientConfig(cfgA, jumpEndpoint))
+		// The victim keeps pinging the jump (started above); so does the clone.
+		clonePing := "ip netns exec clone ping -i 1 " + jumpWgIP
+		startClonePing := func() { mustExec(ctx, t, victim, "sh", "-c", clonePing+" >/dev/null 2>&1 &") }
+		stopClonePing := func() { _, _, _ = execInContainer(ctx, victim, "pkill", "-f", clonePing) }
+		startClonePing()
+		defer stopClonePing()
+
+		// 1. Neither port signed in: the session ends, and the owner's access
+		// history tells why. (The gate rule alone flaps: every endpoint change
+		// holds the peer out for the stability window.)
+		eventually(t, 2*time.Minute, defaultPollInterval, func() error {
+			events, err := st.admin.captivePortalEvents(ctx, net.ID, peerA.ID)
+			if err != nil {
+				return err
+			}
+			if len(events) == 0 || events[0].Event != "concurrent_use" {
+				return fmt.Errorf("session not ended for concurrent use yet: %+v", events)
+			}
+			return nil
+		})
+		eventually(t, defaultSyncTimeout, defaultPollInterval, func() error {
+			dump, err := dumpChain(ctx, jump, "WIRETY_JUMP")
+			if err != nil {
+				return err
+			}
+			if hasRule(dump, gateA...) {
+				return fmt.Errorf("victim still whitelisted after the session ended")
+			}
+			return nil
+		})
+
+		// 2. The owner signs in again (the clone idle at that moment, so the
+		// sign-in binds the owner's port).
+		stopClonePing()
+		token, cpState := interceptAndStart(ctx, t, st, victim, svcIP)
+		if err := st.captivePortalAuthenticate(ctx, token, session, cpState); err != nil {
+			t.Fatalf("owner sign-in: %v", err)
+		}
+		requireRuleEventually(ctx, t, jump, "WIRETY_JUMP", gateA...)
+		startClonePing()
+
+		// 3. The clone is denylisted — not the owner — and the owner keeps access.
+		eventually(t, 2*time.Minute, defaultPollInterval, func() error {
+			dump, err := dumpChain(ctx, jump, "WIRETY_WGDENY")
+			if err != nil {
+				return err
+			}
+			if !hasRule(dump, "-s "+victimIP+"/32", "--sport "+clonePort, "-j DROP") {
+				return fmt.Errorf("clone %s:%s not denylisted yet:\n%s", victimIP, clonePort, dump)
+			}
+			return nil
+		})
+		if dump, _ := dumpChain(ctx, jump, "WIRETY_WGDENY"); hasRule(dump, "-s "+victimIP+"/32", "--sport "+victimPort, "-j DROP") {
+			t.Fatalf("the owner's port %s was denylisted:\n%s", victimPort, dump)
+		}
+		requireHTTPEventually(ctx, t, victim, svcURL, "200")
+		_, out, _ := execInContainer(ctx, victim, "ip", "netns", "exec", "clone", "curl", "-s", "-o", "/dev/null", "--max-time", "5", "-w", "%{http_code}", svcURL)
+		if strings.TrimSpace(out) == "200" {
+			t.Fatal("denylisted clone still reaches the private service")
+		}
+	})
+}
+
+// startSameNetworkClone runs a second WireGuard device with config cfg inside
+// host, in its own network namespace NATed through host's address: to the
+// jump, another device behind the same public IP. It returns the clone's
+// source port (kept by the NAT).
+func startSameNetworkClone(ctx context.Context, t *testing.T, host testcontainers.Container, cfg string) string {
+	t.Helper()
+	writeFileInContainer(ctx, t, host, "/etc/wireguard/clone.conf", cfg)
+	mustExec(ctx, t, host, "sh", "-c", strings.Join([]string{
+		"ip netns add clone",
+		"ip link add clone-host type veth peer name clone-ns",
+		"ip link set clone-ns netns clone",
+		"ip address add 192.0.2.1/30 dev clone-host",
+		"ip link set clone-host up",
+		"ip netns exec clone ip address add 192.0.2.2/30 dev clone-ns",
+		"ip netns exec clone ip link set clone-ns up",
+		"ip netns exec clone ip link set lo up",
+		"ip netns exec clone ip route add default via 192.0.2.1",
+		"sysctl -qw net.ipv4.ip_forward=1",
+		"iptables -t nat -A POSTROUTING -s 192.0.2.2/32 -o eth0 -j MASQUERADE",
+		"ip netns exec clone wg-quick up clone",
+	}, " && "))
+	t.Cleanup(func() {
+		_, _, _ = execInContainer(context.Background(), host, "sh", "-c", "ip netns exec clone wg-quick down clone; ip netns del clone")
+	})
+	return strings.TrimSpace(mustExec(ctx, t, host, "ip", "netns", "exec", "clone", "wg", "show", "clone", "listen-port"))
 }
 
 // requireHTTPEventually polls url from inside c until it answers want.

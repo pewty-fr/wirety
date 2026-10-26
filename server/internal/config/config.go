@@ -13,17 +13,22 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	HTTPPort    string     `json:"http_port"`
-	CORSOrigins []string   `json:"cors_origins"` // CORS_ORIGIN env var — comma-separated list of allowed origins (use * only in development)
-	AuditLog    bool       `json:"audit_log"`    // AUDIT_LOG env var — emit JSON audit events to stdout
-	LogLevel    string     `json:"log_level"`    // LOG_LEVEL env var — trace|debug|info|warn|error|fatal (default: info)
-	LogFormat   string     `json:"log_format"`   // LOG_FORMAT env var — text|json (default: text)
+	HTTPPort    string   `json:"http_port"`
+	CORSOrigins []string `json:"cors_origins"` // CORS_ORIGIN env var — comma-separated list of allowed origins (use * only in development)
+	AuditLog    bool     `json:"audit_log"`    // AUDIT_LOG env var — emit JSON audit events to stdout
+	LogLevel    string   `json:"log_level"`    // LOG_LEVEL env var — trace|debug|info|warn|error|fatal (default: info)
+	LogFormat   string   `json:"log_format"`   // LOG_FORMAT env var — text|json (default: text)
 	// CaptivePortalSessionTTL is how long a captive-portal authentication stays
 	// valid before the peer must sign in again (CAPTIVE_PORTAL_SESSION_TTL,
 	// a Go duration such as "8h" or "30m"; default 24h).
 	CaptivePortalSessionTTL time.Duration `json:"captive_portal_session_ttl"`
-	Auth        AuthConfig `json:"auth"`
-	Database    DBConfig   `json:"database"`
+	// CaptivePortalIdleTimeout is how long a captive-portal session survives
+	// without any WireGuard handshake from the peer (laptop asleep, network
+	// lost) before the peer must sign in again (CAPTIVE_PORTAL_IDLE_TIMEOUT,
+	// default 3m). The session only resumes from the public IP that signed in.
+	CaptivePortalIdleTimeout time.Duration `json:"captive_portal_idle_timeout"`
+	Auth                     AuthConfig    `json:"auth"`
+	Database                 DBConfig      `json:"database"`
 }
 
 // AuthConfig holds authentication-related configuration
@@ -105,12 +110,13 @@ func (a *AuthConfig) Validate() error {
 // LoadConfig loads configuration from environment variables
 func LoadConfig() *Config {
 	return &Config{
-		HTTPPort:    getEnv("HTTP_PORT", "8080"),
-		CORSOrigins: getCORSOrigins(),
-		AuditLog:    getEnv("AUDIT_LOG", "false") == "true",
-		LogLevel:    getEnv("LOG_LEVEL", "info"),
-		LogFormat:   getEnv("LOG_FORMAT", "text"),
-		CaptivePortalSessionTTL: getEnvAsDuration("CAPTIVE_PORTAL_SESSION_TTL", 24*time.Hour),
+		HTTPPort:                 getEnv("HTTP_PORT", "8080"),
+		CORSOrigins:              getCORSOrigins(),
+		AuditLog:                 getEnv("AUDIT_LOG", "false") == "true",
+		LogLevel:                 getEnv("LOG_LEVEL", "info"),
+		LogFormat:                getEnv("LOG_FORMAT", "text"),
+		CaptivePortalSessionTTL:  getEnvAsDuration("CAPTIVE_PORTAL_SESSION_TTL", 24*time.Hour),
+		CaptivePortalIdleTimeout: getEnvAsDuration("CAPTIVE_PORTAL_IDLE_TIMEOUT", 3*time.Minute),
 		Auth: AuthConfig{
 			Enabled:                  getEnv("AUTH_ENABLED", "false") == "true",
 			IssuerURL:                getEnv("AUTH_ISSUER_URL", ""),

@@ -21,16 +21,11 @@ FROM nginx:alpine
 # Copy built assets from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy nginx configuration for SPA routing
-RUN echo 'server { \
-    listen 8080; \
-    server_name localhost; \
-    root /usr/share/nginx/html; \
-    index index.html; \
-    location / { \
-        try_files $uri $uri/ /index.html; \
-    } \
-}' > /etc/nginx/conf.d/default.conf
+# nginx configuration: the SPA, and /api proxied to the server when
+# API_PROXY_ENABLED=true (see docker/40-wirety-api-proxy.sh).
+COPY docker/default.conf /etc/nginx/conf.d/default.conf
+COPY --chmod=755 docker/40-wirety-api-proxy.sh /docker-entrypoint.d/40-wirety-api-proxy.sh
+RUN install -d -o nginx -g nginx /etc/nginx/wirety.d
 
 EXPOSE 8080
 

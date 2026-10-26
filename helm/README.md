@@ -95,6 +95,7 @@ helm install wirety ./helm -f values.yaml
 |-----------|-------------|---------|
 | `frontend.image.repository` | Frontend image repository | `ghcr.io/pewty-fr/wirety/front` |
 | `frontend.image.tag` | Frontend image tag | `Chart.AppVersion` |
+| `frontend.env` | Environment variables of the frontend container (e.g. `API_PROXY_ENABLED`, `API_PROXY_URL`, `API_PROXY_AUTH_TOKEN` to proxy `/api` from the front instead of the ingress) | `{}` |
 | `frontend.resources` | Resource limits/requests | See values.yaml |
 
 ### Ingress Configuration

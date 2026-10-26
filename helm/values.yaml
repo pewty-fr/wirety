@@ -14,8 +14,12 @@ serviceAccount:
   name: ""
 
 frontend:
+  # The chart routes /api to the server with its ingress / HTTPRoute, so the
+  # front's own /api proxy stays off. To proxy /api from the front instead:
   # env:
-  #   REACT_APP_API_URL: "/api"
+  #   API_PROXY_ENABLED: "true"
+  #   API_PROXY_URL: "http://wirety-server:8080"
+  #   API_PROXY_AUTH_TOKEN: ""   # sent as X-Auth-Token, optional
   image:
     pullPolicy: IfNotPresent
     repository: ghcr.io/pewty-fr/wirety/front

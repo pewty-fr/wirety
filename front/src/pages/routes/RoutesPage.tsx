@@ -1,1088 +1,187 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRoute, faPencil, faTrash, faUsers } from '@fortawesome/free-solid-svg-icons';
-import PageHeader from '../../components/PageHeader';
-import SearchableSelect from '../../components/SearchableSelect';
+import { useMemo, useState } from 'react';
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { PencilSquareIcon, PlusIcon, TrashIcon } from '@heroicons/react/20/solid';
+import { ArrowsRightLeftIcon } from '@heroicons/react/24/outline';
 import api from '../../api/client';
+import NetworkFilter from '../../components/NetworkFilter';
+import {
+  Alert,
+  Button,
+  EmptyState,
+  IconButton,
+  Page,
+  PageHeader,
+  Spinner,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+  apiErrorMessage,
+  useConfirm,
+  useToast,
+} from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
-import type { Route, Network, Peer } from '../../types';
+import { queryKeys, useNetworks, useRoutes } from '../../hooks/useQueries';
+import type { Peer, Route } from '../../types';
+import RouteModal from './RouteModal';
+
+// Peer ids are unique across networks: one map resolves every jump peer.
+function peerNames(results: UseQueryResult<Peer[]>[]): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const r of results) for (const p of r.data ?? []) names.set(p.id, p.name);
+  return names;
+}
+
+/** The names of the peers of the given networks, by id. */
+function usePeerNames(networkIds: string[]) {
+  return useQueries({
+    queries: networkIds.map((id) => ({
+      queryKey: queryKeys.networkPeers(id),
+      queryFn: () => api.getAllNetworkPeers(id),
+    })),
+    combine: peerNames,
+  });
+}
 
 export default function RoutesPage() {
   const { user } = useAuth();
-  const [networks, setNetworks] = useState<Network[]>([]);
-  const [selectedNetworkId, setSelectedNetworkId] = useState<string>('');
-  const [routes, setRoutes] = useState<Route[]>([]);
-  const [jumpPeers, setJumpPeers] = useState<Peer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingRoute, setEditingRoute] = useState<Route | null>(null);
-
   const isAdmin = user?.role === 'administrator';
+  const [networkId, setNetworkId] = useState('');
+  const [modal, setModal] = useState<{ open: boolean; route: Route | null }>({ open: false, route: null });
+  const { data: networks = [] } = useNetworks();
+  const { data: routes = [], isLoading } = useRoutes(networkId, isAdmin);
+  // Jump peers are resolved in the networks of the listed routes, so the
+  // "All networks" view shows names too.
+  const routeNetworkIds = useMemo(() => [...new Set(routes.map((r) => r.network_id))].filter(Boolean), [routes]);
+  const jumpPeerName = usePeerNames(routeNetworkIds);
+  const confirm = useConfirm();
+  const toast = useToast();
+  const queryClient = useQueryClient();
 
-  // Memoized network options for SearchableSelect
-  const networkOptions = useMemo(() => networks.map(network => ({
-    value: network.id,
-    label: `${network.name} (${network.cidr})`
-  })), [networks]);
+  const deleteRoute = useMutation({
+    mutationFn: (r: Route) => api.deleteRoute(r.network_id, r.id),
+    onSuccess: (_, r) => {
+      toast.success(`Route “${r.name}” deleted`);
+      void queryClient.invalidateQueries({ queryKey: ['routes'] });
+      void queryClient.invalidateQueries({ queryKey: ['groups'] });
+      void queryClient.invalidateQueries({ queryKey: ['dns'] });
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
 
-  // Create a map of jump peer IDs to names
-  const jumpPeerMap = useMemo(() => {
-    const map = new Map<string, string>();
-    jumpPeers.forEach(peer => map.set(peer.id, peer.name));
-    return map;
-  }, [jumpPeers]);
-
-  useEffect(() => {
-    const loadNetworks = async () => {
-      try {
-        const response = await api.getNetworks(1, 100);
-        setNetworks(response.data || []);
-        // Don't auto-select first network - let user choose
-      } catch (error) {
-        console.error('Failed to load networks:', error);
-      }
-    };
-    void loadNetworks();
-  }, []);
-
-  const loadRoutes = useCallback(async () => {
-    setLoading(true);
-    try {
-      let routesData;
-      let peersData: Peer[] = [];
-
-      if (selectedNetworkId) {
-        // Load routes and peers for specific network
-        [routesData, peersData] = await Promise.all([
-          api.getRoutes(selectedNetworkId),
-          api.getAllNetworkPeers(selectedNetworkId)
-        ]);
-      } else {
-        // "All networks" view — fetch routes globally, then collect jump peers
-        // from every network so the list can resolve jump_peer_id → name.
-        // Without this, the table falls back to displaying the raw UUID.
-        const networksList = await api.getNetworks(1, 100);
-        const peerArrays = await Promise.all(
-          (networksList.data || []).map(n =>
-            api.getAllNetworkPeers(n.id).catch(() => [] as Peer[])
-          )
-        );
-        peersData = peerArrays.flat();
-        routesData = await api.getAllRoutes();
-      }
-      setRoutes(routesData || []);
-      setJumpPeers((peersData || []).filter((p: Peer) => p.is_jump));
-    } catch (error) {
-      console.error('Failed to load routes:', error);
-      setRoutes([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedNetworkId]);
-
-  useEffect(() => {
-    void loadRoutes();
-  }, [loadRoutes]);
-
-  const handleRouteClick = (route: Route) => {
-    // Open the edit modal directly (which has all the tabs and functionality)
-    setEditingRoute(route);
-    setIsModalOpen(true);
-  };
-
-  const handleCreate = () => {
-    setEditingRoute(null);
-    setIsModalOpen(true);
-  };
-
-  const handleEdit = (route: Route, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setEditingRoute(route);
-    setIsModalOpen(true);
-  };
-
-  const handleDelete = async (route: Route, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm(`Are you sure you want to delete route "${route.name}"?`)) {
-      const networkIdToUse = route.network_id || selectedNetworkId;
-      try {
-        await api.deleteRoute(networkIdToUse, route.id);
-        loadRoutes();
-      } catch (error) {
-        console.error('Failed to delete route:', error);
-        alert('Failed to delete route');
-      }
-    }
+  const handleDelete = async (r: Route) => {
+    const ok = await confirm({
+      title: `Delete route “${r.name}”?`,
+      message: 'The peers of its groups stop reaching its destinations, and its DNS records are deleted.',
+      confirmLabel: 'Delete route',
+      destructive: true,
+    });
+    if (ok) deleteRoute.mutate(r);
   };
 
   if (!isAdmin) {
     return (
-      <div className="p-4 sm:p-8">
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-          <p className="text-yellow-800 dark:text-yellow-200">
-            You need administrator privileges to manage routes.
-          </p>
-        </div>
-      </div>
+      <Page>
+        <PageHeader title="Routes" />
+        <Alert tone="warning" title="Administrators only">
+          Only administrators can manage routes.
+        </Alert>
+      </Page>
     );
   }
 
+  const networkName = (id: string) => networks.find((n) => n.id === id)?.name ?? '—';
+  const openNew = () => setModal({ open: true, route: null });
+
   return (
-    <div>
+    <Page>
       <PageHeader
-        title="Routes" 
-        subtitle={`${routes.length} route${routes.length !== 1 ? 's' : ''} ${selectedNetworkId ? 'in selected network' : 'across all networks'}`}
-        action={
-          <button
-            onClick={handleCreate}
-            className="px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-blue text-white rounded-xl hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl flex items-center gap-2 cursor-pointer transition-all font-semibold"
-          >
-            <svg className="w-5 h-5 group-hover:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-          </button>
+        title="Routes"
+        description="Routes send the traffic of a group's peers to other networks, through a jump peer."
+        actions={
+          <Button icon={<PlusIcon className="size-4" />} onClick={openNew}>
+            New route
+          </Button>
         }
       />
 
-      <div className="p-4 sm:p-8">
-        {/* Network Filter */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Network</label>
-              <SearchableSelect
-                options={networkOptions}
-                value={selectedNetworkId}
-                onChange={setSelectedNetworkId}
-                placeholder="Select a network..."
-              />
-            </div>
-          </div>
-        </div>
+      <NetworkFilter networks={networks} value={networkId} onChange={setNetworkId} />
 
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="text-gray-500">Loading routes...</div>
-          </div>
-        ) : routes.length === 0 ? (
-          <div className="bg-gradient-to-br from-white via-gray-50 to-white dark:from-gray-800 dark:via-gray-800/50 dark:to-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-16 text-center shadow-sm">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue mb-6">
-              <FontAwesomeIcon icon={faRoute} className="text-3xl text-white" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">No routes found</h3>
-            <p className="text-gray-600 dark:text-gray-300">
-              Get started by creating your first route
-            </p>
-          </div>
-        ) : (
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-700">
-                <tr>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
-                  {!selectedNetworkId && (
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Network</th>
+      {isLoading ? (
+        <div className="flex justify-center py-16 text-ink-muted" role="status">
+          <Spinner className="size-5" />
+          <span className="sr-only">Loading routes…</span>
+        </div>
+      ) : routes.length === 0 ? (
+        <EmptyState
+          icon={ArrowsRightLeftIcon}
+          title="No route yet"
+          description="Create a route to let the peers of a group reach a network behind a jump peer."
+          action={
+            <Button icon={<PlusIcon className="size-4" />} onClick={openNew}>
+              New route
+            </Button>
+          }
+        />
+      ) : (
+        <Table>
+          <THead>
+            <tr>
+              <TH>Name</TH>
+              <TH>Network</TH>
+              <TH>Destination</TH>
+              <TH>Jump peer</TH>
+              <TH>Domain suffix</TH>
+              <TH>
+                <span className="sr-only">Actions</span>
+              </TH>
+            </tr>
+          </THead>
+          <TBody>
+            {routes.map((r) => (
+              <TR key={r.id} onClick={() => setModal({ open: true, route: r })}>
+                <TD className="max-w-xs">
+                  <div className="font-medium text-ink">{r.name}</div>
+                  {r.description && <div className="truncate text-xs text-ink-muted">{r.description}</div>}
+                </TD>
+                <TD>{r.network_name ?? networkName(r.network_id)}</TD>
+                <TD mono>
+                  {r.destination_cidr && <div>{r.destination_cidr}</div>}
+                  {r.destination_cidr_v6 && <div className="text-xs text-ink-muted">{r.destination_cidr_v6}</div>}
+                  {!r.destination_cidr && !r.destination_cidr_v6 && <span className="text-ink-subtle">—</span>}
+                </TD>
+                <TD>
+                  {jumpPeerName.get(r.jump_peer_id) ?? (
+                    <span className="font-mono text-xs text-ink-muted">{r.jump_peer_id || '—'}</span>
                   )}
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Destination CIDR</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Jump Peer</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Domain Suffix</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                {routes.map((route) => (
-                  <tr
-                    key={route.id}
-                    onClick={() => handleRouteClick(route)}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                  >
-                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-blue mr-3">
-                          <FontAwesomeIcon icon={faRoute} className="text-lg text-white" />
-                        </div>
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">{route.name}</div>
-                      </div>
-                    </td>
-                    {!selectedNetworkId && (
-                      <td className="px-3 sm:px-6 py-4 text-sm text-gray-900 dark:text-white">
-                        {route.network_name || '-'}
-                      </td>
-                    )}
-                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-white">
-                      <div className="flex flex-col">
-                        {route.destination_cidr && <span>{route.destination_cidr}</span>}
-                        {route.destination_cidr_v6 && (
-                          <span className="text-xs text-gray-500 dark:text-gray-400">{route.destination_cidr_v6}</span>
-                        )}
-                        {!route.destination_cidr && !route.destination_cidr_v6 && (
-                          <span className="text-gray-400 italic">none</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                      {jumpPeerMap.get(route.jump_peer_id) || route.jump_peer_id || '-'}
-                    </td>
-                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                      {route.domain_suffix || 'internal'}
-                    </td>
-                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => handleEdit(route, e)}
-                          className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
-                          title="Edit route"
-                        >
-                          <FontAwesomeIcon icon={faPencil} />
-                        </button>
-                        <button
-                          onClick={(e) => handleDelete(route, e)}
-                          className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 transition-colors"
-                          title="Delete route"
-                        >
-                          <FontAwesomeIcon icon={faTrash} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                </TD>
+                <TD mono>{r.domain_suffix || 'internal'}</TD>
+                <TD className="w-0 text-right" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex justify-end gap-1">
+                    <IconButton label={`Edit ${r.name}`} onClick={() => setModal({ open: true, route: r })}>
+                      <PencilSquareIcon className="size-4" />
+                    </IconButton>
+                    <IconButton label={`Delete ${r.name}`} tone="danger" onClick={() => handleDelete(r)}>
+                      <TrashIcon className="size-4" />
+                    </IconButton>
+                  </div>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      )}
 
       <RouteModal
-        isOpen={isModalOpen}
-        onClose={() => {
-          setIsModalOpen(false);
-          setEditingRoute(null);
-        }}
-        onSuccess={loadRoutes}
-        networkId={selectedNetworkId}
-        route={editingRoute}
+        isOpen={modal.open}
+        onClose={() => setModal({ open: false, route: null })}
+        route={modal.route}
         networks={networks}
+        defaultNetworkId={networkId}
       />
-    </div>
-  );
-}
-
-// Route Modal Component
-function RouteModal({
-  isOpen,
-  onClose,
-  onSuccess,
-  networkId,
-  route,
-  networks,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
-  networkId: string;
-  route: Route | null;
-  networks: Network[];
-}) {
-  const [activeTab, setActiveTab] = useState<'details' | 'dns' | 'groups'>('details');
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [destinationCidr, setDestinationCidr] = useState('');
-  // IPv6 destination CIDR — optional.  When set alongside destinationCidr the
-  // route is dual-stack and a single attached peer gets BOTH CIDRs in their
-  // AllowedIPs (and DNS records on this route can then carry both A and AAAA).
-  const [destinationCidrV6, setDestinationCidrV6] = useState('');
-  const [jumpPeerId, setJumpPeerId] = useState('');
-  const [domainSuffix, setDomainSuffix] = useState('internal');
-  const [selectedNetworkId, setSelectedNetworkId] = useState<string>(networkId);
-  const [jumpPeers, setJumpPeers] = useState<Peer[]>([]);
-  const [loading, setLoading] = useState(false);
-  
-  // Groups management
-  const [attachedGroups, setAttachedGroups] = useState<{ id: string; name: string; network_name?: string; description?: string }[]>([]);
-  const [availableGroups, setAvailableGroups] = useState<{ id: string; name: string; network_name?: string; description?: string }[]>([]);
-  const [stagedGroupIds, setStagedGroupIds] = useState<string[]>([]);
-
-  // Individual edit modes
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [isEditingDescription, setIsEditingDescription] = useState(false);
-  const [isEditingDestinationCidr, setIsEditingDestinationCidr] = useState(false);
-  const [isEditingJumpPeer, setIsEditingJumpPeer] = useState(false);
-  const [isEditingDomainSuffix, setIsEditingDomainSuffix] = useState(false);
-
-  useEffect(() => {
-    // Load jump peers whenever the modal opens with either an existing route
-    // (use its network_id) or a selected network.  Without the route?.network_id
-    // fallback, opening the edit modal from "All networks" view leaves the
-    // jump-peer dropdown empty because selectedNetworkId is "" until a render
-    // cycle flushes the setState.
-    if (isOpen && (route?.network_id || selectedNetworkId)) {
-      loadJumpPeers();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, selectedNetworkId, route]);
-
-  useEffect(() => {
-    if (route) {
-      setName(route.name);
-      setDescription(route.description || '');
-      setDestinationCidr(route.destination_cidr || '');
-      setDestinationCidrV6(route.destination_cidr_v6 || '');
-      setJumpPeerId(route.jump_peer_id);
-      setDomainSuffix(route.domain_suffix || 'internal');
-      setSelectedNetworkId(networkId);
-      setStagedGroupIds([]);
-      // Reset edit modes
-      setIsEditingName(false);
-      setIsEditingDescription(false);
-      setIsEditingDestinationCidr(false);
-      setIsEditingJumpPeer(false);
-      setIsEditingDomainSuffix(false);
-      loadAttachments();
-    } else {
-      setName('');
-      setDescription('');
-      setDestinationCidr('');
-      setDestinationCidrV6('');
-      setJumpPeerId('');
-      setDomainSuffix('internal');
-      setSelectedNetworkId(networkId || '');
-      setAttachedGroups([]);
-      setStagedGroupIds([]);
-      // Reset edit modes
-      setIsEditingName(false);
-      setIsEditingDescription(false);
-      setIsEditingDestinationCidr(false);
-      setIsEditingJumpPeer(false);
-      setIsEditingDomainSuffix(false);
-      if (selectedNetworkId) {
-        loadAvailableItems();
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, isOpen]);
-
-  // Load available items when network changes in creation mode
-  useEffect(() => {
-    if (!route && selectedNetworkId && isOpen) {
-      loadAvailableItems();
-      loadJumpPeers();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedNetworkId, route, isOpen]);
-
-  const loadJumpPeers = async () => {
-    const networkIdToUse = route?.network_id || selectedNetworkId;
-    if (!networkIdToUse) return;
-    try {
-      const peers = await api.getAllNetworkPeers(networkIdToUse);
-      setJumpPeers(peers.filter(p => p.is_jump));
-    } catch (error) {
-      console.error('Failed to load jump peers:', error);
-    }
-  };
-
-  const loadAvailableItems = async () => {
-    const networkIdToUse = route?.network_id || selectedNetworkId;
-    if (!networkIdToUse) return;
-
-    try {
-      const allGroups = await api.getGroups(networkIdToUse);
-      setAvailableGroups(allGroups);
-    } catch (error) {
-      console.error('Failed to load available items:', error);
-    }
-  };
-
-  const loadAttachments = async () => {
-    const networkIdToUse = route?.network_id || selectedNetworkId;
-    if (!route || !networkIdToUse) return;
-
-    try {
-      // Load all groups in the network
-      const allGroups = await api.getGroups(networkIdToUse);
-      
-      // Filter groups that have this route attached
-      const groupsWithRoute = allGroups.filter(g => g.route_ids?.includes(route.id));
-      setAttachedGroups(groupsWithRoute);
-      
-      // Available groups are those without this route
-      const groupsWithoutRoute = allGroups.filter(g => !g.route_ids?.includes(route.id));
-      setAvailableGroups(groupsWithoutRoute);
-    } catch (error) {
-      console.error('Failed to load groups:', error);
-    }
-  };
-
-  const handleCreateRoute = async () => {
-    if (!selectedNetworkId) {
-      alert('Please select a network');
-      return;
-    }
-    if (!destinationCidr.trim() && !destinationCidrV6.trim()) {
-      alert('Provide at least one of: IPv4 destination CIDR or IPv6 destination CIDR.');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const newRoute = await api.createRoute(selectedNetworkId, {
-        name,
-        description,
-        destination_cidr: destinationCidr.trim() || undefined,
-        destination_cidr_v6: destinationCidrV6.trim() || undefined,
-        jump_peer_id: jumpPeerId,
-        domain_suffix: domainSuffix,
-      });
-      
-      // Attach to groups (DNS records are managed on the dedicated DNS Records page)
-      const attachPromises = [];
-      for (const groupId of stagedGroupIds) {
-        attachPromises.push(api.attachRouteToGroup(selectedNetworkId, groupId, newRoute.id));
-      }
-      if (attachPromises.length > 0) {
-        await Promise.all(attachPromises);
-      }
-      
-      onSuccess();
-      onClose();
-    } catch (error) {
-      console.error('Failed to create route:', error);
-      alert('Failed to create route');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUpdateName = async () => {
-    if (!route) return;
-    
-    const networkIdToUse = route.network_id || selectedNetworkId;
-    if (!networkIdToUse) return;
-    
-    try {
-      await api.updateRoute(networkIdToUse, route.id, { name });
-      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
-      Object.assign(route, updatedRoute);
-      setIsEditingName(false);
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to update name:', error);
-      alert('Failed to update route name');
-    }
-  };
-
-  const handleUpdateDescription = async () => {
-    if (!route) return;
-    
-    const networkIdToUse = route.network_id || selectedNetworkId;
-    if (!networkIdToUse) return;
-    
-    try {
-      await api.updateRoute(networkIdToUse, route.id, { description });
-      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
-      Object.assign(route, updatedRoute);
-      setIsEditingDescription(false);
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to update description:', error);
-      alert('Failed to update route description');
-    }
-  };
-
-  const handleUpdateDestinationCidr = async () => {
-    if (!route) return;
-
-    const networkIdToUse = route.network_id || selectedNetworkId;
-    if (!networkIdToUse) return;
-
-    if (!destinationCidr.trim() && !destinationCidrV6.trim()) {
-      alert('A route must keep at least one of: IPv4 destination CIDR or IPv6 destination CIDR.');
-      return;
-    }
-
-    try {
-      // Send BOTH fields explicitly so clearing one (going single-stack) is
-      // reflected.  Empty strings on the wire mean "leave as-is" per the
-      // RouteUpdateRequest contract, so for a clear we'd need a sentinel —
-      // but in practice users edit values rather than clear them.  If you
-      // need to clear, edit the route, leave both fields, and the server
-      // will reject with the "at least one must remain set" check.
-      await api.updateRoute(networkIdToUse, route.id, {
-        destination_cidr: destinationCidr.trim() || undefined,
-        destination_cidr_v6: destinationCidrV6.trim() || undefined,
-      });
-      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
-      Object.assign(route, updatedRoute);
-      setIsEditingDestinationCidr(false);
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to update destination CIDR:', error);
-      alert('Failed to update route destination CIDR');
-    }
-  };
-
-  const handleUpdateJumpPeer = async () => {
-    if (!route) return;
-    
-    const networkIdToUse = route.network_id || selectedNetworkId;
-    if (!networkIdToUse) return;
-    
-    try {
-      await api.updateRoute(networkIdToUse, route.id, { jump_peer_id: jumpPeerId });
-      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
-      Object.assign(route, updatedRoute);
-      setIsEditingJumpPeer(false);
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to update jump peer:', error);
-      alert('Failed to update route jump peer');
-    }
-  };
-
-  const handleUpdateDomainSuffix = async () => {
-    if (!route) return;
-    
-    const networkIdToUse = route.network_id || selectedNetworkId;
-    if (!networkIdToUse) return;
-    
-    try {
-      await api.updateRoute(networkIdToUse, route.id, { domain_suffix: domainSuffix });
-      const updatedRoute = await api.getRoute(networkIdToUse, route.id);
-      Object.assign(route, updatedRoute);
-      setIsEditingDomainSuffix(false);
-      onSuccess();
-    } catch (error) {
-      console.error('Failed to update domain suffix:', error);
-      alert('Failed to update route domain suffix');
-    }
-  };
-
-  const handleCancelEdit = (field: 'name' | 'description' | 'destinationCidr' | 'jumpPeer' | 'domainSuffix') => {
-    switch (field) {
-      case 'name':
-        setName(route?.name || '');
-        setIsEditingName(false);
-        break;
-      case 'description':
-        setDescription(route?.description || '');
-        setIsEditingDescription(false);
-        break;
-      case 'destinationCidr':
-        setDestinationCidr(route?.destination_cidr || '');
-        setDestinationCidrV6(route?.destination_cidr_v6 || '');
-        setIsEditingDestinationCidr(false);
-        break;
-      case 'jumpPeer':
-        setJumpPeerId(route?.jump_peer_id || '');
-        setIsEditingJumpPeer(false);
-        break;
-      case 'domainSuffix':
-        setDomainSuffix(route?.domain_suffix || 'internal');
-        setIsEditingDomainSuffix(false);
-        break;
-    }
-  };
-
-  const handleAttachToGroup = async (groupId: string) => {
-    const group = availableGroups.find(g => g.id === groupId);
-    if (!group) return;
-    
-    if (route) {
-      const networkIdToUse = route.network_id || selectedNetworkId;
-      if (!networkIdToUse) return;
-      
-      // Edit mode: attach immediately
-      try {
-        await api.attachRouteToGroup(networkIdToUse, groupId, route.id);
-        // Refetch the updated route data and reload attachments
-        const updatedRoute = await api.getRoute(networkIdToUse, route.id);
-        Object.assign(route, updatedRoute); // Update the route object with fresh data
-        await loadAttachments();
-        onSuccess();
-      } catch (error) {
-        console.error('Failed to attach route to group:', error);
-        alert('Failed to attach route to group');
-      }
-    } else {
-      // Creation mode: stage for later
-      setStagedGroupIds([...stagedGroupIds, groupId]);
-      setAttachedGroups([...attachedGroups, group]);
-      setAvailableGroups(availableGroups.filter(g => g.id !== groupId));
-    }
-  };
-
-  const handleDetachFromGroup = async (groupId: string) => {
-    if (route) {
-      const networkIdToUse = route.network_id || selectedNetworkId;
-      if (!networkIdToUse) return;
-      
-      // Edit mode: detach immediately
-      try {
-        await api.detachRouteFromGroup(networkIdToUse, groupId, route.id);
-        // Refetch the updated route data and reload attachments
-        const updatedRoute = await api.getRoute(networkIdToUse, route.id);
-        Object.assign(route, updatedRoute); // Update the route object with fresh data
-        await loadAttachments();
-        onSuccess();
-      } catch (error) {
-        console.error('Failed to detach route from group:', error);
-        alert('Failed to detach route from group');
-      }
-    } else {
-      // Creation mode: unstage
-      const group = attachedGroups.find(g => g.id === groupId);
-      if (group) {
-        setStagedGroupIds(stagedGroupIds.filter(id => id !== groupId));
-        setAttachedGroups(attachedGroups.filter(g => g.id !== groupId));
-        setAvailableGroups([...availableGroups, group]);
-      }
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <>
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      {/* Backdrop with blur */}
-      <div 
-        className="fixed inset-0 backdrop-blur-sm bg-gradient-to-br from-primary-500/10 to-accent-blue/10 dark:from-black/50 dark:to-primary-900/50 transition-all"
-        onClick={onClose}
-      />
-      
-      {/* Modal */}
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div 
-          className="relative bg-gradient-to-br from-white to-gray-50 dark:from-dark dark:to-gray-800 rounded-lg shadow-2xl w-full max-w-4xl transform transition-all border-2 border-primary-300 dark:border-primary-700 max-h-[90vh] overflow-y-auto"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="p-6">
-        {/* Header Info */}
-        {route && (
-          <div className="flex items-start justify-between mb-6">
-            <div className="flex items-start gap-4">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-blue">
-                <FontAwesomeIcon icon={faRoute} className="text-2xl text-white" />
-              </div>
-              <div>
-                <h3 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-gray-100 dark:to-gray-300 bg-clip-text text-transparent">{route.name}</h3>
-                <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">ID: {route.id}</p>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {!route && (
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-            Create Route
-          </h2>
-        )}
-
-        {/* Tabs */}
-        <div className="flex border-b border-gray-200 dark:border-gray-700 mb-4">
-          <button
-            type="button"
-            onClick={() => setActiveTab('details')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'details'
-                ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-            }`}
-          >
-            Details
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('groups')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'groups'
-                ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-            }`}
-          >
-            <FontAwesomeIcon icon={faUsers} className="mr-1" />
-            Groups ({attachedGroups.length})
-          </button>
-        </div>
-
-        {/* Details Tab */}
-        {activeTab === 'details' && (
-          <div className="p-6">
-            <div className="space-y-6">
-              {!route && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Network *
-                  </label>
-                  <SearchableSelect
-                    options={networks.map(network => ({
-                      value: network.id,
-                      label: `${network.name} (${network.cidr})`
-                    }))}
-                    value={selectedNetworkId}
-                    onChange={setSelectedNetworkId}
-                    placeholder="Select a network..."
-                  />
-                </div>
-              )}
-
-              {/* Name Field */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Name *
-                </label>
-                {route && !isEditingName ? (
-                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <span className="text-gray-900 dark:text-white font-medium">{name}</span>
-                    <button
-                      onClick={() => setIsEditingName(true)}
-                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
-                    >
-                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
-                      Edit
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      required
-                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                      placeholder="Enter route name..."
-                    />
-                    {route && (
-                      <>
-                        <button
-                          onClick={handleUpdateName}
-                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => handleCancelEdit('name')}
-                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Description Field */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Description
-                </label>
-                {route && !isEditingDescription ? (
-                  <div className="flex items-start justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <span className="text-gray-900 dark:text-white flex-1">
-                      {description || <em className="text-gray-500">No description</em>}
-                    </span>
-                    <button
-                      onClick={() => setIsEditingDescription(true)}
-                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm ml-3"
-                    >
-                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
-                      Edit
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <textarea
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      rows={2}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                      placeholder="Enter route description..."
-                    />
-                    {route && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleUpdateDescription}
-                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => handleCancelEdit('description')}
-                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Destination CIDR Field — supports dual-stack: at least one of
-                  the two (IPv4 or IPv6) must be set, both can be set for a
-                  route that covers both families with a single entity. */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Destination CIDR <span className="text-xs text-gray-500 dark:text-gray-400 font-normal">(at least one of IPv4 / IPv6)</span>
-                </label>
-                {route && !isEditingDestinationCidr ? (
-                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <div className="flex flex-col gap-1 font-mono text-sm">
-                      {destinationCidr && (
-                        <span className="text-gray-900 dark:text-white">{destinationCidr} <span className="text-xs text-gray-500 dark:text-gray-400 font-sans">IPv4</span></span>
-                      )}
-                      {destinationCidrV6 && (
-                        <span className="text-gray-900 dark:text-white">{destinationCidrV6} <span className="text-xs text-gray-500 dark:text-gray-400 font-sans">IPv6</span></span>
-                      )}
-                      {!destinationCidr && !destinationCidrV6 && (
-                        <span className="text-gray-400 italic font-sans">none</span>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => setIsEditingDestinationCidr(true)}
-                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
-                    >
-                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
-                      Edit
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <input
-                      type="text"
-                      value={destinationCidr}
-                      onChange={(e) => setDestinationCidr(e.target.value)}
-                      placeholder="IPv4 — e.g. 10.0.0.0/24 or 0.0.0.0/0"
-                      className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
-                    />
-                    <input
-                      type="text"
-                      value={destinationCidrV6}
-                      onChange={(e) => setDestinationCidrV6(e.target.value)}
-                      placeholder="IPv6 — e.g. fd00::/8 or ::/0"
-                      className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
-                    />
-                    {route && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleUpdateDestinationCidr}
-                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => handleCancelEdit('destinationCidr')}
-                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Jump Peer Field */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Jump Peer *
-                </label>
-                {route && !isEditingJumpPeer ? (
-                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <span className="text-gray-900 dark:text-white">
-                      {jumpPeers.find(p => p.id === jumpPeerId)?.name || jumpPeerId}
-                    </span>
-                    <button
-                      onClick={() => setIsEditingJumpPeer(true)}
-                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
-                    >
-                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
-                      Edit
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <select
-                      value={jumpPeerId}
-                      onChange={(e) => setJumpPeerId(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    >
-                      <option value="">Select a jump peer...</option>
-                      {jumpPeers.map((peer) => (
-                        <option key={peer.id} value={peer.id}>
-                          {peer.name}
-                        </option>
-                      ))}
-                    </select>
-                    {route && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleUpdateJumpPeer}
-                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => handleCancelEdit('jumpPeer')}
-                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Domain Suffix Field */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Domain Suffix
-                </label>
-                {route && !isEditingDomainSuffix ? (
-                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <span className="text-gray-900 dark:text-white">{domainSuffix || 'internal'}</span>
-                    <button
-                      onClick={() => setIsEditingDomainSuffix(true)}
-                      className="text-primary-600 hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300 text-sm"
-                    >
-                      <FontAwesomeIcon icon={faPencil} className="mr-1" />
-                      Edit
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <input
-                      type="text"
-                      value={domainSuffix}
-                      onChange={(e) => setDomainSuffix(e.target.value)}
-                      placeholder="internal"
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    />
-                    {route && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleUpdateDomainSuffix}
-                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => handleCancelEdit('domainSuffix')}
-                          className="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Create Button for New Routes */}
-            {!route && (
-              <div className="mt-6 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreateRoute}
-                  disabled={loading || !name.trim() || (!destinationCidr.trim() && !destinationCidrV6.trim()) || !jumpPeerId || !selectedNetworkId}
-                  className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-accent-blue rounded-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loading ? 'Creating...' : 'Create Route'}
-                </button>
-              </div>
-            )}
-
-            {/* Close Button for Existing Routes */}
-            {route && (
-              <div className="mt-6 flex justify-end">
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-                >
-                  Close
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Groups Tab */}
-        {activeTab === 'groups' && (
-          <div className="p-6">
-            <div className="space-y-3">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-                Groups that have this route attached
-              </p>
-              {attachedGroups.map((group) => (
-                <div key={group.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                  <div>
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">{group.name}</span>
-                    {group.description && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.description}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Detach this route from group "${group.name}"?`)) {
-                        handleDetachFromGroup(group.id);
-                      }
-                    }}
-                    className="p-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                  >
-                    <FontAwesomeIcon icon={faTrash} />
-                  </button>
-                </div>
-              ))}
-              {availableGroups.length > 0 ? (
-                <div className="border-t border-gray-200 dark:border-gray-600 pt-3">
-                  <select
-                    onChange={(e) => {
-                      if (e.target.value) {
-                        handleAttachToGroup(e.target.value);
-                        e.target.value = '';
-                      }
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  >
-                    <option value="">Attach to group...</option>
-                    {availableGroups.map((group) => (
-                      <option key={group.id} value={group.id}>
-                        {group.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
-                  This route is attached to all groups in the network
-                </div>
-              )}
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-      </div>
-      </div>
-      </div>
-    </div>
-    </>
+    </Page>
   );
 }

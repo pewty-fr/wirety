@@ -206,7 +206,7 @@ func (h *Handler) AuthenticateCaptivePortal(c *gin.Context) {
 // ListPeerCaptivePortalEvents godoc
 //
 //	@Summary		Captive-portal access history of a peer
-//	@Description	Sign-ins through the captive portal and every end of access with its cause (expired, tunnel_inactive, endpoint_changed, revoked), newest first. Kept 30 days.
+//	@Description	Sign-ins through the captive portal and every end of access with its cause (expired, tunnel_inactive, endpoint_changed, revoked, concurrent_use), newest first. Kept 30 days.
 //	@Tags			peers
 //	@Produce		json
 //	@Param			networkId	path	string	true	"Network ID"

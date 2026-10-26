@@ -35,7 +35,7 @@ func (h *Handler) CreatePolicy(c *gin.Context) {
 
 	policy, err := h.policyService.CreatePolicy(c.Request.Context(), networkID, &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -128,7 +128,7 @@ func (h *Handler) UpdatePolicy(c *gin.Context) {
 
 	policy, err := h.policyService.UpdatePolicy(c.Request.Context(), networkID, policyID, &req)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -201,7 +201,7 @@ func (h *Handler) AddRuleToPolicy(c *gin.Context) {
 	}
 
 	if err := h.policyService.AddRuleToPolicy(c.Request.Context(), networkID, policyID, &rule); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 

@@ -2,8 +2,10 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"sync"
 
 	"wirety/internal/domain/ipam"
 	"wirety/internal/domain/network"
@@ -14,11 +16,27 @@ import (
 // IPAMRepository is an in-memory implementation of ipam.Repository backed by go-ipam.
 type IPAMRepository struct {
 	engine goipam.Ipamer
+
+	mu        sync.Mutex
+	allocated map[string]map[string]struct{} // prefix → addresses, for DeletePrefix
 }
 
 // NewIPAMRepository creates a new in-memory IPAM repository.
 func NewIPAMRepository(ctx context.Context) *IPAMRepository {
-	return &IPAMRepository{engine: goipam.New(ctx)}
+	return &IPAMRepository{engine: goipam.New(ctx), allocated: make(map[string]map[string]struct{})}
+}
+
+func (r *IPAMRepository) track(cidr, ip string, allocated bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !allocated {
+		delete(r.allocated[cidr], ip)
+		return
+	}
+	if r.allocated[cidr] == nil {
+		r.allocated[cidr] = make(map[string]struct{})
+	}
+	r.allocated[cidr][ip] = struct{}{}
 }
 
 // EnsureRootPrefix ensures a root prefix exists (creates if missing).
@@ -60,7 +78,15 @@ func (r *IPAMRepository) ReleaseChildPrefix(ctx context.Context, cidr string) er
 	return r.engine.ReleaseChildPrefix(ctx, p)
 }
 
+// DeletePrefix removes a prefix, releasing the addresses still allocated in it.
 func (r *IPAMRepository) DeletePrefix(ctx context.Context, cidr string) error {
+	r.mu.Lock()
+	ips := r.allocated[cidr]
+	delete(r.allocated, cidr)
+	r.mu.Unlock()
+	for ip := range ips {
+		_ = r.engine.ReleaseIPFromPrefix(ctx, cidr, ip)
+	}
 	_, err := r.engine.DeletePrefix(ctx, cidr)
 	return err
 }
@@ -101,14 +127,30 @@ func (r *IPAMRepository) ListChildPrefixes(ctx context.Context, parentCIDR strin
 
 func (r *IPAMRepository) AcquireIP(ctx context.Context, cidr string) (string, error) {
 	ipObj, err := r.engine.AcquireIP(ctx, cidr)
+	if errors.Is(err, goipam.ErrNoIPAvailable) {
+		return "", fmt.Errorf("%w: %s", ipam.ErrNoAddressAvailable, cidr)
+	}
 	if err != nil {
 		return "", err
 	}
+	r.track(cidr, ipObj.IP.String(), true)
 	return ipObj.IP.String(), nil
 }
 
+func (r *IPAMRepository) AcquireSpecificIP(ctx context.Context, cidr string, ip string) error {
+	if _, err := r.engine.AcquireSpecificIP(ctx, cidr, ip); err != nil {
+		return err
+	}
+	r.track(cidr, ip, true)
+	return nil
+}
+
 func (r *IPAMRepository) ReleaseIP(ctx context.Context, cidr string, ip string) error {
-	return r.engine.ReleaseIPFromPrefix(ctx, cidr, ip)
+	if err := r.engine.ReleaseIPFromPrefix(ctx, cidr, ip); err != nil {
+		return err
+	}
+	r.track(cidr, ip, false)
+	return nil
 }
 
 // Interface compliance assertion

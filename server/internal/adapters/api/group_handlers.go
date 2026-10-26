@@ -37,7 +37,7 @@ func (h *Handler) CreateGroup(c *gin.Context) {
 
 	group, err := h.groupService.CreateGroup(c.Request.Context(), networkID, &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *Handler) UpdateGroup(c *gin.Context) {
 
 	group, err := h.groupService.UpdateGroup(c.Request.Context(), networkID, groupID, &req)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 

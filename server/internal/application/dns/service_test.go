@@ -395,7 +395,7 @@ func TestService_UpdateDNSMapping(t *testing.T) {
 			routeID:   "route1",
 			mappingID: "mapping1",
 			request: &network.DNSMappingUpdateRequest{
-				IPAddress: "192.168.1.20",
+				IPAddress: new("192.168.1.20"),
 			},
 			setupRoute: &network.Route{
 				ID:              "route1",
@@ -434,7 +434,7 @@ func TestService_UpdateDNSMapping(t *testing.T) {
 			routeID:   "route1",
 			mappingID: "mapping1",
 			request: &network.DNSMappingUpdateRequest{
-				IPAddress: "10.0.0.1", // Not in 192.168.1.0/24
+				IPAddress: new("10.0.0.1"), // Not in 192.168.1.0/24
 			},
 			setupRoute: &network.Route{
 				ID:              "route1",
@@ -500,8 +500,8 @@ func TestService_UpdateDNSMapping(t *testing.T) {
 			if tt.request.Name != "" && result.Name != tt.request.Name {
 				t.Errorf("Expected name %s, got %s", tt.request.Name, result.Name)
 			}
-			if tt.request.IPAddress != "" && result.IPAddress != tt.request.IPAddress {
-				t.Errorf("Expected IP %s, got %s", tt.request.IPAddress, result.IPAddress)
+			if tt.request.IPAddress != nil && result.IPAddress != *tt.request.IPAddress {
+				t.Errorf("Expected IP %s, got %s", *tt.request.IPAddress, result.IPAddress)
 			}
 
 			// Verify WebSocket notification was sent

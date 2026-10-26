@@ -37,7 +37,7 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 
 	route, err := h.routeService.CreateRoute(c.Request.Context(), networkID, &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 
 	route, err := h.routeService.UpdateRoute(c.Request.Context(), networkID, routeID, &req)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(serviceErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 

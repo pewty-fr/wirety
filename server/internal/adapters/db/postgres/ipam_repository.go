@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"wirety/internal/domain/ipam"
@@ -132,15 +133,46 @@ func (r *IPAMRepository) ReleaseChildPrefix(ctx context.Context, cidr string) er
 	return nil
 }
 
+// DeletePrefix removes a prefix, releasing the addresses still allocated in it
+// (deleting a network does not release its peers' addresses one by one). The
+// allocated_ips rows go with the prefix row (ON DELETE CASCADE).
 func (r *IPAMRepository) DeletePrefix(ctx context.Context, cidr string) error {
-	_, err := r.engine.DeletePrefix(ctx, cidr)
+	ips, err := r.allocatedIPs(ctx, cidr)
 	if err != nil {
 		return err
 	}
-	if _, err = r.db.ExecContext(ctx, `DELETE FROM ipam_prefixes WHERE cidr=$1`, cidr); err != nil {
+	for _, ip := range ips {
+		_ = r.engine.ReleaseIPFromPrefix(ctx, cidr, ip)
+	}
+	_, engineErr := r.engine.DeletePrefix(ctx, cidr)
+	res, err := r.db.ExecContext(ctx, `DELETE FROM ipam_prefixes WHERE cidr=$1`, cidr)
+	if err != nil {
 		return fmt.Errorf("delete prefix row: %w", err)
 	}
+	// A prefix only in the table (engine out of sync) is still deleted.
+	if rows, _ := res.RowsAffected(); engineErr != nil && rows == 0 {
+		return engineErr
+	}
 	return nil
+}
+
+func (r *IPAMRepository) allocatedIPs(ctx context.Context, cidr string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT ip FROM ipam_allocated_ips WHERE prefix_cidr=$1`, cidr)
+	if err != nil {
+		return nil, fmt.Errorf("list allocated ips: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	var ips []string
+	for rows.Next() {
+		var ip string
+		if err = rows.Scan(&ip); err != nil {
+			return nil, err
+		}
+		ips = append(ips, ip)
+	}
+	return ips, rows.Err()
 }
 
 func (r *IPAMRepository) ListChildPrefixes(ctx context.Context, parentCIDR string) ([]*network.IPAMPrefix, error) {
@@ -176,6 +208,9 @@ func (r *IPAMRepository) AcquireIP(ctx context.Context, cidr string) (string, er
 		}
 	}
 	ipObj, err := r.engine.AcquireIP(ctx, cidr)
+	if errors.Is(err, goipam.ErrNoIPAvailable) {
+		return "", fmt.Errorf("%w: %s", ipam.ErrNoAddressAvailable, cidr)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -187,7 +222,7 @@ func (r *IPAMRepository) AcquireIP(ctx context.Context, cidr string) (string, er
 	return ipObj.IP.String(), nil
 }
 
-// AcquireSpecificIP tries to allocate a specific IP address
+// AcquireSpecificIP allocates a specific IP address.
 func (r *IPAMRepository) AcquireSpecificIP(ctx context.Context, cidr string, ip string) error {
 	// ensure prefix exists
 	if _, err := r.engine.PrefixFrom(ctx, cidr); err != nil {

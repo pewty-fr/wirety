@@ -117,6 +117,9 @@ func (c *CombinedRepository) ListChildPrefixes(ctx context.Context, parentCIDR s
 func (c *CombinedRepository) AcquireIP(ctx context.Context, cidr string) (string, error) {
 	return c.ipamRepo.AcquireIP(ctx, cidr)
 }
+func (c *CombinedRepository) AcquireSpecificIP(ctx context.Context, cidr string, ip string) error {
+	return c.ipamRepo.AcquireSpecificIP(ctx, cidr, ip)
+}
 func (c *CombinedRepository) ReleaseIP(ctx context.Context, cidr string, ip string) error {
 	return c.ipamRepo.ReleaseIP(ctx, cidr, ip)
 }

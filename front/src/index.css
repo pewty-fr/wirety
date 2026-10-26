@@ -1,114 +1,120 @@
 @import "tailwindcss";
 
+/*
+ * Wirety design tokens.
+ *
+ * Neutral graphite surfaces, the brand orange for actions and active states.
+ * Components use the semantic tokens (canvas, surface, line, ink…), which
+ * switch with the .dark class, rather than light/dark pairs of utilities.
+ */
 @theme {
-  --color-primary-50: #fff7ed;
-  --color-primary-100: #ffedd5;
-  --color-primary-200: #fed7aa;
-  --color-primary-300: #fdba74;
-  --color-primary-400: #fb923c;
-  --color-primary-500: #FF7F2A;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Brand orange — 500 is the product color. */
+  --color-primary-50: #fff5ed;
+  --color-primary-100: #ffe8d5;
+  --color-primary-200: #ffcca8;
+  --color-primary-300: #ffa871;
+  --color-primary-400: #ff9248;
+  --color-primary-500: #ff7f2a;
   --color-primary-600: #ea580c;
   --color-primary-700: #c2410c;
   --color-primary-800: #9a3412;
   --color-primary-900: #7c2d12;
-  --color-accent-blue: #1A237E;
-  --color-accent-yellow: #FFD600;
-  --color-accent-green: #43A047;
-  --color-accent-amber: #FFB300;
-  --color-accent-red: #E53935;
-  --color-gray-50: #f9fafb;
-  --color-gray-100: #f3f4f6;
-  --color-gray-200: #e5e7eb;
-  --color-gray-300: #d1d5db;
-  --color-gray-400: #9ca3af;
-  --color-gray-500: #6b7280;
-  --color-gray-600: #4b5563;
-  --color-gray-700: #374151;
-  --color-gray-800: #1f2937;
-  --color-gray-900: #111827;
-  --color-white: #fff;
-  --color-dark: #181A20;
-  --gradient-orange: linear-gradient(90deg, #FF7F2A 0%, #fb923c 100%);
-  --gradient-blue: linear-gradient(90deg, #1A237E 0%, #43A047 100%);
-  --gradient-dark: linear-gradient(90deg, #181A20 0%, #374151 100%);
+  --color-primary-950: #431407;
+
+  /* Neutral graphite (zinc), also used by the gray-* utilities. */
+  --color-gray-50: #fafafa;
+  --color-gray-100: #f4f4f5;
+  --color-gray-200: #e4e4e7;
+  --color-gray-300: #d4d4d8;
+  --color-gray-400: #a1a1aa;
+  --color-gray-500: #71717a;
+  --color-gray-600: #52525b;
+  --color-gray-700: #3f3f46;
+  --color-gray-800: #27272a;
+  --color-gray-900: #18181b;
+  --color-gray-950: #09090b;
+  --color-dark: #09090b;
+
+  /* Semantic surfaces and text (light values; dark below). */
+  --color-canvas: #f6f6f7;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f4f4f5;
+  --color-surface-hover: #f4f4f5;
+  --color-line: #e4e4e7;
+  --color-line-strong: #d4d4d8;
+  --color-ink: #18181b;
+  --color-ink-secondary: #3f3f46;
+  --color-ink-muted: #71717a;
+  --color-ink-subtle: #a1a1aa;
+
+  /* Sidebar: graphite in both themes. */
+  --color-nav: #111114;
+  --color-nav-line: #232328;
+  --color-nav-ink: #a1a1aa;
+  --color-nav-ink-active: #fafafa;
+
+  --radius-control: 0.5rem;
+  --radius-panel: 0.75rem;
+
+  --shadow-panel: 0 1px 2px rgb(9 9 11 / 0.04), 0 1px 3px rgb(9 9 11 / 0.04);
+  --shadow-overlay: 0 24px 48px -12px rgb(9 9 11 / 0.28), 0 0 0 1px rgb(9 9 11 / 0.04);
+
+  --animate-fade-in: fade-in 150ms ease-out;
+  --animate-pop-in: pop-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-in: slide-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pop-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
 }
 
 @variant dark (&:is(.dark *));
 
 .dark {
-  --color-primary-500: #fb923c;
-  --color-gray-900: #181A20;
-  --gradient-orange: linear-gradient(90deg, #ea580c 0%, #c2410c 100%);
-  --gradient-blue: linear-gradient(90deg, #1A237E 0%, #374151 100%);
-  --gradient-dark: linear-gradient(90deg, #181A20 0%, #374151 100%);
+  --color-canvas: #09090b;
+  --color-surface: #111114;
+  --color-surface-muted: #18181b;
+  --color-surface-hover: #1c1c20;
+  --color-line: #27272a;
+  --color-line-strong: #3f3f46;
+  --color-ink: #fafafa;
+  --color-ink-secondary: #d4d4d8;
+  --color-ink-muted: #a1a1aa;
+  --color-ink-subtle: #71717a;
+  --color-nav: #0c0c0f;
+  --color-nav-line: #1f1f23;
+  --shadow-panel: 0 0 0 1px rgb(255 255 255 / 0.02);
+  --shadow-overlay: 0 24px 48px -12px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.06);
 }
 
-/* Custom gradient utilities */
-.bg-brand-gradient {
-  background: linear-gradient(90deg, #FF7F2A 0%, #fb923c 100%);
-}
-
-.dark .bg-brand-gradient {
-  background: linear-gradient(90deg, #ea580c 0%, #c2410c 100%);
-}
-
-.bg-brand-gradient-subtle {
-  background: linear-gradient(135deg, rgba(255, 127, 42, 0.1) 0%, rgba(26, 35, 126, 0.1) 100%);
-}
-
-.dark .bg-brand-gradient-subtle {
-  background: linear-gradient(135deg, rgba(234, 88, 12, 0.15) 0%, rgba(55, 65, 81, 0.15) 100%);
-}
-
-.text-brand-gradient {
-  background: linear-gradient(90deg, #FF7F2A 0%, #FFB300 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.dark .text-brand-gradient {
-  background: linear-gradient(90deg, #fb923c 0%, #FFD600 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* Button gradients */
-.btn-brand {
-  background: linear-gradient(90deg, #FF7F2A 0%, #fb923c 100%);
-  color: white;
-  transition: all 0.3s ease;
-}
-
-.btn-brand:hover {
-  background: linear-gradient(90deg, #ea580c 0%, #c2410c 100%);
-  box-shadow: 0 4px 12px rgba(255, 127, 42, 0.4);
-}
-
-.dark .btn-brand {
-  background: linear-gradient(90deg, #ea580c 0%, #c2410c 100%);
-}
-
-.dark .btn-brand:hover {
-  background: linear-gradient(90deg, #c2410c 0%, #9a3412 100%);
-  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.4);
-}
-
-/* Animated gradient for footer banner */
-@keyframes gradient {
-  0% {
-    background-position: 0% 50%;
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv11", "ss01";
   }
-  50% {
-    background-position: 100% 50%;
+  html.dark {
+    color-scheme: dark;
   }
-  100% {
-    background-position: 0% 50%;
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+  ::selection {
+    background-color: rgb(255 127 42 / 0.25);
   }
 }
-
-.animate-gradient {
-  animation: gradient 8s ease infinite;
-}
-
