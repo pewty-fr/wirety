@@ -423,7 +423,7 @@ func newWSDialer(skipTLSVerify bool, serverHost string) *websocket.Dialer {
 	}
 	tlsCfg := &tls.Config{} // #nosec G402 — fields controlled by flags below
 	if skipTLSVerify {
-		tlsCfg.InsecureSkipVerify = true
+		tlsCfg.InsecureSkipVerify = true // #nosec G402 - opt-in -skip-tls-verify flag (self-signed lab servers)
 	}
 	if serverHost != "" {
 		tlsCfg.ServerName = serverHost
