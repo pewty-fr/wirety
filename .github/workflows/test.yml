@@ -63,7 +63,7 @@ jobs:
       
       - uses: actions/setup-go@v6
         with:
-          go-version: '>=1.26.0'
+          go-version: '>=1.27.0'
           cache-dependency-path: agent/go.sum
       
       - name: Go mod download
@@ -76,7 +76,7 @@ jobs:
           # Pinned: an unpinned action installs whatever "latest" is on release
           # day, which makes lint results change with no code change. Bump
           # deliberately.
-          version: v2.13.1
+          version: v2.15.0
           working-directory: agent
           args: --timeout=30m
       
@@ -103,7 +103,7 @@ jobs:
       
       - uses: actions/setup-go@v6
         with:
-          go-version: '>=1.26.0'
+          go-version: '>=1.27.0'
           cache-dependency-path: server/go.sum
       
       - name: Go mod download
@@ -114,7 +114,7 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           # Pinned — see the agent lint step above.
-          version: v2.13.1
+          version: v2.15.0
           working-directory: server
           args: --timeout=30m
       

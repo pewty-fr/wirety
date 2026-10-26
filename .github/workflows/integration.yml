@@ -32,7 +32,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '>=1.26.0'
+          go-version: '>=1.27.0'
           cache-dependency-path: server/go.sum
 
       - name: Download dependencies
@@ -56,7 +56,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '>=1.26.0'
+          go-version: '>=1.27.0'
           cache-dependency-path: agent/go.sum
 
       - name: Ensure iptables is available
@@ -99,7 +99,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '>=1.26.0'
+          go-version: '>=1.27.0'
           cache-dependency-path: test/e2e/go.sum
 
       - name: Load WireGuard kernel module
