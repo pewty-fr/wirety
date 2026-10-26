@@ -71,6 +71,17 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
+    groups:
+      # Docusaurus refuses to build unless every @docusaurus/* package has the
+      # exact version of @docusaurus/core: upgrade them in one PR.
+      docusaurus:
+        patterns:
+          - "@docusaurus/*"
+      # react and react-dom must have the exact same version.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
 
   # Docker for server
   - package-ecosystem: "docker"

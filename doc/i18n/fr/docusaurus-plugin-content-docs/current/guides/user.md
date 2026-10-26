@@ -39,7 +39,7 @@ export NETWORK_ID="votre-network-id"
 
 ---
 
-## Gestion des groupes {#groups-management}
+## Gestion des groupes {/* #groups-management */}
 
 Les groupes organisent les peers en collections logiques pour l'application de politiques et de routes.
 
@@ -136,7 +136,7 @@ curl -X DELETE "$API_URL/networks/$NETWORK_ID/groups/$GROUP_ID" \
 
 ---
 
-## Gestion des politiques {#policies-management}
+## Gestion des politiques {/* #policies-management */}
 
 Les politiques définissent les règles iptables appliquées sur les jump peers pour contrôler le filtrage du trafic.
 
@@ -340,7 +340,7 @@ curl -X DELETE "$API_URL/networks/$NETWORK_ID/policies/$POLICY_ID" \
 
 ---
 
-## Gestion des routes {#routes-management}
+## Gestion des routes {/* #routes-management */}
 
 Les routes définissent les destinations réseau externes accessibles via les jump peers.
 
@@ -432,7 +432,7 @@ curl -X DELETE "$API_URL/networks/$NETWORK_ID/routes/$ROUTE_ID" \
 
 ---
 
-## Correspondances DNS {#dns-mappings}
+## Correspondances DNS {/* #dns-mappings */}
 
 Les correspondances DNS fournissent la résolution de noms pour les adresses IP au sein des réseaux de routes.
 
@@ -504,7 +504,7 @@ dig database-server.aws-vpc.aws.internal
 
 ---
 
-## Configuration des groupes par défaut {#default-groups-configuration}
+## Configuration des groupes par défaut {/* #default-groups-configuration */}
 
 Les groupes par défaut sont automatiquement assignés aux peers créés par des utilisateurs non administrateurs.
 
@@ -574,9 +574,9 @@ curl -X PUT "$API_URL/networks/$NETWORK_ID" \
 
 ---
 
-## Workflows courants {#common-workflows}
+## Workflows courants {/* #common-workflows */}
 
-### Workflow 1 : Configurer une nouvelle équipe {#workflow-1-setting-up-a-new-team}
+### Workflow 1 : Configurer une nouvelle équipe {/* #workflow-1-setting-up-a-new-team */}
 
 **Objectif :** Créer un groupe pour l'équipe ingénierie avec accès internet et accès au réseau interne.
 
@@ -634,7 +634,7 @@ for PEER_ID in peer-1 peer-2 peer-3; do
 done
 ```
 
-### Workflow 2 : Isoler un peer compromis {#workflow-2-isolating-a-compromised-peer}
+### Workflow 2 : Isoler un peer compromis {/* #workflow-2-isolating-a-compromised-peer */}
 
 **Objectif :** Isoler immédiatement un peer potentiellement compromis.
 
@@ -680,7 +680,7 @@ curl -X POST "$API_URL/networks/$NETWORK_ID/groups/$QUARANTINE_GROUP_ID/peers/$P
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### Workflow 3 : Fournir un accès aux ressources cloud {#workflow-3-providing-access-to-cloud-resources}
+### Workflow 3 : Fournir un accès aux ressources cloud {/* #workflow-3-providing-access-to-cloud-resources */}
 
 **Objectif :** Donner à un groupe un accès à un VPC AWS avec résolution DNS.
 
@@ -726,7 +726,7 @@ nslookup database.aws-vpc.aws.internal
 nslookup web.aws-vpc.aws.internal
 ```
 
-### Workflow 4 : Sécurité d'application multi-niveaux {#workflow-4-multi-tier-application-security}
+### Workflow 4 : Sécurité d'application multi-niveaux {/* #workflow-4-multi-tier-application-security */}
 
 **Objectif :** Configurer des niveaux web, app et base de données avec des contrôles d'accès appropriés.
 
