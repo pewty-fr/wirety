@@ -2,6 +2,7 @@ package ipam
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -101,11 +102,13 @@ func overlapping(p netip.Prefix, used []netip.Prefix) (netip.Prefix, bool) {
 
 func addrToUint32(a netip.Addr) uint32 {
 	b := a.As4()
-	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+	return binary.BigEndian.Uint32(b[:])
 }
 
 func uint32ToAddr(v uint32) netip.Addr {
-	return netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], v)
+	return netip.AddrFrom4(b)
 }
 
 // lastAddr is the last IPv4 address of p.
