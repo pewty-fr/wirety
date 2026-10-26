@@ -23,8 +23,8 @@
     "axios": "^1.20.0",
     "mermaid": "^12.2.0",
     "postcss": "^8.5.29",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.4",
     "tailwindcss": "^4.3.3"
   },
