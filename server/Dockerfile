@@ -2,7 +2,7 @@
 # testcontainers can build and run a real wirety-server; also suitable as a
 # generic container image. The production release path builds with ko; this
 # Dockerfile is the plain multi-stage equivalent (single-platform).
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 ARG VERSION=dev
 
