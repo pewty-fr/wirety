@@ -47,6 +47,7 @@ jobs:
   test-agent-firewall:
     name: Agent — iptables Firewall
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: ./agent
@@ -67,9 +68,17 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run agent firewall integration tests (root)
-        # sudo is needed for iptables; PATH is forwarded so the Go binary is found.
-        run: sudo env "PATH=$PATH" go test -v -tags integration ./internal/adapters/firewall/...
+      - name: Build the firewall tests
+        run: go test -c -tags integration -o internal/adapters/firewall/firewall.test ./internal/adapters/firewall/
+
+      - name: Run agent firewall integration tests (root, own network namespace)
+        # The tests program real iptables rules, NAT and sysctls (ip_forward,
+        # IPv6 forwarding). Run in the runner's network namespace, they cut
+        # the runner off from GitHub: the post-job cache upload hangs and the
+        # job dies after an hour ("runner lost communication"). A fresh
+        # network namespace gives them their own firewall and sysctls.
+        working-directory: ./agent/internal/adapters/firewall
+        run: sudo unshare --net ./firewall.test -test.v -test.timeout 5m
 
   # ── Full end-to-end tests (testcontainers) ────────────────────────────────
   # Stands up the whole stack in Docker — postgres, Dex (OIDC), the server, a

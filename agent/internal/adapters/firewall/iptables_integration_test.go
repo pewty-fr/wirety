@@ -13,6 +13,11 @@ import (
 )
 
 // requireRoot skips the test if not running as root (or without NET_ADMIN capability).
+//
+// The tests change the firewall, NAT and sysctls of the network namespace they
+// run in: run them in a namespace of their own, never in the host's, e.g.
+//
+//	go test -c -tags integration -o firewall.test . && sudo unshare --net ./firewall.test -test.v
 func requireRoot(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
