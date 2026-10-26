@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/pewty-fr/wirety/compare/wirety-helm/v2.1.2...wirety-helm/v2.2.0) (2026-10-26)
+
+
+### Features
+
+* new front ([#428](https://github.com/pewty-fr/wirety/issues/428)) ([25ee39e](https://github.com/pewty-fr/wirety/commit/25ee39e1ea2fbc05baf167e3880d28657cf5ed25))
+
 ## [2.1.2](https://github.com/pewty-fr/wirety/compare/wirety-helm/v2.1.1...wirety-helm/v2.1.2) (2026-09-25)
 
 
