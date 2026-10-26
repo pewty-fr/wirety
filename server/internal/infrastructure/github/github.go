@@ -25,7 +25,7 @@ const (
 	AuthorizationEndpoint = "https://github.com/login/oauth/authorize"
 
 	// TokenEndpoint is GitHub's OAuth token exchange URL.
-	TokenEndpoint = "https://github.com/login/oauth/access_token"
+	TokenEndpoint = "https://github.com/login/oauth/access_token" // #nosec G101 - a public URL, not a credential
 
 	// Scope requests read access to the user's profile and email addresses.
 	Scope = "read:user user:email"

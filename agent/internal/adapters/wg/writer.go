@@ -321,10 +321,10 @@ func (w *Writer) CleanupOldConfigs() error {
 // disableInterface attempts to bring down a WireGuard interface
 func (w *Writer) disableInterface(ifaceName string) error {
 	// First try wg-quick down
-	cmd := exec.Command("wg-quick", "down", ifaceName)
+	cmd := exec.Command("wg-quick", "down", ifaceName) // #nosec G204 - controlled interface name, no shell
 	if err := cmd.Run(); err != nil {
 		// If wg-quick fails, try removing the interface directly
-		cmd = exec.Command("ip", "link", "delete", ifaceName)
+		cmd = exec.Command("ip", "link", "delete", ifaceName) // #nosec G204 - controlled interface name, no shell
 		return cmd.Run()
 	}
 	return nil

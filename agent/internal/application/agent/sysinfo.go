@@ -74,7 +74,7 @@ func getWireGuardUptime(iface string) int64 {
 	}
 
 	// Fallback: try using ip command
-	cmd := exec.Command("ip", "-o", "link", "show", iface)
+	cmd := exec.Command("ip", "-o", "link", "show", iface) // #nosec G204 - controlled interface name, no shell
 	output, err := cmd.Output()
 	if err == nil && len(output) > 0 {
 		// Interface exists, but we can't determine uptime precisely
@@ -154,7 +154,7 @@ func getWireGuardListenPort(iface string) int {
 // getWireGuardEndpoints returns a map of peer public keys to their endpoints
 func getWireGuardEndpoints(iface string) map[string]string {
 	// Get peer endpoints using wg show
-	cmd := exec.Command("wg", "show", iface, "endpoints")
+	cmd := exec.Command("wg", "show", iface, "endpoints") // #nosec G204 - controlled interface name, no shell
 	output, err := cmd.Output()
 	if err != nil {
 		return make(map[string]string)

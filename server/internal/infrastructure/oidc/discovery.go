@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"wirety/internal/infrastructure/github"
 )
 
 // Discovery represents the OIDC discovery document fields we need.
@@ -39,11 +41,11 @@ func Discover(ctx context.Context, issuerURL string) (*Discovery, error) {
 	issuerURL = strings.TrimSuffix(issuerURL, "/")
 
 	// GitHub does not expose an OIDC discovery document — return synthetic metadata.
-	if issuerURL == "https://github.com" {
+	if issuerURL == github.IssuerURL {
 		return &Discovery{
-			Issuer:                "https://github.com",
-			AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
-			TokenEndpoint:         "https://github.com/login/oauth/access_token",
+			Issuer:                github.IssuerURL,
+			AuthorizationEndpoint: github.AuthorizationEndpoint,
+			TokenEndpoint:         github.TokenEndpoint,
 		}, nil
 	}
 

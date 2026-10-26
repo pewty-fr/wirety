@@ -81,7 +81,9 @@ jobs:
           args: --timeout=30m
       
       - name: Go security
-        uses: securego/gosec@master
+        # Pinned for the same reason as golangci-lint: @master picks up new
+        # rules with no code change. Bump deliberately.
+        uses: securego/gosec@v2.30.0
         with:
           args: ./agent/...
       
@@ -117,7 +119,9 @@ jobs:
           args: --timeout=30m
       
       - name: Go security
-        uses: securego/gosec@master
+        # Pinned for the same reason as golangci-lint: @master picks up new
+        # rules with no code change. Bump deliberately.
+        uses: securego/gosec@v2.30.0
         with:
           args: ./server/...
       
