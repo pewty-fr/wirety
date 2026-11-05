@@ -204,10 +204,10 @@ func (s *stack) captivePortalStart(ctx context.Context, startURL string) (token,
 	if err != nil {
 		return "", "", fmt.Errorf("captive-portal start: %w", err)
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
-		return "", "", fmt.Errorf("captive-portal start: status %d", resp.StatusCode)
+		return "", "", fmt.Errorf("captive-portal start: status %d: %s", resp.StatusCode, body)
 	}
 	for _, c := range resp.Cookies() {
 		if c.Name == "wirety_cp_state" {

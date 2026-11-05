@@ -87,6 +87,7 @@ func TestAttackScenarios(t *testing.T) {
 
 	// SSH on the jump host is opened to signed-in peers.
 	jump := st.startJumpAgent(ctx, t, jumpPeer.Token, "-server", "http://server:8080", "-jump-host-ports", "22/tcp")
+	logsOnFailure(t, map[string]testcontainers.Container{"server": st.server, "jump": jump})
 	jumpIP, err := jump.ContainerIP(ctx)
 	if err != nil {
 		t.Fatalf("jump container ip: %v", err)

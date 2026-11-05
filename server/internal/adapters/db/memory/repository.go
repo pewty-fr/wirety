@@ -51,8 +51,9 @@ func (r *Repository) CreateNetwork(ctx context.Context, net *network.Network) er
 
 // GetNetwork retrieves a network by ID
 func (r *Repository) GetNetwork(ctx context.Context, networkID string) (*network.Network, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	// Write lock: PeerCount is set on the stored network.
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	net, exists := r.networks[networkID]
 	if !exists {
@@ -91,8 +92,9 @@ func (r *Repository) DeleteNetwork(ctx context.Context, networkID string) error 
 
 // ListNetworks retrieves all networks
 func (r *Repository) ListNetworks(ctx context.Context) ([]*network.Network, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	// Write lock: PeerCount is set on the stored networks.
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	networks := make([]*network.Network, 0, len(r.networks))
 	for _, net := range r.networks {

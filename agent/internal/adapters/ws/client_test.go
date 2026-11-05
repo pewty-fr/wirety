@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -233,5 +234,104 @@ func TestClient_MultipleMessages(t *testing.T) {
 		if string(receivedMessage) != msg {
 			t.Errorf("Expected message '%s', got '%s'", msg, string(receivedMessage))
 		}
+	}
+}
+
+// wsServer upgrades every request and hands the connection to serve.
+func wsServer(t *testing.T, serve func(*websocket.Conn)) string {
+	t.Helper()
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		serve(conn)
+	}))
+	t.Cleanup(srv.Close)
+	return "ws" + strings.TrimPrefix(srv.URL, "http")
+}
+
+func withReadTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	previous := readTimeout
+	readTimeout = d
+	t.Cleanup(func() { readTimeout = previous })
+}
+
+// A server that stops answering (half-open connection behind a load balancer)
+// makes ReadMessage fail, so the agent reconnects instead of waiting forever.
+func TestClient_ReadFailsWhenTheServerGoesSilent(t *testing.T) {
+	withReadTimeout(t, 300*time.Millisecond)
+	url := wsServer(t, func(conn *websocket.Conn) {
+		conn.SetPingHandler(func(string) error { return nil }) // never answers pings
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	client := NewClient()
+	if err := client.Connect(url, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.ReadMessage()
+		done <- err
+	}()
+	for i := 0; i < 5; i++ {
+		_ = client.Ping()
+		time.Sleep(100 * time.Millisecond)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("ReadMessage returned a message from a silent server")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ReadMessage still blocked on a silent connection")
+	}
+}
+
+// The server's pongs keep a quiet connection alive.
+func TestClient_PongsKeepTheConnectionAlive(t *testing.T) {
+	withReadTimeout(t, 300*time.Millisecond)
+	url := wsServer(t, func(conn *websocket.Conn) {
+		go func() { // default ping handler: answers each ping with a pong
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}()
+		time.Sleep(time.Second) // longer than readTimeout
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("push"))
+		time.Sleep(200 * time.Millisecond)
+	})
+	client := NewClient()
+	if err := client.Connect(url, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(100 * time.Millisecond):
+				_ = client.Ping()
+			}
+		}
+	}()
+	msg, err := client.ReadMessage()
+	if err != nil || string(msg) != "push" {
+		t.Fatalf("ReadMessage = %q, %v; want the push", msg, err)
 	}
 }

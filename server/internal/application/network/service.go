@@ -61,6 +61,12 @@ type Service struct {
 	// after restart is acceptable; the next jump-peer heartbeat restores it.
 	wgLastSeen   map[string]time.Time
 	wgLastSeenMu sync.RWMutex
+
+	// liveEndpoints is the public endpoint each jump peer currently sees for
+	// its live peers, from its last heartbeat. Key: "networkID:jumpPeerID",
+	// then the peer's WireGuard IP. In memory only, like wgLastSeen.
+	liveEndpoints   map[string]map[string]string
+	liveEndpointsMu sync.RWMutex
 }
 
 // SetWebSocketNotifier sets the WebSocket notifier for the service
@@ -81,14 +87,15 @@ func (s *Service) ResolveAgentToken(ctx context.Context, token string) (string, 
 // NewService creates a new network service
 func NewService(networkRepo network.Repository, ipamRepo ipam.Repository, authRepo auth.Repository, groupRepo network.GroupRepository, routeRepo network.RouteRepository, dnsRepo network.DNSRepository, policyRepo network.PolicyRepository) *Service {
 	return &Service{
-		repo:        NewCombinedRepository(networkRepo, ipamRepo),
-		authRepo:    authRepo,
-		groupRepo:   groupRepo,
-		routeRepo:   routeRepo,
-		dnsRepo:     dnsRepo,
-		policyRepo:  policyRepo,
-		wgLastSeen:  make(map[string]time.Time),
-		idleTimeout: DefaultCaptivePortalIdleTimeout,
+		repo:          NewCombinedRepository(networkRepo, ipamRepo),
+		authRepo:      authRepo,
+		groupRepo:     groupRepo,
+		routeRepo:     routeRepo,
+		dnsRepo:       dnsRepo,
+		policyRepo:    policyRepo,
+		wgLastSeen:    make(map[string]time.Time),
+		liveEndpoints: make(map[string]map[string]string),
+		idleTimeout:   DefaultCaptivePortalIdleTimeout,
 	}
 }
 
@@ -1087,6 +1094,7 @@ func (s *Service) ProcessAgentHeartbeat(ctx context.Context, networkID, peerID s
 				}
 				_ = s.repo.CreateOrUpdateSession(ctx, networkID, ps)
 			}
+			s.setLiveEndpoints(networkID, peerID, liveEndpoints)
 			s.recordEndpointChanges(ctx, networkID, peerID, peers, liveEndpoints)
 			if err := s.CleanupWhitelistForDisconnectedPeers(ctx, networkID, peerID, activePeerIPs, lastHandshake); err != nil {
 				log.Error().Err(err).Msg("failed to cleanup whitelist for disconnected peers")
@@ -1180,15 +1188,13 @@ func (s *Service) getPeerCaptivePortalState(ctx context.Context, networkID, peer
 			continue
 		}
 
-		// Check whitelist (authenticated).
+		// Check whitelist (authenticated): an entry counts only while the jump
+		// peer lets the peer through, i.e. from the public IP it signed in from.
 		wl, err := s.repo.GetCaptivePortalWhitelist(ctx, networkID, jp.ID)
 		if err == nil {
 			for _, entry := range wl {
-				entryIP := entry
-				if idx := indexByte(entry, '@'); idx != -1 {
-					entryIP = entry[:idx]
-				}
-				if entryIP == wgIP {
+				entryIP, authEndpoint, _ := strings.Cut(entry, "@")
+				if entryIP == wgIP && s.entryGrantsAccess(networkID, jp.ID, wgIP, authEndpoint) {
 					return "authenticated"
 				}
 			}
@@ -1484,6 +1490,14 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 	if err := s.CleanupExpiredCaptivePortalWhitelist(ctx); err != nil {
 		log.Warn().Err(err).Msg("captive portal: expired whitelist cleanup failed")
 	}
+	// Mark the token as consumed so the strike-tracking cleanup loop knows that
+	// this token led to a successful auth (and therefore is NOT a strike) —
+	// before whitelisting: the push to the jump peer that whitelisting triggers
+	// must no longer list the token as pending, or the jump peer keeps it in
+	// its redirect cache and hands the consumed token to the peer's next
+	// intercepted request ("invalid token").
+	_ = s.repo.MarkCaptivePortalTokenConsumed(ctx, captiveToken)
+
 	if err := s.AddCaptivePortalWhitelist(ctx, cpt.NetworkID, cpt.JumpPeerID, whitelistIP, cpt.PeerEndpoint); err != nil {
 		return nil, fmt.Errorf("failed to whitelist peer: %w", err)
 	}
@@ -1492,10 +1506,6 @@ func (s *Service) AuthenticateCaptivePortal(ctx context.Context, captiveToken, s
 		Event:  network.CaptivePortalEventAuthenticated,
 		Detail: signInDetail(cpt.PeerEndpoint),
 	})
-
-	// Mark the token as consumed so the strike-tracking cleanup loop knows that
-	// this token led to a successful auth (and therefore is NOT a strike).
-	_ = s.repo.MarkCaptivePortalTokenConsumed(ctx, captiveToken)
 
 	// Successful SSO auth = the user proved ownership.  Reset any accumulated
 	// auth-failure strikes and release the peer from quarantine if it was there.
@@ -1709,25 +1719,26 @@ func (s *Service) GetCaptivePortalSecurityState(ctx context.Context, networkID, 
 	}
 	state.Whitelist = wl
 
-	// Build a set of already-authenticated wgIPs so we don't include them in
-	// the pending list (their iptables rule is the full whitelist tier, not
-	// the temporary HTTPS-only tier).
-	authenticated := make(map[string]struct{}, len(wl))
+	// 2. Pending-auth peers (active tokens not yet converted). A token of a
+	// whitelisted peer is left out when it was requested from the public IP the
+	// peer signed in from: that peer is authenticated (the full whitelist tier
+	// applies, not the temporary HTTPS-only one). Requested from another public
+	// IP, it is the peer signing in again from a new network — the jump peer
+	// does not let it through until then; leaving it out made the jump peer
+	// drop its token (the next intercepted request issued another one, so the
+	// browser's URL was invalid) and withhold the HTTPS access the sign-in
+	// needs, until the whitelist entry expired.
+	signedInFrom := make(map[string]string, len(wl)) // wgIP -> public IP of the sign-in ("" = any)
 	for _, entry := range wl {
-		wgIP := entry
-		if idx := indexByte(entry, '@'); idx != -1 {
-			wgIP = entry[:idx]
-		}
-		authenticated[wgIP] = struct{}{}
+		wgIP, endpoint, _ := strings.Cut(entry, "@")
+		signedInFrom[wgIP] = endpointHost(endpoint)
 	}
-
-	// 2. Pending-auth peers (active tokens not yet converted).
 	tokens, err := s.repo.ListActiveCaptivePortalTokens(ctx, networkID, jumpPeerID)
 	if err != nil {
 		return nil, fmt.Errorf("list active tokens: %w", err)
 	}
 	for _, t := range tokens {
-		if _, alreadyAuthed := authenticated[t.PeerIP]; alreadyAuthed {
+		if ip, whitelisted := signedInFrom[t.PeerIP]; whitelisted && (ip == "" || ip == endpointHost(t.PeerEndpoint)) {
 			continue
 		}
 		state.PendingAuth = append(state.PendingAuth, PendingAuthEntry{

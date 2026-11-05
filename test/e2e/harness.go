@@ -495,3 +495,30 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+// logsOnFailure prints the tail of each container's logs when the test fails,
+// so a failure in a multi-container scenario can be read without rerunning it.
+func logsOnFailure(t *testing.T, containers map[string]testcontainers.Container) {
+	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for name, c := range containers {
+			rc, err := c.Logs(ctx)
+			if err != nil {
+				t.Logf("%s logs: %v", name, err)
+				continue
+			}
+			out, _ := io.ReadAll(rc)
+			_ = rc.Close()
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			if len(lines) > 150 {
+				lines = lines[len(lines)-150:]
+			}
+			t.Logf("---- %s logs (last %d lines) ----\n%s", name, len(lines), strings.Join(lines, "\n"))
+		}
+	})
+}
