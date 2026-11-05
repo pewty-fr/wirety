@@ -227,3 +227,26 @@ func vpnIP(addr string) string {
 	}
 	return addr
 }
+
+// setLiveEndpoints records the public endpoints a jump peer sees for its live
+// peers (its heartbeat), replacing the previous report.
+func (s *Service) setLiveEndpoints(networkID, jumpPeerID string, endpoints map[string]string) {
+	s.liveEndpointsMu.Lock()
+	defer s.liveEndpointsMu.Unlock()
+	s.liveEndpoints[networkID+":"+jumpPeerID] = endpoints
+}
+
+// entryGrantsAccess reports whether a whitelist entry of the jump peer lets
+// wgIP through: as the agent does, an entry bound to the public endpoint the
+// peer signed in from holds only while the peer connects from that public IP.
+// An unbound entry, or a peer whose current endpoint is unknown (not live, or
+// no heartbeat since the server started), is let through.
+func (s *Service) entryGrantsAccess(networkID, jumpPeerID, wgIP, authEndpoint string) bool {
+	if authEndpoint == "" {
+		return true
+	}
+	s.liveEndpointsMu.RLock()
+	current := s.liveEndpoints[networkID+":"+jumpPeerID][wgIP]
+	s.liveEndpointsMu.RUnlock()
+	return current == "" || endpointHost(current) == endpointHost(authEndpoint)
+}

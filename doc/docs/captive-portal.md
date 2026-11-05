@@ -393,6 +393,7 @@ Background cleanup tasks (server):
 | OS captive portal popup persists after authentication | DNS TTL (5–10s) may not have expired yet. Wait a few seconds; the next probe will receive a success response. |
 | Port 80 already in use on jump peer | Something else is bound to `<wg-ip>:80`. The agent logs an error and the captive portal will not function. |
 | HTTPS to an internal resource fails before authentication | Expected — the captive portal does not intercept HTTPS; unauthenticated `:443` is reset. Trigger the portal over HTTP, or use the dashboard sign-in popup or **My devices**. After authenticating, HTTPS works normally. |
+| `/captive-portal/start` answers `invalid token` | The jump peer redirected with a token that is no longer valid. For one device: the token was replaced by a newer one. For every user at once (older servers): after the agent reconnected, the server stopped sending it updates, so it never learned of sign-ins and kept redirecting with consumed tokens | One device: click **Sign in** again (dashboard popup or **My devices**). Every user: upgrade the server; restarting the jump agent restores service meanwhile. |
 
 ## Reverse Proxy and Virtual Host Isolation
 

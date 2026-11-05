@@ -317,6 +317,7 @@ La liste blanche est par jump peer et stockée dans la table `captive_portal_whi
 | Le popup du portail captif OS persiste après l'authentification | Le TTL DNS (5-10s) peut ne pas avoir expiré. Attendre quelques secondes ; la prochaine sonde recevra une réponse de succès. |
 | Port 80 déjà utilisé sur le jump peer | Quelque chose d'autre est lié à `<wg-ip>:80`. L'agent journalise une erreur et le portail captif ne fonctionnera pas. |
 | Le HTTPS vers une ressource interne échoue avant l'authentification | Normal — le portail captif n'intercepte pas le HTTPS ; le `:443` non authentifié est coupé (TCP reset). Déclencher le portail en HTTP, ou utiliser le pop-up de connexion du tableau de bord ou **Mes appareils**. Après authentification, le HTTPS fonctionne normalement. |
+| `/captive-portal/start` répond `invalid token` | Le jump peer a redirigé avec un token qui n'est plus valide. Pour un appareil : le token a été remplacé par un plus récent. Pour tous les utilisateurs à la fois (anciens serveurs) : après une reconnexion de l'agent, le serveur ne lui envoyait plus de mises à jour ; il ignorait les connexions et redirigeait avec des tokens déjà consommés | Un appareil : cliquer à nouveau sur **Sign in** (pop-up du tableau de bord ou **Mes appareils**). Tous les utilisateurs : mettre à jour le serveur ; redémarrer l'agent du jump rétablit le service en attendant. |
 
 ## Reverse Proxy et isolation d'hôte virtuel
 

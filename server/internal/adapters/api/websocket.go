@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"wirety/internal/application/network"
 	"wirety/internal/config"
@@ -30,11 +31,29 @@ func extractBearerToken(c *gin.Context) string {
 	return strings.TrimPrefix(header, "Bearer ")
 }
 
+// wsWriteTimeout bounds a write to an agent: a connection that stopped
+// reading must not block the pushes (nor the goroutine pushing) forever.
+const wsWriteTimeout = 10 * time.Second
+
+// peerConn is an agent's WebSocket connection. gorilla/websocket allows one
+// writer at a time, and pushes come from many goroutines.
+type peerConn struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func (c *peerConn) write(data []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_ = c.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+	return c.conn.WriteMessage(websocket.TextMessage, data)
+}
+
 // WebSocketManager manages WebSocket connections for peer configuration updates
 type WebSocketManager struct {
 	service     *network.Service
 	authConfig  *config.AuthConfig
-	connections map[string]map[string]*websocket.Conn // networkID -> peerID -> conn
+	connections map[string]map[string]*peerConn // networkID -> peerID -> conn
 	mu          sync.RWMutex
 }
 
@@ -43,34 +62,56 @@ func NewWebSocketManager(service *network.Service, authConfig *config.AuthConfig
 	return &WebSocketManager{
 		service:     service,
 		authConfig:  authConfig,
-		connections: make(map[string]map[string]*websocket.Conn),
+		connections: make(map[string]map[string]*peerConn),
 	}
 }
 
-// Register adds a connection to the manager
-func (m *WebSocketManager) Register(networkID, peerID string, conn *websocket.Conn) {
+// Register makes conn the peer's connection, the one pushes go to. A previous
+// connection of the peer (an agent that reconnected before the server noticed
+// the old connection drop) is closed.
+func (m *WebSocketManager) Register(networkID, peerID string, conn *websocket.Conn) *peerConn {
+	pc := &peerConn{conn: conn}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if _, exists := m.connections[networkID]; !exists {
-		m.connections[networkID] = make(map[string]*websocket.Conn)
+		m.connections[networkID] = make(map[string]*peerConn)
 	}
-	m.connections[networkID][peerID] = conn
+	previous := m.connections[networkID][peerID]
+	m.connections[networkID][peerID] = pc
+	m.mu.Unlock()
+
+	if previous != nil {
+		_ = previous.conn.Close()
+		log.Info().Str("network_id", networkID).Str("peer_id", peerID).Msg("WebSocket connection replaced by a new one from the same peer")
+	}
 	log.Info().Str("network_id", networkID).Str("peer_id", peerID).Msg("WebSocket connection registered")
+	return pc
 }
 
-// Unregister removes a connection from the manager
-func (m *WebSocketManager) Unregister(networkID, peerID string) {
+// Unregister forgets the peer's connection pc when it closes — unless the
+// peer has reconnected since: removing the new connection would stop every
+// push to the peer while its heartbeats still arrive (a jump peer then never
+// learns of new sign-ins, and redirects its users with consumed tokens).
+func (m *WebSocketManager) Unregister(networkID, peerID string, pc *peerConn) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if peers, exists := m.connections[networkID]; exists {
-		delete(peers, peerID)
-		if len(peers) == 0 {
-			delete(m.connections, networkID)
-		}
+	peers, exists := m.connections[networkID]
+	if !exists || peers[peerID] != pc {
+		log.Info().Str("network_id", networkID).Str("peer_id", peerID).Msg("WebSocket connection closed (already replaced)")
+		return
+	}
+	delete(peers, peerID)
+	if len(peers) == 0 {
+		delete(m.connections, networkID)
 	}
 	log.Info().Str("network_id", networkID).Str("peer_id", peerID).Msg("WebSocket connection unregistered")
+}
+
+// conn returns the peer's current connection, or nil.
+func (m *WebSocketManager) conn(networkID, peerID string) *peerConn {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.connections[networkID][peerID]
 }
 
 // IsConnected checks if a peer has an active WebSocket connection
@@ -102,15 +143,13 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 		log.Error().Err(err).Msg("Failed to upgrade connection (token)")
 		return
 	}
-	defer func() {
-		h.wsManager.Unregister(networkID, peer.ID)
-		_ = conn.Close()
-	}()
-
 	log.Info().Str("network_id", networkID).Str("peer_id", peer.ID).Msg("WebSocket token connection established")
 
-	// Register connection
-	h.wsManager.Register(networkID, peer.ID, conn)
+	pc := h.wsManager.Register(networkID, peer.ID, conn)
+	defer func() {
+		h.wsManager.Unregister(networkID, peer.ID, pc)
+		_ = conn.Close()
+	}()
 
 	cfg, dnsCfg, policy, err := h.service.GeneratePeerConfigWithDNS(c.Request.Context(), networkID, peer.ID)
 	if err != nil {
@@ -165,7 +204,7 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 		OAuthIssuer: oauthIssuer,
 	}
 	data, _ := json.Marshal(msg)
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := pc.write(data); err != nil {
 		log.Error().Err(err).Msg("Failed to send initial config (token)")
 		return
 	}
@@ -201,82 +240,81 @@ func (h *Handler) HandleWebSocketToken(c *gin.Context) {
 
 // NotifyPeerUpdate sends updated configuration to a specific peer via WebSocket
 func (m *WebSocketManager) NotifyPeerUpdate(networkID, peerID string) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// The manager's lock is not held while generating and writing: a slow
+	// write must not block the other peers' pushes, nor registrations.
+	conn := m.conn(networkID, peerID)
+	if conn == nil {
+		return
+	}
+	ctx := context.Background()
+	cfg, dnsCfg, policy, err := m.service.GeneratePeerConfigWithDNS(ctx, networkID, peerID)
+	if err != nil {
+		log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to generate config for update")
+		return
+	}
 
-	if peers, exists := m.connections[networkID]; exists {
-		if conn, exists := peers[peerID]; exists {
-			ctx := context.Background()
-			cfg, dnsCfg, policy, err := m.service.GeneratePeerConfigWithDNS(ctx, networkID, peerID)
-			if err != nil {
-				log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to generate config for update")
-				return
-			}
+	// Get peer information for metadata
+	peer, err := m.service.GetPeer(ctx, networkID, peerID)
+	if err != nil {
+		log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to get peer info for update")
+		return
+	}
 
-			// Get peer information for metadata
-			peer, err := m.service.GetPeer(ctx, networkID, peerID)
-			if err != nil {
-				log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to get peer info for update")
-				return
-			}
-
-			// Get full captive-portal security state if this is a jump peer
-			var whitelist []string
-			var pendingAuth []network.PendingAuthEntry
-			var denylist []network.EndpointDenylistAgentEntry
-			var quarantined []string
-			var peerRoutes map[string][]string
-			if peer.IsJump {
-				state, err := m.service.GetCaptivePortalSecurityState(ctx, networkID, peerID)
-				if err != nil {
-					log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to get captive portal security state")
-				} else {
-					whitelist = state.Whitelist
-					pendingAuth = state.PendingAuth
-					denylist = state.Denylist
-					quarantined = state.Quarantined
-					peerRoutes = state.PeerRoutes
-				}
-			}
-
-			// Get OAuth issuer from config
-			oauthIssuer := ""
-			if m.authConfig != nil && m.authConfig.Enabled {
-				oauthIssuer = m.authConfig.IssuerURL
-			}
-
-			msg := struct {
-				Config      string                               `json:"config"`
-				DNS         interface{}                          `json:"dns,omitempty"`
-				Policy      interface{}                          `json:"policy,omitempty"`
-				PeerID      string                               `json:"peer_id"`
-				PeerName    string                               `json:"peer_name"`
-				Whitelist   []string                             `json:"whitelist,omitempty"`
-				PendingAuth []network.PendingAuthEntry           `json:"pending_auth,omitempty"`
-				Denylist    []network.EndpointDenylistAgentEntry `json:"endpoint_denylist,omitempty"`
-				Quarantined []string                             `json:"quarantined,omitempty"`
-				PeerRoutes  map[string][]string                  `json:"peer_routes,omitempty"`
-				OAuthIssuer string                               `json:"oauth_issuer,omitempty"`
-			}{
-				Config:      cfg,
-				DNS:         dnsCfg,
-				Policy:      policy,
-				PeerID:      peer.ID,
-				PeerName:    peer.Name,
-				Whitelist:   whitelist,
-				PendingAuth: pendingAuth,
-				Denylist:    denylist,
-				Quarantined: quarantined,
-				PeerRoutes:  peerRoutes,
-				OAuthIssuer: oauthIssuer,
-			}
-			data, _ := json.Marshal(msg)
-			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-				log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to send config update")
-			} else {
-				log.Info().Str("network_id", networkID).Str("peer_id", peerID).Str("peer_name", peer.Name).Msg("Config update sent")
-			}
+	// Get full captive-portal security state if this is a jump peer
+	var whitelist []string
+	var pendingAuth []network.PendingAuthEntry
+	var denylist []network.EndpointDenylistAgentEntry
+	var quarantined []string
+	var peerRoutes map[string][]string
+	if peer.IsJump {
+		state, err := m.service.GetCaptivePortalSecurityState(ctx, networkID, peerID)
+		if err != nil {
+			log.Warn().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to get captive portal security state")
+		} else {
+			whitelist = state.Whitelist
+			pendingAuth = state.PendingAuth
+			denylist = state.Denylist
+			quarantined = state.Quarantined
+			peerRoutes = state.PeerRoutes
 		}
+	}
+
+	// Get OAuth issuer from config
+	oauthIssuer := ""
+	if m.authConfig != nil && m.authConfig.Enabled {
+		oauthIssuer = m.authConfig.IssuerURL
+	}
+
+	msg := struct {
+		Config      string                               `json:"config"`
+		DNS         interface{}                          `json:"dns,omitempty"`
+		Policy      interface{}                          `json:"policy,omitempty"`
+		PeerID      string                               `json:"peer_id"`
+		PeerName    string                               `json:"peer_name"`
+		Whitelist   []string                             `json:"whitelist,omitempty"`
+		PendingAuth []network.PendingAuthEntry           `json:"pending_auth,omitempty"`
+		Denylist    []network.EndpointDenylistAgentEntry `json:"endpoint_denylist,omitempty"`
+		Quarantined []string                             `json:"quarantined,omitempty"`
+		PeerRoutes  map[string][]string                  `json:"peer_routes,omitempty"`
+		OAuthIssuer string                               `json:"oauth_issuer,omitempty"`
+	}{
+		Config:      cfg,
+		DNS:         dnsCfg,
+		Policy:      policy,
+		PeerID:      peer.ID,
+		PeerName:    peer.Name,
+		Whitelist:   whitelist,
+		PendingAuth: pendingAuth,
+		Denylist:    denylist,
+		Quarantined: quarantined,
+		PeerRoutes:  peerRoutes,
+		OAuthIssuer: oauthIssuer,
+	}
+	data, _ := json.Marshal(msg)
+	if err := conn.write(data); err != nil {
+		log.Error().Err(err).Str("network_id", networkID).Str("peer_id", peerID).Msg("Failed to send config update")
+	} else {
+		log.Info().Str("network_id", networkID).Str("peer_id", peerID).Str("peer_name", peer.Name).Msg("Config update sent")
 	}
 }
 
